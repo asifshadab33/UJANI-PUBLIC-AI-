@@ -51,7 +51,6 @@ export default function App() {
         localMemoryRequiredMb: 128,
         availableMemoryMb: device?.total_memory_mb ?? 0,
         externalDataApproved: externalApproved,
-        networkCapabilityAvailable: false,
         requestedCollaborationRounds: 2
       };
       if (isTauri()) {
@@ -59,9 +58,9 @@ export default function App() {
       } else {
         const local = !!device;
         setRouteDecision({
-          mode: executionMode, action: executionMode === "fortress" || executionMode === "smart" ? "execute_locally" : "await_external_approval",
-          allowed: local, external_data_transfer_permitted: false, collaboration_rounds: 0,
-          reason: "Browser preview is illustrative only. Open the desktop runtime for native policy evaluation.",
+          mode: executionMode, action: "blocked",
+          allowed: false, external_data_transfer_permitted: false, collaboration_rounds: 0,
+          reason: "Browser preview cannot evaluate native capabilities. Open the desktop runtime for policy evaluation.",
           enforcement_boundary_required: true
         });
       }
@@ -145,7 +144,7 @@ export default function App() {
             <label className="consent-row"><input type="checkbox" checked={externalApproved} onChange={(event) => { setExternalApproved(event.target.checked); setRouteDecision(null); }}/> I explicitly approve external data transfer for this task</label>
             <button className="model-run" onClick={previewRoute} disabled={!request.trim() || routeBusy}>{routeBusy ? "Evaluating policy…" : "Preview execution route"} <Send size={15}/></button>
             {routeError && <p className="error" role="alert">{routeError}</p>}
-            {routeDecision && <div className="result"><div className="result-title"><ShieldCheck size={17}/> {routeDecision.action.replaceAll("_", " ")} <span>{routeDecision.allowed ? "Policy permits plan" : "Blocked / approval needed"}</span></div><p>{routeDecision.reason}</p><small>External transfer: {routeDecision.external_data_transfer_permitted ? "consented for a future gateway" : "not permitted"} · Rounds: {routeDecision.collaboration_rounds} · Enforcement boundary required: yes</small></div>}
+            {routeDecision && <div className="result"><div className="result-title"><ShieldCheck size={17}/> {routeDecision.action.replace(/_/g, " ")} <span>{routeDecision.allowed ? "Policy permits plan" : "Blocked / approval needed"}</span></div><p>{routeDecision.reason}</p><small>External transfer: {routeDecision.external_data_transfer_permitted ? "consented for a future gateway" : "not permitted"} · Rounds: {routeDecision.collaboration_rounds} · Enforcement boundary required: yes</small></div>}
             <small className="muted">Selecting a mode never grants consent by itself. Fortress policy preview does not disable OS networking. Worker and Partner cannot execute until a secure gateway is implemented.</small>
           </div>
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
