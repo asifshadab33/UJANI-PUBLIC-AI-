@@ -180,7 +180,7 @@ mod tests {
         let mut r = req(ExecutionMode::Smart); r.local_memory_required_mb = 2048;
         assert_eq!(evaluate_mode(&r).action, RouteAction::Blocked);
     }
-    #[test] fn malformed_operation_is_rejected() {
+    #[test] fn unregistered_operation_is_rejected() {\n        let mut r = req(ExecutionMode::Smart); r.operation = "shell.run".into();\n        assert_eq!(evaluate_mode(&r).action, RouteAction::Blocked);\n    }\n    #[test] fn malformed_operation_is_rejected() {
         let mut r = req(ExecutionMode::Smart); r.operation = "shell run".into();
         assert_eq!(evaluate_mode(&r).action, RouteAction::Blocked);
     }
