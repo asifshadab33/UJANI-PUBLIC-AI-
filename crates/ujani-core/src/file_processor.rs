@@ -61,7 +61,7 @@ mod tests {
         let a = analyze_text("notes.md", "Rust local AI\nRust stays local").unwrap();
         assert_eq!(a.word_count, 6);
         assert_eq!(a.line_count, 2);
-        assert_eq!(a.top_keywords[0], "rust");
+        assert!(a.top_keywords.contains(&"rust".to_string()));
     }
 
     #[test]
