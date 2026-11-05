@@ -146,8 +146,20 @@ mod tests {
             external_data_approved: false, network_capability_available: true,
             requested_collaboration_rounds: 8 }
     }
-    #[test] fn fortress_stays_local_and_never_approves_transfer() {
-        let d = evaluate_mode(&req(ExecutionMode::Fortress));
+    #[test] fn fortress_stays_local_even_if_external_approval_is_true() {
+        let mut r = req(ExecutionMode::Fortress);
+        r.external_data_approved = true;
+        r.network_capability_available = true;
+        let d = evaluate_mode(&r);
+        assert_eq!(d.action, RouteAction::ExecuteLocally);
+        assert!(!d.external_data_transfer_permitted);
+        assert_eq!(d.collaboration_rounds, 0);
+    }
+
+    #[test] fn smart_prefers_local_even_if_external_approval_is_true() {
+        let mut r = req(ExecutionMode::Smart);
+        r.external_data_approved = true;
+        let d = evaluate_mode(&r);
         assert_eq!(d.action, RouteAction::ExecuteLocally);
         assert!(!d.external_data_transfer_permitted);
     }
