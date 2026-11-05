@@ -1,3 +1,19 @@
+
+## 2026-11-06 — Optional persistent local task history
+
+### Added
+- SQLite task history in the Tauri app-data directory, with recording disabled by default and an explicit UI opt-in.
+- Saved successful local chat, document/PDF summaries and translations; document source contents are not stored as history prompts.
+- History listing, prompt reuse, per-entry deletion and clear-all controls.
+- Automatic 30-day retention and a hard 100-entry cap; bounded prompt/output sizes and transactional writes.
+- Unix app-data directory/database permission tightening, SQLite secure-delete mode and rollback journaling.
+
+### Privacy and limitations
+- History is stored as plaintext. Database encryption and secure key management are not implemented; users should not enable it for sensitive prompts or outputs.
+- Deleting records is not a forensic secure-erase guarantee, particularly on SSDs, snapshots or backups.
+- Disabling recording prevents new entries but does not delete existing history; users can clear history separately.
+- History is local to this desktop installation and is not synchronised or uploaded.
+
 ## 2026-11-06 — Fixed local workflow execution and model guidance
 
 ### Added and improved
