@@ -116,8 +116,8 @@ export default function App() {
     if (file.size > 20 * 1024 * 1024) { setFileError("Images are limited to 20 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to inspect images."); return; }
     try {
-      const data = Array.from(new Uint8Array(await file.arrayBuffer()));
-      setImageInfo(await invoke<ImageInfo>("inspect_image_file", { fileName: file.name, data }));
+      const data = Array.from(new Uint8Array(await file.slice(0, 64 * 1024).arrayBuffer()));
+      setImageInfo(await invoke<ImageInfo>("inspect_image_file", { fileName: file.name, data, fileSizeBytes: file.size }));
     } catch (error) { setFileError(String(error)); }
   }
 
