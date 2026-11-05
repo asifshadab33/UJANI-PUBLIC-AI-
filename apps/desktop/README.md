@@ -88,3 +88,18 @@ The word-count action is a deterministic plumbing test, not an AI feature. Do no
 - The current file and image tools process bytes selected by the user in memory. They do not accept arbitrary filesystem paths, so there is no path-based API for an AI prompt to traverse.
 - SQLite task history and cloud cost accounting are not enabled. Persisting prompts/results requires a deliberate retention, deletion, and at-rest protection design; cost accounting requires a real cloud provider with authoritative token-usage data. Neither is simulated in this local-only prototype.
 - Smart mode currently executes locally when the local Ollama route is available. It does not ask a model to estimate confidence and silently escalate. A future external fallback must wait for explicit approval for the exact data/subtask.
+
+## Corrected implementation audit (2026-11-06)
+
+The supplied implementation guide was reviewed against the current architecture. The following distinctions are intentional:
+
+- **Credentials:** no cloud provider is wired into this prototype, so there is no API-key field, frontend credential path, or unused environment-variable secret. Do not add `UJANI_CLOUD_API_KEY` until a real provider adapter, explicit consent flow, OS-backed secret storage, and cost controls exist.
+- **File access:** file selection uses the native UI file picker and passes bounded user-selected bytes to the native processor. The core does not accept arbitrary paths. This is narrower than a persistent approved-folder list and avoids creating a path traversal/symlink boundary that the current product does not need.
+- **Async I/O:** current file processing is bounded in-memory parsing of already selected content, not filesystem I/O. Adding Tokio filesystem APIs or `spawn_blocking` would not improve this path.
+- **Image processing:** current work is lightweight header inspection only. It is deliberately not full decoding, OCR, or vision inference; the parser is synchronous because it inspects at most 64 KiB. Tests cover supported formats and malformed headers.
+- **Smart mode:** local Ollama execution remains local. Model-reported confidence is not a trustworthy security or correctness signal and must never authorize external transfer. If local execution cannot proceed, the app fails safely; no cloud fallback is implemented.
+- **Persistence:** task history is currently session/UI state, not a durable database. SQLite is deferred until retention, deletion, migration, app-data location, and at-rest protection are designed together.
+- **Hardware:** available RAM is used for runtime routing checks and is reported separately from total RAM. GPU/NPU detection remains unknown until a verified platform implementation exists.
+- **Tests:** core routing, text processing, image-header validation, and Ollama identifier/retry-policy tests are present. CI must still be observed on the pushed commit; a code push alone is not evidence that tests pass.
+
+These choices keep the application honest and preserve its pre-alpha status. They are not claims of production-grade sandboxing or OS-level network isolation.
