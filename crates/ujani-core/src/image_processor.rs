@@ -1,20 +1,21 @@
 //! Basic image-header inspection from user-supplied bytes; no filesystem access.
 use serde::{Deserialize, Serialize};
 
-const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_IMAGE_BYTES: usize = 64 * 1024;
+const MAX_ORIGINAL_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageInfo {
     pub file_name: String,
     pub format: String,
-    pub size_bytes: usize,
+    pub size_bytes: u64,
     pub dimensions: Option<(u32, u32)>,
     pub description: String,
 }
 
-pub fn inspect_image(file_name: &str, data: &[u8]) -> Result<ImageInfo, String> {
+pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> Result<ImageInfo, String> {
     if file_name.trim().is_empty() || file_name.len() > 255 { return Err("A valid image file name is required.".into()); }
-    if data.is_empty() || data.len() > MAX_IMAGE_BYTES { return Err("Image must be between 1 byte and 20 MiB.".into()); }
+    if data.is_empty() || data.len() > MAX_IMAGE_BYTES || original_size_bytes == 0 || original_size_bytes > MAX_ORIGINAL_IMAGE_BYTES || data.len() as u64 > original_size_bytes { return Err("Image must be 1 byte–20 MiB; only its first 64 KiB header is processed.".into()); }
     let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let (format, dimensions) = match ext.as_str() {
         "png" => {
@@ -47,7 +48,7 @@ pub fn inspect_image(file_name: &str, data: &[u8]) -> Result<ImageInfo, String> 
         _ => return Err("Unsupported image type. Supported: PNG, JPEG, GIF, WebP and BMP.".into()),
     };
     let dimension_text = dimensions.map(|(w,h)| format!(", {w} × {h} pixels")).unwrap_or_else(|| ", dimensions unavailable from basic header inspection".into());
-    Ok(ImageInfo { file_name: file_name.into(), format: format.into(), size_bytes: data.len(), dimensions, description: format!("{format} image, {} bytes{dimension_text}", data.len()) })
+    Ok(ImageInfo { file_name: file_name.into(), format: format.into(), size_bytes: original_size_bytes, dimensions, description: format!("{format} image, {original_size_bytes} bytes{dimension_text}") })
 }
 
 #[cfg(test)]
@@ -58,10 +59,10 @@ mod tests {
         bytes.extend_from_slice(&[0,0,0,13,b'I',b'H',b'D',b'R']);
         bytes.extend_from_slice(&640u32.to_be_bytes());
         bytes.extend_from_slice(&480u32.to_be_bytes());
-        let info = inspect_image("sample.png", &bytes).unwrap();
+        let info = inspect_image("sample.png", &bytes, bytes.len() as u64).unwrap();
         assert_eq!(info.dimensions, Some((640,480)));
     }
     #[test] fn rejects_mismatched_image_headers() {
-        assert!(inspect_image("sample.png", b"not png").is_err());
+        assert!(inspect_image("sample.png", b"not png", 7).is_err());
     }
 }
