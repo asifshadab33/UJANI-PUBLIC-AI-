@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp } from "lucide-react";
+import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number };
 type RunResult = { operation: string; output: string; execution: string };
+type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
+type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function App() {
@@ -14,13 +16,20 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [policy, setPolicy] = useState("local");
   const [history, setHistory] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState("auto");
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelResult, setModelResult] = useState<InferenceResult | null>(null);
+  const [modelError, setModelError] = useState("");
 
   useEffect(() => {
     if (!isTauri()) {
       setDeviceError("Browser preview: launch the Tauri desktop app to read device information.");
+      setModels([{ id: "ujani.mock.echo.v1", name: "UJANI Mock Echo (test adapter)", provider: "Built-in deterministic mock", available: true, is_mock: true, required_capabilities: ["cpu"], status: "Browser preview only — mock" }]);
       return;
     }
     invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
+    invoke<ModelInfo[]>("list_local_models").then(setModels).catch((error) => setModelError(String(error)));
   }, []);
 
   async function runTask() {
@@ -31,11 +40,7 @@ export default function App() {
     try {
       const output: RunResult = isTauri()
         ? await invoke<RunResult>("run_local_task", { request: text })
-        : {
-            operation: "local.word_count",
-            output: `Local preview completed. Your request contains ${text.split(/\s+/).length} words. This is a demo tool, not an AI model.`,
-            execution: "Browser demo (not a native device runtime)"
-          };
+        : { operation: "local.word_count", output: `Local preview completed. Your request contains ${text.split(/\\s+/).length} words. This is a demo tool, not an AI model.`, execution: "Browser demo (not a native device runtime)" };
       setResult(output);
       setHistory((items) => [text, ...items].slice(0, 5));
     } catch (error) {
@@ -45,7 +50,28 @@ export default function App() {
     }
   }
 
+  async function runModel() {
+    const text = request.trim();
+    if (!text || modelBusy) return;
+    setModelBusy(true);
+    setModelResult(null);
+    setModelError("");
+    try {
+      if (!isTauri()) {
+        setModelResult({ model_id: "ujani.mock.echo.v1", model_name: "UJANI Mock Echo (test adapter)", output: `MOCK RESPONSE — no model inference occurred. Browser preview received ${text.length} characters locally: ${text}`, execution: "Browser deterministic mock", is_mock: true });
+      } else {
+        const modelId = selectedModel === "auto" ? "auto" : selectedModel;
+        setModelResult(await invoke<InferenceResult>("run_local_model_task", { modelId, prompt: text }));
+      }
+    } catch (error) {
+      setModelError(`Local model task failed: ${String(error)}`);
+    } finally {
+      setModelBusy(false);
+    }
+  }
+
   const memory = device ? `${(device.total_memory_mb / 1024).toFixed(1)} GB` : "—";
+  const selected = models.find((model) => model.id === selectedModel);
   return <main className="shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">U</div><div><b>UJANI</b><small>PUBLIC AI</small></div></div>
@@ -66,12 +92,21 @@ export default function App() {
       </div>
       <div className="workspace">
         <div className="task-panel">
-          <div className="section-heading"><div><h2>What would you like to do?</h2><p>Try the safe local demonstration tool.</p></div><Zap size={20}/></div>
-          <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Count the words in this paragraph." rows={5}/>
-          <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running…" : "Run local task"} <Send size={15}/></button></div>
-          {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
+          <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a prompt to test the local-only execution path.</p></div><Zap size={20}/></div>
+          <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
+          <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
+          {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
+          <div className="model-box">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>
+            <label className="model-select">Model selection<select value={selectedModel} onChange={(event) => { setSelectedModel(event.target.value); setModelResult(null); setModelError(""); }}><option value="auto">Automatic (currently resolves to the only registered local mock)</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
+            {models.map((model) => <div className="model-status" key={model.id}><span className={model.available ? "dot online" : "dot"}/><div><b>{model.name}</b><small>{model.status} · {model.required_capabilities.join(", ")} required · {model.is_mock ? "MOCK — not a real model" : "Local model"}</small></div></div>)}
+            {modelError && <p className="error" role="alert">{modelError}</p>}
+            <button className="model-run" onClick={runModel} disabled={!request.trim() || modelBusy || (!!selected && !selected.available)}>{modelBusy ? "Running locally…" : "Run selected local adapter"} <Send size={15}/></button>
+            {modelBusy && <p className="progress" role="status">Local adapter running. No network request is made.</p>}
+            {modelResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> {modelResult.is_mock ? "Mock adapter result" : "Model result"} <span>{modelResult.execution}</span></div><p>{modelResult.output}</p><small>{modelResult.model_name} · {modelResult.model_id} · {modelResult.is_mock ? "No AI inference occurred" : "Local inference"}</small></div>}
+          </div>
         </div>
-        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Tasks stay on this device in this prototype.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>Unavailable features are labelled, not simulated.</small></div></div>
+        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Requests stay on this device in this prototype.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
         </div>
       </div>
