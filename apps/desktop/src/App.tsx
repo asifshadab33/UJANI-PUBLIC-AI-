@@ -312,7 +312,7 @@ export default function App() {
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
             </label>
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
-            {fileAnalysis && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 24 * 1024}>{summaryBusy ? "Summarising locally…" : "Run integrated local document pipeline"}</button>}
+            {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 24 * 1024}>{summaryBusy ? "Summarising locally…" : "Run integrated local document pipeline"}</button>}
             {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. No cloud transfer.</small></div>}
             <label className="file-picker">Inspect image metadata (max 20 MiB)
               <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" onChange={handleImageFile}/>
