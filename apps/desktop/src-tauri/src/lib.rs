@@ -9,7 +9,9 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::{collections::{BTreeSet, HashMap}, sync::Mutex};
+use tauri::{AppHandle, Emitter, State};
+use tokio_util::sync::CancellationToken;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
 use sysinfo::System;
 use ujani_core::{FileAnalysis, ImageInfo};
@@ -183,11 +185,75 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     Ok(OllamaStatus { available, models })
 }
 
-/// Real local inference only. Smart and Fortress never fall back to cloud.
-#[tauri::command]
-async fn execute_local_ai_task(prompt: String, mode: String, model: String) -> Result<task_engine::AiTaskResult, String> {
-    LocalTaskEngine::execute(prompt, mode, model).await
+
+#[derive(Default)]
+struct TaskControlState {
+    active: Mutex<HashMap<String, CancellationToken>>,
 }
+
+#[derive(Clone, Serialize)]
+struct TaskProgressEvent {
+    task_id: String,
+    stage: String,
+    message: String,
+    progress_percent: u8,
+}
+
+fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str, progress_percent: u8) {
+    let _ = app.emit("ujani-task-progress", TaskProgressEvent {
+        task_id: task_id.to_string(),
+        stage: stage.to_string(),
+        message: message.to_string(),
+        progress_percent,
+    });
+}
+
+/// Interactive local chat with a cancellation token and an overall time budget.
+#[tauri::command]
+async fn execute_local_ai_task(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
+    prompt: String,
+    mode: String,
+    model: String,
+) -> Result<task_engine::AiTaskResult, String> {
+    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier.".into());
+    }
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+        active.insert(task_id.clone(), token.clone());
+    }
+    emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
+    let execution = LocalTaskEngine::execute(prompt, mode, model);
+    let result = tokio::select! {
+        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
+        outcome = tokio::time::timeout(std::time::Duration::from_secs(140), execution) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err("Local task exceeded the 140-second overall time budget. Try a smaller prompt or faster model.".into()),
+            }
+        }
+    };
+    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+    match &result {
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
+        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
+        Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
+        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_local_ai_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
+    let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+    if let Some(token) = active.get(&task_id) { token.cancel(); Ok(true) } else { Ok(false) }
+}
+
 
 /// Processes text supplied by the user through the UI; never opens a path.
 #[tauri::command]
@@ -312,6 +378,7 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(TaskControlState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             execute_cloud_ai_task,
@@ -327,6 +394,7 @@ pub fn run() {
             get_model_recommendation,
             execute_document_workflow,
             execute_local_ai_task,
+            cancel_local_ai_task,
             analyze_text_file,
             summarize_selected_text,
             process_selected_document,
