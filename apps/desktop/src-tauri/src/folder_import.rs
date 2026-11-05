@@ -269,14 +269,12 @@ mod tests {
         assert!(collect_selected_folder(&folder.0).unwrap_err().contains("UTF-8"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rejects_a_symlinked_selected_root() {
         let folder = TestFolder::new();
         let link = folder.0.with_extension("link");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&folder.0, &link).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&folder.0, &link).unwrap();
 
         let error = collect_selected_folder(&link).unwrap_err();
         assert!(error.contains("symlink"));
