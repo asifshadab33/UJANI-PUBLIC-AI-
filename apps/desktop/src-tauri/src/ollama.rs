@@ -27,14 +27,19 @@ fn valid_model(model: &str) -> bool {
     !model.is_empty() && model.len() <= 128 &&
         model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
 }
-async fn parse_limited<T: for<'de> Deserialize<'de>>(response: reqwest::Response) -> Result<T, String> {
+async fn parse_limited<T: for<'de> Deserialize<'de>>(mut response: reqwest::Response) -> Result<T, String> {
     let status = response.status();
     if !status.is_success() { return Err(format!("Local Ollama returned HTTP {status}.")); }
     if response.content_length().is_some_and(|n| n > MAX_RESPONSE_BYTES as u64) {
         return Err("Local Ollama response exceeds the 2 MiB limit.".into());
     }
-    let bytes = response.bytes().await.map_err(|e| format!("Could not read local Ollama response: {e}"))?;
-    if bytes.len() > MAX_RESPONSE_BYTES { return Err("Local Ollama response exceeds the 2 MiB limit.".into()); }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Could not read local Ollama response: {e}"))? {
+        if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err("Local Ollama response exceeds the 2 MiB limit.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     serde_json::from_slice(&bytes).map_err(|e| format!("Could not parse local Ollama response: {e}"))
 }
 
