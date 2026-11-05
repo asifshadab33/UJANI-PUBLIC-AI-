@@ -1,3 +1,4 @@
+mod history;
 mod model_runtime;
 mod ollama;
 mod task_engine;
@@ -320,7 +321,13 @@ pub fn run() {
             process_selected_document,
             process_selected_pdf,
             translate_text_local,
-            inspect_image_file
+            inspect_image_file,
+            history::get_task_history_settings,
+            history::set_task_history_enabled,
+            history::save_task_history,
+            history::list_task_history,
+            history::delete_task_history,
+            history::clear_task_history
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
