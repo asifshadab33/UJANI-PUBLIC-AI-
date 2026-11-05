@@ -594,6 +594,7 @@ export default function App() {
             {persistentHistory.length ? persistentHistory.map((entry) => <div className="saved-history-item" key={entry.id}>
               <button className="saved-history-prompt" onClick={() => setRequest(entry.prompt)} title="Reuse saved prompt">{entry.prompt}</button>
               <small>{entry.kind} · {entry.mode} · {new Date(entry.created_at * 1000).toLocaleString()}</small>
+              <details className="saved-history-output"><summary>View saved result</summary><p>{entry.output}</p><small>Model: {entry.model || "Not recorded"}</small></details>
               <button className="history-delete" onClick={() => deletePersistentHistory(entry.id)} aria-label={"Delete history entry " + entry.id}>Delete</button>
             </div>) : <small>No saved tasks yet.</small>}
             <small>Deletion removes entries from the app database but is not a forensic secure-erase guarantee. Local database encryption is not currently implemented.</small>
