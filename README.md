@@ -39,7 +39,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Desktop prototype
 
-The first desktop UI and Tauri 2 native bridge are in [`apps/desktop`](apps/desktop/README.md). It currently reports basic read-only device information and runs a deterministic local word-count demonstration. It is a pre-alpha scaffold, not yet a local AI assistant. See the app README for prerequisites and run instructions.
+The Tauri 2 desktop prototype is in [`apps/desktop`](apps/desktop/README.md). It includes a four-mode policy preview, a loopback-only Ollama adapter for real local inference in Fortress and Smart modes, bounded in-memory text-file analysis, and basic image-header inspection. Worker/Partner cloud execution, OS-level network isolation, OCR/vision, and production sandboxing are not implemented. See the app README for Ollama setup and limitations.
 
 ## Prototype core
 
