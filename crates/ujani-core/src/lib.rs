@@ -179,6 +179,9 @@ mod tests {
 pub mod router;
 pub mod file_processor;
 pub mod image_processor;
+pub mod capability;
+
+pub use capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
 
 pub use file_processor::{analyze_text, FileAnalysis};
 pub use image_processor::{inspect_image, ImageInfo};
