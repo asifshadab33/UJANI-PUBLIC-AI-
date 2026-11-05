@@ -89,6 +89,7 @@ struct DeviceInfo {
     architecture: String,
     logical_cpus: usize,
     total_memory_mb: u64,
+    available_memory_mb: u64,
 }
 
 #[derive(Serialize)]
@@ -108,6 +109,7 @@ fn get_device_info() -> DeviceInfo {
         architecture: std::env::consts::ARCH.to_string(),
         logical_cpus: system.cpus().len(),
         total_memory_mb: system.total_memory() / (1024 * 1024),
+        available_memory_mb: system.available_memory() / (1024 * 1024),
     }
 }
 
