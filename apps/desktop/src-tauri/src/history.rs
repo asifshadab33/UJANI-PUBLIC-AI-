@@ -8,6 +8,7 @@ const RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
 const MAX_ENTRIES: i64 = 100;
 const MAX_PROMPT: usize = 32 * 1024;
 const MAX_OUTPUT: usize = 2 * 1024 * 1024;
+const MAX_STORED_OUTPUT: usize = 64 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct HistoryEntry { pub id:i64, pub prompt:String, pub output:String, pub mode:String, pub model:String, pub kind:String, pub created_at:i64 }
@@ -45,8 +46,13 @@ fn save(db:&mut Connection,prompt:&str,output:&str,mode:&str,model:&str,kind:&st
  if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{return Err("History prompt must be non-empty and at most 32 KiB.".into());}
  if output.trim().is_empty()||output.len()>MAX_OUTPUT{return Err("History output must be non-empty and at most 2 MiB.".into());}
  for (name,value,max) in [("mode",mode,32usize),("model",model,128usize),("kind",kind,32usize)] {if value.len()>max||value.chars().any(char::is_control){return Err(format!("Invalid history {name}."));}}
+ let stored_output = if output.len() > MAX_STORED_OUTPUT {
+  let mut boundary = MAX_STORED_OUTPUT;
+  while !output.is_char_boundary(boundary) { boundary -= 1; }
+  format!("{}\\n\\n[History result truncated to 64 KiB.]", &output[..boundary])
+ } else { output.to_string() };
  let tx=db.transaction().map_err(|e|e.to_string())?;
- tx.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![prompt,output,mode,model,kind,created_at]).map_err(|e|e.to_string())?;
+ tx.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![prompt,stored_output,mode,model,kind,created_at]).map_err(|e|e.to_string())?;
  let id=tx.last_insert_rowid();
  tx.execute("DELETE FROM task_history WHERE created_at < ?1",params![created_at.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?;
  tx.execute("DELETE FROM task_history WHERE id NOT IN (SELECT id FROM task_history ORDER BY created_at DESC,id DESC LIMIT ?1)",params![MAX_ENTRIES]).map_err(|e|e.to_string())?;
