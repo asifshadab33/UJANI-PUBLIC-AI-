@@ -37,6 +37,10 @@ UJANI Public AI is an open-source, device-first AI runtime concept. It aims to h
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md).
 
+## Desktop prototype
+
+The first desktop UI and Tauri 2 native bridge are in [`apps/desktop`](apps/desktop/README.md). It currently reports basic read-only device information and runs a deterministic local word-count demonstration. It is a pre-alpha scaffold, not yet a local AI assistant. See the app README for prerequisites and run instructions.
+
 ## Prototype core
 
 The Rust crate in `crates/ujani-core` defines basic task, capability and execution-policy types plus a conservative routing decision. It deliberately does **not** execute commands, access files, discover hardware, or contact a cloud provider.
