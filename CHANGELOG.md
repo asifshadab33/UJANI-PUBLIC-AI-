@@ -1,5 +1,19 @@
 # UJANI Public AI — Development Changelog
 
+## 2026-11-05 — Bounded workflow graph planning
+
+### Added
+- A versioned schema-v1 task graph with a maximum of 32 nodes and 16 dependencies per node.
+- Validation for allow-listed operation IDs, valid and unique node IDs, missing/duplicate/self dependencies, and dependency cycles.
+- Deterministic topological ordering and conservative sequential peak-memory preflight based on registered operation metadata.
+- A Tauri command and desktop UI preview for an analyse → summarise → translate workflow.
+- Core tests for valid ordering, unsupported operations, invalid dependencies, cycles, schema/mode/node limits, missing capabilities and memory constraints.
+
+### Explicit limitations
+- Workflow graph planning is not general graph execution. It does not execute nodes, reserve CPU/RAM, open files, grant permissions, or create a sandbox.
+- The existing document summarisation pipeline remains a separate fixed workflow.
+- Worker/Partner remain unavailable for execution because no secure external gateway exists.
+
 This log records shipped repository changes. GitHub's commit metadata is the authoritative UTC timestamp for each push; links below open the exact commits.
 
 ## 2026-11-05 — Local execution and data tools
