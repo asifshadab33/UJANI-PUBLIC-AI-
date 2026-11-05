@@ -36,7 +36,7 @@ impl LocalTaskEngine {
             required_capabilities: BTreeSet::from(["cpu".to_string()]),
             available_capabilities: available,
             local_memory_required_mb: 0,
-            available_memory_mb: system.total_memory() / (1024 * 1024),
+            available_memory_mb: system.available_memory() / (1024 * 1024),
             external_data_approved: false,
             network_capability_available: false,
             requested_collaboration_rounds: 0,
