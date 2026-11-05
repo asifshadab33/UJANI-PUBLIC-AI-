@@ -13,7 +13,9 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
 - [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
 - [ ] Storage and verified GPU/NPU/runtime compatibility inventory.
-- [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.\n- [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.\n- [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
+- [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
+- [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
+- [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
 - [ ] Local task history and visible progress.
 - [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
 - [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
@@ -24,7 +26,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
 - [ ] Model catalogue with licence, checksum, source and compatibility metadata.
 - [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
-- [x] Initial registered local operation catalogue and conservative plan preview.\n- [ ] Structured task graph with dependency and output schemas (current document pipeline remains a fixed workflow).
+- [x] Initial registered local operation catalogue and conservative plan preview.
+- [ ] Structured task graph with dependency and output schemas (current document pipeline remains a fixed workflow).
 - [ ] Verification and reproducible benchmark harness.
 
 ## Phase 3 — optional external assistance
