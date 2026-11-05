@@ -20,6 +20,8 @@ type AiTaskResult = { mode_used: string; execution_location: string; model: stri
 type DocumentPipelineResult = { analysis: FileAnalysis; summary: string; translated_summary: string | null; translation_language: string | null; source_text_bytes: number; chunks_processed: number; total_chunks: number; execution_location: string; model: string };
 type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; content_preview: string; word_count: number; line_count: number; top_keywords: string[] };
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
+type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
+type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function App() {
@@ -30,6 +32,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [policy, setPolicy] = useState("local");
   const [history, setHistory] = useState<string[]>([]);
+  const [persistentHistory, setPersistentHistory] = useState<HistoryEntry[]>([]);
+  const [historySettings, setHistorySettings] = useState<HistorySettings | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("auto");
   const [modelBusy, setModelBusy] = useState(false);
@@ -85,7 +91,52 @@ export default function App() {
       if (status.models.length) setOllamaModel(status.models[0].name);
     }).catch((error) => setOllamaError(String(error)));
     invoke<ModelRecommendation>("get_model_recommendation").then(setModelRecommendation).catch((error) => setRecommendationError(String(error)));
+    invoke<HistorySettings>("get_task_history_settings").then(setHistorySettings).catch((error) => setHistoryError(String(error)));
+    invoke<HistoryEntry[]>("list_task_history").then(setPersistentHistory).catch((error) => setHistoryError(String(error)));
   }, []);
+
+
+  async function refreshPersistentHistory() {
+    if (!isTauri()) return;
+    setHistoryBusy(true); setHistoryError("");
+    try {
+      const [settings, entries] = await Promise.all([
+        invoke<HistorySettings>("get_task_history_settings"),
+        invoke<HistoryEntry[]>("list_task_history")
+      ]);
+      setHistorySettings(settings); setPersistentHistory(entries);
+    } catch (error) { setHistoryError("Local history unavailable: " + String(error)); }
+    finally { setHistoryBusy(false); }
+  }
+
+  async function togglePersistentHistory(enabled: boolean) {
+    if (!isTauri() || historyBusy) return;
+    setHistoryBusy(true); setHistoryError("");
+    try {
+      setHistorySettings(await invoke<HistorySettings>("set_task_history_enabled", { enabledValue: enabled }));
+      setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+    } catch (error) { setHistoryError(String(error)); }
+    finally { setHistoryBusy(false); }
+  }
+
+  async function saveToPersistentHistory(prompt: string, output: string, kind: string, model: string) {
+    if (!isTauri() || !historySettings?.enabled) return;
+    try {
+      await invoke<number>("save_task_history", { prompt, output, mode: executionMode, model, kind });
+      setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+    } catch (error) { setHistoryError("Could not save this task: " + String(error)); }
+  }
+
+  async function deletePersistentHistory(id: number) {
+    try { await invoke("delete_task_history", { entryId: id }); setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history")); }
+    catch (error) { setHistoryError(String(error)); }
+  }
+
+  async function clearPersistentHistory() {
+    if (!window.confirm("Delete all saved UJANI task history? This does not securely erase storage media.")) return;
+    try { await invoke("clear_task_history"); setPersistentHistory([]); }
+    catch (error) { setHistoryError(String(error)); }
+  }
 
   async function refreshCapabilities() {
     if (!isTauri() || capabilityBusy) return;
