@@ -673,7 +673,7 @@ export default function App() {
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => setCloudConsent(event.target.checked)}/> I approve sending the current prompt to this provider for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send secrets or sensitive data. The key is passed to the native command for this request only, not written to app storage, and cleared after the attempt.</small>
-            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || !cloudApiKey.trim() || cloudBusy}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
+            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || !cloudApiKey.trim() || cloudBusy || executionMode === "fortress"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
             {cloudResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Cloud provider response <span>{cloudModel}</span></div><p>{cloudResult}</p><small>External processing was approved for this task. Not saved to history automatically.</small></div>}
           </div>
