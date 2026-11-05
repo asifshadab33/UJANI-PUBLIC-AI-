@@ -42,6 +42,7 @@ export default function App() {
   const [routeError, setRouteError] = useState("");
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaError, setOllamaError] = useState("");
+  const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaModel, setOllamaModel] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState<AiTaskResult | null>(null);
@@ -119,6 +120,28 @@ export default function App() {
       setWorkflowPlan(await invoke<WorkflowPlan>("plan_task_workflow", { nodes, mode: executionMode }));
     } catch (error) { setCapabilityError(String(error)); }
     finally { setWorkflowBusy(false); }
+  }
+
+  async function refreshOllamaStatus() {
+    if (!isTauri() || ollamaBusy) return;
+    setOllamaBusy(true);
+    setOllamaError("");
+    try {
+      const status = await invoke<OllamaStatus>("get_ollama_status");
+      setOllamaStatus(status);
+      setOllamaModel((current) => status.models.some((model) => model.name === current)
+        ? current
+        : (status.models[0]?.name ?? ""));
+      if (!status.available) {
+        setOllamaError("Ollama is not responding at 127.0.0.1:11434. Start the local Ollama application and retry.");
+      } else if (status.models.length === 0) {
+        setOllamaError("Ollama is running, but no models are installed. Open a terminal and run: ollama pull llama3.2");
+      }
+    } catch (error) {
+      setOllamaError(`Could not refresh local Ollama status: ${String(error)}`);
+    } finally {
+      setOllamaBusy(false);
+    }
   }
 
   async function refreshModelRecommendation() {
@@ -414,14 +437,15 @@ export default function App() {
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
-            <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaStatus?.available ? "Connected locally" : "Not detected"}</b><small>{ollamaStatus?.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
-            {!ollamaStatus?.available && <div className="install-guide">
+            <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaStatus === null ? "Checking local service…" : ollamaStatus.available ? "Connected locally" : "Not detected"}</b><small>{ollamaStatus === null ? "Checking 127.0.0.1:11434…" : ollamaStatus.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
+            <button className="model-run" onClick={refreshOllamaStatus} disabled={!isTauri() || ollamaBusy}>{ollamaBusy ? "Checking Ollama…" : "Refresh Ollama status"}</button>
+            {(!ollamaStatus?.available || ollamaStatus.models.length === 0) && <div className="install-guide">
               <b>Set up local AI on this PC</b>
               <p>{platformInstallHint}</p>
               <a href="https://ollama.com/download" target="_blank" rel="noreferrer">Download Ollama from the official website ↗</a>
               <p>After installation, open a terminal and download a model:</p>
               <code>ollama pull llama3.2</code>
-              <p>Then keep Ollama running and refresh or reopen UJANI. Model files are downloaded separately from the Ollama application.</p>
+              <p>Then keep Ollama running and use “Refresh Ollama status” above. Model files are downloaded separately from the Ollama application.</p>
               <a href="https://ollama.com/library" target="_blank" rel="noreferrer">Browse available models ↗</a>
             </div>}
             <div className="install-guide">
