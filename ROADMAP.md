@@ -11,15 +11,18 @@ This roadmap describes intended work, not completed features. Items are not prod
 
 ## Phase 1 — desktop proof of concept
 - [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
-- [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.\n- [ ] Storage and verified GPU/NPU/runtime compatibility inventory.
+- [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
+- [ ] Storage and verified GPU/NPU/runtime compatibility inventory.
 - [ ] Capability registry with provenance, freshness and permission metadata. (The current resource panel is read-only display, not a scheduler registry.)
 - [ ] Local task history and visible progress.
 - [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
-- [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).\n- [ ] Image conversion and broader media metadata tools.
+- [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
+- [ ] Image conversion and broader media metadata tools.
 - [ ] Sandboxed execution adapter with enforceable filesystem and resource limits.
 
 ## Phase 2 — local models and planning
-- [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).\n- [ ] Model catalogue with licence, checksum, source and compatibility metadata.
+- [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
+- [ ] Model catalogue with licence, checksum, source and compatibility metadata.
 - [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
 - [ ] Structured task graph with dependency and output schemas (future work; current document pipeline is a fixed two-stage workflow).
 - [ ] Verification and reproducible benchmark harness.
