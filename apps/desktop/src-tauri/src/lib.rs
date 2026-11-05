@@ -109,8 +109,8 @@ fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis,
 
 /// Inspects image bytes supplied by the user through the UI; never opens a path.
 #[tauri::command]
-fn inspect_image_file(file_name: String, data: Vec<u8>) -> Result<ImageInfo, String> {
-    inspect_image(&file_name, &data)
+fn inspect_image_file(file_name: String, data: Vec<u8>, file_size_bytes: u64) -> Result<ImageInfo, String> {
+    inspect_image(&file_name, &data, file_size_bytes)
 }
 
 #[derive(Serialize)]
