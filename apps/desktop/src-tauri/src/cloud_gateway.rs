@@ -32,8 +32,26 @@ fn validate(endpoint:&str,model:&str,key:&str,prompt:&str,approved:bool)->Result
 }
 fn is_public_ip(ip: IpAddr) -> bool {
  match ip {
-  IpAddr::V4(v) => !(v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified() || v.is_multicast() || v.is_broadcast()),
-  IpAddr::V6(v) => !(v.is_loopback() || v.is_unique_local() || v.is_unicast_link_local() || v.is_unspecified() || v.is_multicast()),
+  IpAddr::V4(v) => {
+   let o = v.octets();
+   let shared = o[0] == 100 && (64..=127).contains(&o[1]);
+   let protocol = o[0] == 192 && o[1] == 0 && o[2] == 0;
+   let documentation = (o[0] == 192 && o[1] == 0 && o[2] == 2)
+    || (o[0] == 198 && o[1] == 51 && o[2] == 100)
+    || (o[0] == 203 && o[1] == 0 && o[2] == 113);
+   let benchmarking = o[0] == 198 && (o[1] == 18 || o[1] == 19);
+   !(v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified()
+    || v.is_multicast() || v.is_broadcast() || o[0] == 0 || o[0] >= 240
+    || shared || protocol || documentation || benchmarking)
+  },
+  IpAddr::V6(v) => {
+   if let Some(mapped) = v.to_ipv4_mapped() { return is_public_ip(IpAddr::V4(mapped)); }
+   let segments = v.segments();
+   let global_unicast = (segments[0] & 0xe000) == 0x2000;
+   let documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
+   global_unicast && !documentation && !v.is_loopback() && !v.is_unique_local()
+    && !v.is_unicast_link_local() && !v.is_unspecified() && !v.is_multicast()
+  }
  }
 }
 
@@ -73,5 +91,5 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 }
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn fortress_is_rejected_but_worker_modes_are_allowed(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_ok());assert!(validate_mode("partner").is_ok());assert!(validate_mode("unknown").is_err());}
-#[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("8.8.8.8".parse().unwrap()));assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
+#[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("8.8.8.8".parse().unwrap()));assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}
