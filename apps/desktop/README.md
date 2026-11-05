@@ -53,7 +53,7 @@ npm run tauri build
 - No shell execution, model-generated code execution, arbitrary filesystem path access, device sharing or background compute. Cloud calls are available only through the separate user-configured gateway after per-task consent.
 - User-selected text files are analysed in memory (1 MiB limit).
 - User-selected PNG/JPEG/GIF/WebP/BMP images are size-checked up to 20 MiB; only the first 64 KiB is sent to the native processor for header inspection.
-- Ollama calls are fixed to the loopback service at 127.0.0.1:11434, with prompt/response size limits and request timeouts.
+- Ollama calls are fixed to the loopback service at 127.0.0.1:11434, with prompt/response size limits, 45-second per-attempt timeouts, bounded retries and a 140-second overall deadline for interactive local chat. Interactive local chat emits task-progress events and supports cancellation.
 - Optional text-file summarisation runs through local Ollama only. The integrated pipeline accepts up to 256 KiB of text and processes larger inputs as bounded, sequential sections (maximum 16 sections) before a final synthesis step.
 - User-selected PDFs (up to 10 MiB) are parsed in memory on a blocking worker, then analysed and summarised locally when extracted text is at most 256 KiB. Scanned PDFs still require OCR, which is not implemented.
 - The integrated text/PDF workflow can optionally translate the generated summary into the selected language using a second local Ollama step. Translation is off unless the user selects it.
@@ -80,21 +80,21 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 - Visual image understanding (the current image tool reads basic metadata only).
 - Sandboxing and OS-enforced per-task resource quotas; CPU/RAM are currently reported, not reserved or capped.
 - Multi-step cloud subtask delegation, OS-backed saved credential vault, provider-specific cost metering, and production-grade cloud consent receipts.
-- OS-enforced Fortress network isolation (the policy preview cannot disable networking).
+- OS-enforced Fortress network isolation (the policy preview cannot disable networking). The native cloud command now rejects Fortress-mode requests, but this is application-level policy, not an OS firewall or sandbox.
 - Automatic browser control or browser translation API integration. Browser translation is a manual, external copy/paste path; text is not pre-filled or submitted.
 - Native OS translation APIs or downloadable OS language packs; locale detection is informational only.
 - Encrypted history and settings; current optional SQLite history is plaintext in the per-user app-data directory, with platform-dependent filesystem protection only.
 
 The word-count action is a deterministic plumbing test, not an AI feature. Do not describe this scaffold as a finished AI assistant.
 
-## Optional cloud provider setup\n\n1. Choose an OpenAI-compatible provider with a Chat Completions endpoint.\n2. Check its pricing, privacy, retention and free-tier limits directly with that provider.\n3. Enter its HTTPS endpoint, model identifier and your own API key in the Optional cloud AI gateway.\n4. Enter a prompt in the main task box and explicitly approve external processing for that task.\n5. Run the cloud request. The key field clears after the attempt; UJANI does not save it.\n\nThe gateway currently supports JSON Chat Completions responses with `choices[0].message.content`. It does not support provider-specific formats, image uploads, embeddings, tool calling, or automatic cloud fallback. Private/loopback IP endpoints and HTTP URLs are rejected; redirects are disabled.\n\n## Security and implementation boundaries
+## Optional cloud provider setup\n\n1. Choose an OpenAI-compatible provider with a Chat Completions endpoint.\n2. Check its pricing, privacy, retention and free-tier limits directly with that provider.\n3. Enter its HTTPS endpoint, model identifier and your own API key in the Optional cloud AI gateway.\n4. Enter a prompt in the main task box and explicitly approve external processing for that task.\n5. Run the cloud request. The key field clears after the attempt; UJANI does not save it.\n\nThe gateway currently supports JSON Chat Completions responses with `choices[0].message.content`. It does not support provider-specific formats, image uploads, embeddings, tool calling, or automatic cloud fallback. HTTP, localhost and private/reserved IP targets are rejected; DNS results are checked and pinned for the request, redirects and environment proxies are disabled. Fortress mode is rejected by the native command.\n\n## Security and implementation boundaries
 
 - Optional bring-your-own-provider cloud gateway supports OpenAI-compatible Chat Completions endpoints. Users supply their own HTTPS endpoint, model and API key, and approve each prompt before transfer. Keys are passed only for that invocation and are not persisted. UJANI does not provide free keys or credits.
 - Do not set an API key in frontend code, browser storage, or a command argument. A future hosted-provider integration must use OS-backed secret storage, explicit per-task consent, bounded data minimisation, and visible cost limits before it is enabled.
 - Ollama retries are limited to three attempts for transient connection, timeout, and server failures. Client errors and invalid/oversized responses are not retried.
 - The native device report includes total and currently available system memory. GPU/NPU detection is still explicitly unavailable; the app does not fabricate accelerator capability.
 - The current file and image tools process bytes selected by the user in memory. They do not accept arbitrary filesystem paths, so there is no path-based API for an AI prompt to traverse.
-- Optional SQLite task history is implemented with recording disabled by default, 30-day retention, a 100-entry cap, per-entry deletion and clear-all controls. It stores plaintext in the app-data directory; encryption is not implemented. Cloud cost accounting remains unavailable because no cloud provider is integrated.
+- Optional SQLite task history is implemented with recording disabled by default, 30-day retention, a 100-entry cap, per-entry deletion and clear-all controls. It stores plaintext in the app-data directory; encryption and OS-backed key management are not implemented. The BYOK cloud gateway is a single-provider API integration, not a secure peer-to-peer Worker/Partner network.
 - Smart mode currently executes locally when the local Ollama route is available. It does not ask a model to estimate confidence and silently escalate. A future external fallback must wait for explicit approval for the exact data/subtask.
 
 ## Corrected implementation audit (2026-11-06)
