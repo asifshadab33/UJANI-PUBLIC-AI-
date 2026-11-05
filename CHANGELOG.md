@@ -110,3 +110,19 @@ https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commits/main
 - Local model compute is performed by Ollama; its CPU/GPU usage depends on the installed runtime, model and drivers. UJANI does not yet reserve CPU, inspect GPU/NPU readiness or enforce resource quotas.
 - PDF extraction and local translation are prototype features and require native build and runtime testing before release.
 
+## 2026-11-06 — Capability registry and local task planner
+
+**Type:** Local-first orchestration foundation.
+
+### Added
+- Read-only capability snapshot for CPU, available memory, Ollama loopback health, PDF text extraction and image-header inspection.
+- GPU and NPU are represented as unknown until actual hardware/runtime compatibility checks exist; they are never assumed available.
+- Trusted built-in operation catalogue for local AI, document summarisation, PDF extraction/summarisation, translation, text analysis and image-header inspection.
+- Conservative local task-plan preview that checks required capabilities and a coarse minimum available-memory threshold.
+- Desktop UI to refresh capability status, select an allow-listed operation and inspect its proposed local plan.
+- Core unit tests for unknown operations, missing local model runtime, memory preflight, PDF requirements, local-only mode and non-execution guarantees.
+
+### Safety boundaries
+- A successful plan is not an execution grant: no task is started and no CPU/RAM is reserved.
+- Capability snapshots are point-in-time and do not yet include expiry/freshness metadata or resource budgets.
+- Worker/Partner and external scheduling remain unavailable until a separately controlled gateway is implemented.
