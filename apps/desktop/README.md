@@ -54,8 +54,8 @@ npm run tauri build
 - User-selected text files are analysed in memory (1 MiB limit).
 - User-selected PNG/JPEG/GIF/WebP/BMP images are size-checked up to 20 MiB; only the first 64 KiB is sent to the native processor for header inspection.
 - Ollama calls are fixed to the loopback service at 127.0.0.1:11434, with prompt/response size limits and request timeouts.
-- Optional text-file summarisation runs through local Ollama only (up to 24 KiB of text).
-- User-selected PDFs (up to 10 MiB) are parsed in memory on a blocking worker, then analysed and summarised with local Ollama when extracted text is at most 24 KiB.
+- Optional text-file summarisation runs through local Ollama only. The integrated pipeline accepts up to 256 KiB of text and processes larger inputs as bounded, sequential sections (maximum 16 sections) before a final synthesis step.
+- User-selected PDFs (up to 10 MiB) are parsed in memory on a blocking worker, then analysed and summarised locally when extracted text is at most 256 KiB. Scanned PDFs still require OCR, which is not implemented.
 - The integrated text/PDF workflow can optionally translate the generated summary into the selected language using a second local Ollama step. Translation is off unless the user selects it.
 - Local text translation uses the selected Ollama model in Fortress/Smart modes (16 KiB input limit).
 - A read-only capability panel reports CPU threads, RAM availability, OS and system locale.
