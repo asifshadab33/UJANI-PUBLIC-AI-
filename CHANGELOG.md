@@ -11,7 +11,8 @@ This log records shipped repository changes. GitHub's commit metadata is the aut
 - A loopback-only Ollama adapter in the desktop Tauri application. It checks `127.0.0.1:11434`, lists locally installed models, and runs non-streaming generation with connection/request timeouts and prompt/response size limits.
 - A native local AI command for Fortress and Smart modes. It evaluates the existing four-mode policy first and invokes Ollama only when the local route is allowed.
 - A hard no-cloud behavior for Worker and Partner execution until a secure external gateway is implemented.
-- In-memory text analysis for user-selected text files, limited to 1 MiB, with word/line counts, preview and frequent keywords.\n- Optional local Ollama summarisation for selected text files up to 24 KiB.
+- In-memory text analysis for user-selected text files, limited to 1 MiB, with word/line counts, preview and frequent keywords.
+- Optional local Ollama summarisation for selected text files up to 24 KiB.
 - In-memory image-header inspection for user-selected PNG, JPEG, GIF, WebP and BMP files, with a 20 MiB original-file limit and only the first 64 KiB sent across Tauri IPC.
 - A trusted-operation allow-list in the core router.
 - Desktop UI for Ollama status/model selection, local AI results, and file/image selection.
@@ -32,6 +33,7 @@ This log records shipped repository changes. GitHub's commit metadata is the aut
 - `crates/ujani-core/src/image_processor.rs`
 - `apps/desktop/src-tauri/Cargo.toml`
 - `apps/desktop/src-tauri/src/ollama.rs`
+- `apps/desktop/src-tauri/src/task_engine.rs`
 - `apps/desktop/src-tauri/src/lib.rs`
 - `apps/desktop/src/App.tsx`
 - `apps/desktop/src/styles.css`
@@ -44,7 +46,12 @@ This log records shipped repository changes. GitHub's commit metadata is the aut
 - [Router operation allow-list](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/4317368dfaf7366bdcc5a24eacaf4d1a9077e929)
 - [Native Ollama and file/image commands](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/e830d4ce6821ba2a19311b8c4854031fd265d540)
 - [Desktop UI integration](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/19923afff2db3cceff2b1a047a4c5e53e66d7c83)
-- [Desktop and project documentation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/c4eab0a1d5ade632bfb037035f02290fd21f7547)\n- [Bound Ollama response memory](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/d49534c6b3be05c37f27cd7407c1180537bb7961)\n- [Bound image-header IPC data](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/81ed6f563ad21d4971249d60ec7bea3b552b84f8)\n- [Add local text summarisation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/1130426a723e7cd4f789579e806fa2edcbd787ab)
+- [Desktop and project documentation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/c4eab0a1d5ade632bfb037035f02290fd21f7547)
+- [Bound Ollama response memory](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/d49534c6b3be05c37f27cd7407c1180537bb7961)
+- [Bound image-header IPC data](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/81ed6f563ad21d4971249d60ec7bea3b552b84f8)
+- [Add local text summarisation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/1130426a723e7cd4f789579e806fa2edcbd787ab)
+- [Create native local task engine](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/4a12f231cc7e06331a160362bea4a4ff5acd6218)
+- [Add CI for core, native and frontend checks](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commit/18a8ba37e8457dddd80f3d7fbb2c94440cebdf47)
 
 ## Earlier development
 
