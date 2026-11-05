@@ -110,7 +110,8 @@ mod tests {
         assert!(valid_model("llama3.2"));
         assert!(valid_model("org/model:tag"));
         assert!(!valid_model(""));
-        assert!(!valid_model("../model"));\n        assert!(!valid_model("org/../model"));
+        assert!(!valid_model("../model"));
+        assert!(!valid_model("org/../model"));
         assert!(!valid_model("model name"));
         assert!(!valid_model(&"m".repeat(129)));
     }
