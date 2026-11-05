@@ -1,3 +1,20 @@
+## 2026-11-06 — Fixed local workflow execution and model guidance
+
+### Added and improved
+- A native command validates the registered schema-v1 document workflow before invoking the one fixed local analyse → summarise → optional translate pipeline.
+- Installed Ollama model-fit guidance based on reported model disk size and current OS-available RAM. The estimate is advisory; the app never silently switches models.
+- A persistent model-advice panel with visible loading/error states and a retry action, including when the first request fails.
+- Additional core tests for the exact advisory budget boundary, deterministic tie ordering and an empty model catalogue.
+
+### Verification
+- The current main commit's GitHub Actions run passed the Rust core tests, Tauri native compile check and React/TypeScript build.
+- The changes in this section require a new CI run after they are pushed; no test result is claimed for this follow-up before that run completes.
+
+### Limitations retained intentionally
+- Arbitrary task graphs are not executable; only the fixed document workflow is.
+- Model-fit estimates are not guarantees or hard execution gates.
+- Worker/Partner cloud execution, SQLite history, verified GPU/NPU scheduling, full image decoding/OCR and filesystem sandboxing remain unimplemented.
+
 # UJANI Public AI — Development Changelog
 
 ## 2026-11-05 — Bounded workflow graph planning

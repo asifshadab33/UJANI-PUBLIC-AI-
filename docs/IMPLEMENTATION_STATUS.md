@@ -59,3 +59,10 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - Added a native command that validates a versioned, allow-listed three-step document graph before executing the existing bounded local document pipeline. Only analyse → summarise → optional translate is executable; arbitrary graphs are never interpreted as code.
 - The desktop UI now presents model fit estimates, lets the user explicitly choose the suggested installed model, and executes the fixed validated document workflow using already-selected text.
 - Cloud gateway, GPU/NPU runtime verification, SQLite persistence, full image decoding/OCR and distributed execution remain deferred. Cross-platform native testing is still required.
+
+
+## 2026-11-06 reliability follow-up
+
+- The model-advice panel remains visible while estimates are loading and provides a retry action even when the initial recommendation request fails. Failures are shown to the user rather than silently hiding the panel.
+- Added core tests for the exact advisory-memory boundary, deterministic tie ordering and an empty installed-model catalogue.
+- The estimate remains advisory only. It is not used as a hard execution gate because disk size cannot reliably predict memory use across quantisation, context sizes, runtime configuration and accelerator offload.

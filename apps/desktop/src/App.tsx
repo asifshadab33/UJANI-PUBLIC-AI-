@@ -424,15 +424,18 @@ export default function App() {
               <p>Then keep Ollama running and refresh or reopen UJANI. Model files are downloaded separately from the Ollama application.</p>
               <a href="https://ollama.com/library" target="_blank" rel="noreferrer">Browse available models ↗</a>
             </div>}
-            {modelRecommendation && <div className="install-guide">
-              <b>Local model resource advice (estimate only)</b><p>{modelRecommendation.explanation}</p>
-              <p>Available RAM: {modelRecommendation.available_memory_mb.toLocaleString()} MiB · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
-              {modelRecommendation.recommended_model ? <p>Suggested installed model: <b>{modelRecommendation.recommended_model}</b></p> : <p>No installed model can currently be recommended from the available information.</p>}
-              {modelRecommendation.candidates.slice(0,5).map(candidate => <p key={candidate.name}>{candidate.name}: {candidate.estimated_working_memory_mb===null?"unknown estimate":candidate.estimated_working_memory_mb.toLocaleString()+" MiB estimated"} · {candidate.estimated_to_fit?"within advisory budget":"not recommended"}</p>)}
-              {modelRecommendation.recommended_model && <button className="model-run" onClick={() => setOllamaModel(modelRecommendation.recommended_model!)}>Choose suggested model</button>}
-              <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Refreshing estimate…":"Refresh model advice"}</button>
-              {recommendationError && <p className="error" role="alert">{recommendationError}</p>}
-            </div>}
+            <div className="install-guide">
+              <b>Local model resource advice (estimate only)</b>
+              {modelRecommendation ? <>
+                <p>{modelRecommendation.explanation}</p>
+                <p>Available RAM: {modelRecommendation.available_memory_mb.toLocaleString()} MiB · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
+                {modelRecommendation.recommended_model ? <p>Suggested installed model: <b>{modelRecommendation.recommended_model}</b></p> : <p>No installed model can currently be recommended from the available information.</p>}
+                {modelRecommendation.candidates.slice(0,5).map(candidate => <p key={candidate.name}>{candidate.name}: {candidate.estimated_working_memory_mb===null?"unknown estimate":candidate.estimated_working_memory_mb.toLocaleString()+" MiB estimated"} · {candidate.estimated_to_fit?"within advisory budget":"not recommended"}</p>)}
+                {modelRecommendation.recommended_model && <button className="model-run" onClick={() => setOllamaModel(modelRecommendation.recommended_model!)}>Choose suggested model</button>}
+              </> : <p>{recommendationBusy ? "Checking installed models and available memory…" : "No model-fit estimate is available yet. You can retry the check."}</p>}
+              {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
+              <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
+            </div>
             <label className="model-select">Installed Ollama model
               <select value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)} disabled={!ollamaStatus?.models.length}>
                 {!ollamaStatus?.models.length && <option value="">No local models detected</option>}

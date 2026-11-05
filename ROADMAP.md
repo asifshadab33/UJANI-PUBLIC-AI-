@@ -31,6 +31,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
 - [x] Initial registered local operation catalogue and conservative plan preview.
 - [x] Versioned, bounded task graph schema with allow-listed operations, dependency validation, cycle rejection and deterministic topological planning (planning only; no general graph execution yet).
+- [x] Execute one fixed, validated local text workflow (analyse → summarise → optional translate); arbitrary graph nodes are still not executable.
 - [ ] Typed node input/output schemas and execution adapters for graph nodes.
 - [ ] Verification and reproducible benchmark harness.
 
