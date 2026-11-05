@@ -75,3 +75,19 @@ https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commits/main
 ### Commit
 - [Commit title](GitHub commit URL)
 ```
+
+## 2026-11-06 — Integrated local document pipeline
+
+**Type:** Feature integration and reliability fix.
+
+### Added
+- A single native `process_selected_document` operation now validates a user-selected text document, runs bounded text analysis, and then requests a summary from the selected local Ollama model.
+- The desktop UI now calls the integrated pipeline and displays the analysis and summary returned by the same native operation.
+- Added native validation tests for allowed modes, file names, empty content, and the 24 KiB AI-processing limit.
+
+### Reliability and safety
+- Repaired Rust source syntax in the Ollama retry helper/tests from the previous patch.
+- Rejected traversal-like local model identifiers and bounded the Ollama availability check.
+- The pipeline accepts file content only, not a filesystem path. It supports Fortress and Smart only, uses the loopback Ollama service, and has no cloud fallback.
+- This is a first integrated text-document workflow, not yet a general multi-step planner, PDF extractor, OCR engine, or task-graph executor.
+
