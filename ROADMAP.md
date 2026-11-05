@@ -18,6 +18,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
 - [ ] Local task history and visible progress.
 - [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
+- [x] Sequential, UTF-8-safe multi-section summarisation for documents up to 256 KiB, with bounded intermediate summaries and final synthesis; larger inputs require user splitting.
 - [x] Optional second local-model step to translate document/PDF summaries into a user-selected language.
 - [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
 - [ ] Image conversion and broader media metadata tools.
