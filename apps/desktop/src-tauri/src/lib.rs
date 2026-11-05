@@ -175,7 +175,7 @@ async fn execute_document_workflow(file_name:String,content:String,mode:String,m
 async fn execute_cloud_ai_task(endpoint:String,model:String,api_key:String,prompt:String,external_data_approved:bool)->Result<String,String>{
  cloud_gateway::execute(endpoint,model,api_key,prompt,external_data_approved).await
 }
-\n/// Checks only the local Ollama service at 127.0.0.1:11434.
+/// Checks only the local Ollama service at 127.0.0.1:11434.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let available = ollama::is_available().await;
