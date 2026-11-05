@@ -25,12 +25,11 @@ fn get_device_info() -> DeviceInfo {
         os: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
         architecture: std::env::consts::ARCH.to_string(),
         logical_cpus: system.cpus().len(),
-        total_memory_mb: system.total_memory() / 1024,
+        total_memory_mb: system.total_memory() / (1024 * 1024),
     }
 }
 
-/// A deliberately narrow demonstration operation. This does not execute model output,
-/// shell commands, scripts, file access, or network requests.
+/// Narrow demonstration operation: no shell, scripts, filesystem or network access.
 #[tauri::command]
 fn run_local_task(request: String) -> Result<RunResult, String> {
     let trimmed = request.trim();
