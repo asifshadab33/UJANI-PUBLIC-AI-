@@ -1,3 +1,6 @@
+mod model_runtime;
+
+use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
 use sysinfo::System;
 
@@ -29,6 +32,22 @@ fn get_device_info() -> DeviceInfo {
     }
 }
 
+/// Returns only models registered by the application. No model files are scanned.
+#[tauri::command]
+fn list_local_models() -> Vec<ModelInfo> {
+    let mut system = System::new();
+    system.refresh_cpu();
+    discover_models(!system.cpus().is_empty())
+}
+
+/// Runs an explicitly selected local adapter. No network or cloud fallback exists.
+#[tauri::command]
+fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
+    let mut system = System::new();
+    system.refresh_cpu();
+    run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
+}
+
 /// Narrow demonstration operation: no shell, scripts, filesystem or network access.
 #[tauri::command]
 fn run_local_task(request: String) -> Result<RunResult, String> {
@@ -50,7 +69,12 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_device_info, run_local_task])
+        .invoke_handler(tauri::generate_handler![
+            get_device_info,
+            list_local_models,
+            run_local_model_task,
+            run_local_task
+        ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
 }
