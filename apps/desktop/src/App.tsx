@@ -163,6 +163,7 @@ export default function App() {
         translationLanguage: translateSummary ? targetLanguage : null
       });
       setWorkflowExecution(execution);
+      await saveToPersistentHistory("Document workflow: " + (fileAnalysis?.file_name || "selected document"), execution.result.summary, "document", execution.result.model);
       setFileSummary(execution.result.summary);
       setFileTranslatedSummary(execution.result.translated_summary || "");
       setFilePipelineMeta(`${execution.result.chunks_processed}/${execution.result.total_chunks} sections · validated order: ${execution.plan.ordered_node_ids.join(" → ")}`);
@@ -211,6 +212,7 @@ export default function App() {
     try {
       const result = await invoke<AiTaskResult>("execute_local_ai_task", { prompt: request, mode: executionMode, model: ollamaModel });
       setAiResult(result);
+      await saveToPersistentHistory(request.trim(), result.output, "chat", result.model);
     } catch (error) { setOllamaError(String(error)); }
     finally { setAiBusy(false); }
   }
@@ -243,6 +245,7 @@ export default function App() {
       setFileSummary(result.summary);
       setFilePipelineMeta(`Processed ${result.chunks_processed} of ${result.total_chunks} sections · ${result.source_text_bytes.toLocaleString()} source bytes · ${result.execution_location}`);
       setFileTranslatedSummary(result.translated_summary ?? "");
+      await saveToPersistentHistory("Document: " + fileAnalysis.file_name, result.summary, "document", result.model);
     } catch (error) { setFileError(String(error)); }
     finally { setSummaryBusy(false); }
   }
@@ -266,6 +269,7 @@ export default function App() {
       setFileSummary(result.summary);
       setFilePipelineMeta(`Processed ${result.chunks_processed} of ${result.total_chunks} sections · ${result.source_text_bytes.toLocaleString()} extracted bytes · ${result.execution_location}`);
       setFileTranslatedSummary(result.translated_summary ?? "");
+      await saveToPersistentHistory("PDF: " + file.name, result.summary, "pdf", result.model);
       setFileText("");
     } catch (error) { setFileError(String(error)); }
     finally { setSummaryBusy(false); event.target.value = ""; }
@@ -277,9 +281,11 @@ export default function App() {
     if (executionMode !== "fortress" && executionMode !== "smart") { setOllamaError("Local translation is available in Fortress and Smart only."); return; }
     setTranslationBusy(true); setTranslationResult(""); setOllamaError("");
     try {
-      setTranslationResult(await invoke<string>("translate_text_local", {
+      const translated = await invoke<string>("translate_text_local", {
         text: translationText, targetLanguage, mode: executionMode, model: ollamaModel
-      }));
+      });
+      setTranslationResult(translated);
+      await saveToPersistentHistory("Translate to " + targetLanguage + ": " + translationText.slice(0, 200), translated, "translation", ollamaModel);
     } catch (error) { setOllamaError(String(error)); }
     finally { setTranslationBusy(false); }
   }
@@ -527,6 +533,20 @@ export default function App() {
         </div>
         <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Requests stay on this device in this prototype.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
+          <div className="history persistent-history">
+            <h3>Saved task history</h3>
+            <p>Optional local history. Saved prompts and outputs are stored as plaintext on this device.</p>
+            {historySettings && <label className="consent-row"><input type="checkbox" checked={historySettings.enabled} disabled={historyBusy} onChange={(event) => togglePersistentHistory(event.target.checked)}/> Save future task prompts and results on this device</label>}
+            <small>Retention: {historySettings?.retention_days ?? 30} days · Maximum: {historySettings?.max_entries ?? 100} entries. Recording is off by default.</small>
+            <div className="history-actions"><button onClick={refreshPersistentHistory} disabled={historyBusy}>{historyBusy ? "Refreshing…" : "Refresh"}</button><button onClick={clearPersistentHistory} disabled={!persistentHistory.length || historyBusy}>Delete all</button></div>
+            {historyError && <p className="error" role="alert">{historyError}</p>}
+            {persistentHistory.length ? persistentHistory.map((entry) => <div className="saved-history-item" key={entry.id}>
+              <button className="saved-history-prompt" onClick={() => setRequest(entry.prompt)} title="Reuse saved prompt">{entry.prompt}</button>
+              <small>{entry.kind} · {entry.mode} · {new Date(entry.created_at * 1000).toLocaleString()}</small>
+              <button className="history-delete" onClick={() => deletePersistentHistory(entry.id)} aria-label={"Delete history entry " + entry.id}>Delete</button>
+            </div>) : <small>No saved tasks yet.</small>}
+            <small>Deletion removes entries from the app database but is not a forensic secure-erase guarantee. Local database encryption is not currently implemented.</small>
+          </div>
         </div>
       </div>
       <footer>UJANI Public AI · Open source · Early prototype / pre-alpha <span>Local intelligence first.</span></footer>
