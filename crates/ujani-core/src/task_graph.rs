@@ -79,6 +79,9 @@ pub fn plan_task_graph(
     let mut node_by_id = BTreeMap::new();
 
     for node in &graph.nodes {
+        if node.depends_on.len() > 16 {
+            return rejected(graph, available_memory_mb, "Each workflow node may declare at most 16 dependencies.");
+        }
         if !valid_node_id(&node.id) {
             return rejected(graph, available_memory_mb, "A node has an invalid identifier.");
         }
