@@ -72,3 +72,11 @@ Cloud requests are subtask-scoped. The gateway should construct a minimal payloa
 ## Shared protocol
 
 The personal and enterprise projects should share versioned task/capability contracts, not duplicate each other's control planes. Enterprise fleet enrolment, organisation policies and scheduling belong only in UJANI Enterprise AI.
+
+## Initial capability registry and local planner
+
+The desktop prototype now exposes a read-only capability snapshot containing CPU availability, current available memory, local Ollama health, bundled PDF text extraction, bounded image-header inspection, and explicit unknown states for GPU/NPU. Each record includes an identifier, category, state, source and explanatory detail.
+
+The built-in operation catalogue is allow-listed. The local planner checks required capabilities and a conservative minimum available-memory preflight before returning a plan. It does not execute the operation, reserve memory, estimate model-specific VRAM/RAM needs, or enable background compute. Worker and Partner remain unsupported until a separately controlled external gateway exists.
+
+The snapshot is point-in-time information and can become stale. Future work must add timestamps/expiry, explicit resource budgets, model-specific compatibility checks and cancellation before scheduling long-running work.
