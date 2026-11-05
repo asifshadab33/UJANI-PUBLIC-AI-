@@ -50,7 +50,7 @@ npm run tauri build
 - Bounded Partner planning (maximum three rounds) and local memory-budget checks in the policy layer.
 - Tauri command exposure of the policy preview through the existing application library.
 - Capability checks, prompt-size validation, and visible UI status/errors before adapter execution.
-- No shell execution, model-generated code execution, cloud calls, arbitrary filesystem path access, device sharing or background compute.
+- No shell execution, model-generated code execution, arbitrary filesystem path access, device sharing or background compute. Cloud calls are available only through the separate user-configured gateway after per-task consent.
 - User-selected text files are analysed in memory (1 MiB limit).
 - User-selected PNG/JPEG/GIF/WebP/BMP images are size-checked up to 20 MiB; only the first 64 KiB is sent to the native processor for header inspection.
 - Ollama calls are fixed to the loopback service at 127.0.0.1:11434, with prompt/response size limits and request timeouts.
@@ -79,7 +79,7 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 - OCR for scanned PDFs and images (image-only PDFs return a clear unsupported message).
 - Visual image understanding (the current image tool reads basic metadata only).
 - Sandboxing and OS-enforced per-task resource quotas; CPU/RAM are currently reported, not reserved or capped.
-- Cloud subtask gateway and production consent workflow (the current control is a preview input only).
+- Multi-step cloud subtask delegation, OS-backed saved credential vault, provider-specific cost metering, and production-grade cloud consent receipts.
 - OS-enforced Fortress network isolation (the policy preview cannot disable networking).
 - Automatic browser control or browser translation API integration. Browser translation is a manual, external copy/paste path; text is not pre-filled or submitted.
 - Native OS translation APIs or downloadable OS language packs; locale detection is informational only.
@@ -87,9 +87,9 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 
 The word-count action is a deterministic plumbing test, not an AI feature. Do not describe this scaffold as a finished AI assistant.
 
-## Security and implementation boundaries
+## Optional cloud provider setup\n\n1. Choose an OpenAI-compatible provider with a Chat Completions endpoint.\n2. Check its pricing, privacy, retention and free-tier limits directly with that provider.\n3. Enter its HTTPS endpoint, model identifier and your own API key in the Optional cloud AI gateway.\n4. Enter a prompt in the main task box and explicitly approve external processing for that task.\n5. Run the cloud request. The key field clears after the attempt; UJANI does not save it.\n\nThe gateway currently supports JSON Chat Completions responses with `choices[0].message.content`. It does not support provider-specific formats, image uploads, embeddings, tool calling, or automatic cloud fallback. Private/loopback IP endpoints and HTTP URLs are rejected; redirects are disabled.\n\n## Security and implementation boundaries
 
-- No OpenAI API key field, cloud credential command, or cloud API integration is present. UJANI does not accept a key from the frontend and does not send prompts to OpenAI.
+- Optional bring-your-own-provider cloud gateway supports OpenAI-compatible Chat Completions endpoints. Users supply their own HTTPS endpoint, model and API key, and approve each prompt before transfer. Keys are passed only for that invocation and are not persisted. UJANI does not provide free keys or credits.
 - Do not set an API key in frontend code, browser storage, or a command argument. A future hosted-provider integration must use OS-backed secret storage, explicit per-task consent, bounded data minimisation, and visible cost limits before it is enabled.
 - Ollama retries are limited to three attempts for transient connection, timeout, and server failures. Client errors and invalid/oversized responses are not retried.
 - The native device report includes total and currently available system memory. GPU/NPU detection is still explicitly unavailable; the app does not fabricate accelerator capability.

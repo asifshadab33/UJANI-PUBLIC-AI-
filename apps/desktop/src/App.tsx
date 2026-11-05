@@ -81,6 +81,13 @@ export default function App() {
   const [modelRecommendation, setModelRecommendation] = useState<ModelRecommendation | null>(null);
   const [recommendationError, setRecommendationError] = useState("");
   const [recommendationBusy, setRecommendationBusy] = useState(false);
+  const [cloudEndpoint, setCloudEndpoint] = useState("https://api.openai.com/v1/chat/completions");
+  const [cloudModel, setCloudModel] = useState("gpt-4o-mini");
+  const [cloudApiKey, setCloudApiKey] = useState("");
+  const [cloudConsent, setCloudConsent] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudResult, setCloudResult] = useState("");
+  const [cloudError, setCloudError] = useState("");
 
   useEffect(() => {
     if (!isTauri()) {
@@ -428,6 +435,17 @@ export default function App() {
     }
   }
 
+  async function runCloudAi() {
+    if (!isTauri() || !request.trim() || cloudBusy) return;
+    if (!cloudConsent) { setCloudError("Approve this exact task for external processing before sending."); return; }
+    if (!cloudApiKey.trim()) { setCloudError("Enter your own provider API key. UJANI does not supply keys or credits."); return; }
+    setCloudBusy(true); setCloudError(""); setCloudResult("");
+    try {
+      setCloudResult(await invoke<string>("execute_cloud_ai_task", { endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), externalDataApproved: cloudConsent }));
+    } catch (error) { setCloudError(String(error)); }
+    finally { setCloudBusy(false); setCloudApiKey(""); setCloudConsent(false); }
+  }
+
   const memory = device ? `${(device.total_memory_mb / 1024).toFixed(1)} GB` : "—";
   const selected = models.find((model) => model.id === selectedModel);
   const platformInstallHint = device?.os?.toLowerCase().includes("windows")
@@ -623,6 +641,18 @@ export default function App() {
               <a href="https://translate.google.com/" target="_blank" rel="noreferrer">Open Google Translate ↗</a>
               <p>Browser-based translation requires internet access and the provider may process the text. Review its privacy terms before pasting sensitive information.</p>
             </div>
+          </div>
+          <div className="model-box">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Optional cloud AI gateway</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
+            <p className="muted">Supports OpenAI-compatible Chat Completions APIs. You may use a provider's free-tier key if offered, or your own hosted endpoint. UJANI does not provide keys, credits, or guarantee free usage.</p>
+            <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => setCloudEndpoint(event.target.value)} placeholder="https://api.example.com/v1/chat/completions"/></label>
+            <label className="model-select">Model name<input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} maxLength={128} placeholder="Provider model identifier"/></label>
+            <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
+            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => setCloudConsent(event.target.checked)}/> I approve sending the current prompt to this provider for this task only.</label>
+            <small className="muted">Provider terms, data retention and billing apply. Do not send secrets or sensitive data. The key is passed to the native command for this request only, not written to app storage, and cleared after the attempt.</small>
+            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || !cloudApiKey.trim() || cloudBusy}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
+            {cloudError && <p className="error" role="alert">{cloudError}</p>}
+            {cloudResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Cloud provider response <span>{cloudModel}</span></div><p>{cloudResult}</p><small>External processing was approved for this task. Not saved to history automatically.</small></div>}
           </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>

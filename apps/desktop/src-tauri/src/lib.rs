@@ -1,4 +1,4 @@
-mod folder_import;
+mod cloud_gateway;\nmod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
@@ -167,7 +167,14 @@ async fn execute_document_workflow(file_name:String,content:String,mode:String,m
  Ok(WorkflowExecutionResult{plan,result})
 }
 
-/// Checks only the local Ollama service at 127.0.0.1:11434.
+
+/// Sends one explicitly approved prompt to a user-configured OpenAI-compatible provider.
+/// The supplied API key is used for this invocation only and is never persisted.
+#[tauri::command]
+async fn execute_cloud_ai_task(endpoint:String,model:String,api_key:String,prompt:String,external_data_approved:bool)->Result<String,String>{
+ cloud_gateway::execute(endpoint,model,api_key,prompt,external_data_approved).await
+}
+\n/// Checks only the local Ollama service at 127.0.0.1:11434.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let available = ollama::is_available().await;
@@ -306,7 +313,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            get_device_info,
+            cloud_gateway::execute_cloud_ai_task,\n            get_device_info,
             get_capability_snapshot,
             plan_local_operation,
             plan_task_workflow,
