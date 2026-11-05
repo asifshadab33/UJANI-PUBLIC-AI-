@@ -174,10 +174,48 @@ async fn execute_document_workflow(file_name:String,content:String,mode:String,m
 /// Sends one explicitly approved prompt to a user-configured OpenAI-compatible provider.
 /// The supplied API key is used for this invocation only and is never persisted.
 #[tauri::command]
-async fn execute_cloud_ai_task(endpoint:String,model:String,api_key:String,prompt:String,mode:String,external_data_approved:bool)->Result<String,String>{
+async fn execute_cloud_ai_task(
+ app: AppHandle,
+ control: State<'_, TaskControlState>,
+ task_id: String,
+ endpoint: String,
+ model: String,
+ api_key: String,
+ prompt: String,
+ mode: String,
+ external_data_approved: bool,
+) -> Result<String, String> {
+ if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+  return Err("Invalid task identifier.".into());
+ }
  if mode == "fortress" { return Err("Fortress mode is local-only. Cloud transfer is blocked by native policy.".into()); }
  if !matches!(mode.as_str(), "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
- cloud_gateway::execute(endpoint,model,api_key,prompt,mode,external_data_approved).await
+ let token = CancellationToken::new();
+ {
+  let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+  if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+  active.insert(task_id.clone(), token.clone());
+ }
+ emit_task_progress(&app, &task_id, "cloud_starting", "Preparing the user-approved cloud request.", 5);
+ emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
+ let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved);
+ let result = tokio::select! {
+  _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
+  outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
+   match outcome {
+    Ok(value) => value,
+    Err(_) => Err("Cloud task exceeded the 95-second time budget.".into()),
+   }
+  }
+ };
+ if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+ match &result {
+  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
+  Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
+  Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
+  Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+ }
+ result
 }
 /// Checks only the local Ollama service at 127.0.0.1:11434.
 #[tauri::command]
@@ -230,6 +268,7 @@ async fn execute_local_ai_task(
         active.insert(task_id.clone(), token.clone());
     }
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
+    emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
     let execution = LocalTaskEngine::execute(prompt, mode, model);
     let result = tokio::select! {
         _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
