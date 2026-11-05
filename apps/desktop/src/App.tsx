@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
-type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number };
+type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number };
 type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
@@ -68,7 +68,7 @@ export default function App() {
         requiredCapabilities: ["cpu"],
         availableCapabilities: device?.logical_cpus ? ["cpu"] : [],
         localMemoryRequiredMb: 128,
-        availableMemoryMb: device?.total_memory_mb ?? 0,
+        availableMemoryMb: device?.available_memory_mb ?? 0,
         externalDataApproved: externalApproved,
         requestedCollaborationRounds: 2
       };
