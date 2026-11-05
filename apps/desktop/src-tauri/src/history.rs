@@ -137,8 +137,6 @@ fn open(app:&AppHandle)->Result<Connection,String>{
  #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; fs::set_permissions(&dir,fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?; }
  db.busy_timeout(std::time::Duration::from_secs(3)).map_err(|e|e.to_string())?;
  initialize(&db)?;
- let key = history_key()?;
- migrate_plaintext_rows(&db, &key)?;
  Ok(db)
 }
 fn is_enabled(db:&Connection)->Result<bool,String>{
@@ -172,13 +170,16 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
 
 #[tauri::command] pub fn get_task_history_settings(app:AppHandle)->Result<HistorySettings,String>{settings(&open(&app)?)}
 #[tauri::command] pub fn set_task_history_enabled(app:AppHandle,enabled_value:bool)->Result<HistorySettings,String>{
- let db=open(&app)?; db.execute("UPDATE history_settings SET value=?1 WHERE key='enabled'",params![if enabled_value{"true"}else{"false"}]).map_err(|e|e.to_string())?; settings(&db)
+ let db=open(&app)?;
+ if enabled_value { let key=history_key()?; migrate_plaintext_rows(&db,&key)?; }
+ db.execute("UPDATE history_settings SET value=?1 WHERE key='enabled'",params![if enabled_value{"true"}else{"false"}]).map_err(|e|e.to_string())?;
+ settings(&db)
 }
 #[tauri::command] pub fn save_task_history(app:AppHandle,prompt:String,output:String,mode:String,model:String,kind:String)->Result<i64,String>{
- let mut db=open(&app)?; let key=history_key()?; save_secure(&mut db,&key,&prompt,&output,&mode,&model,&kind,now()?)
+ let mut db=open(&app)?; let key=history_key()?; migrate_plaintext_rows(&db,&key)?; save_secure(&mut db,&key,&prompt,&output,&mode,&model,&kind,now()?)
 }
 #[tauri::command] pub fn list_task_history(app:AppHandle)->Result<Vec<HistoryEntry>,String>{
- let db=open(&app)?; let key=history_key()?; db.execute("DELETE FROM task_history WHERE created_at < ?1",params![now()?.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?; list_secure(&db,&key)
+ let db=open(&app)?; let key=history_key()?; migrate_plaintext_rows(&db,&key)?; db.execute("DELETE FROM task_history WHERE created_at < ?1",params![now()?.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?; list_secure(&db,&key)
 }
 #[tauri::command] pub fn delete_task_history(app:AppHandle,entry_id:i64)->Result<(),String>{
  if entry_id<=0{return Err("Invalid history entry identifier.".into());} open(&app)?.execute("DELETE FROM task_history WHERE id=?1",params![entry_id]).map_err(|e|e.to_string())?; Ok(())
