@@ -7,6 +7,10 @@ type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
 type RouteDecision = { mode: string; action: string; allowed: boolean; external_data_transfer_permitted: boolean; collaboration_rounds: number; reason: string; enforcement_boundary_required: boolean };
+type OllamaStatus = { available: boolean; models: { name: string; size: number }[] };
+type AiTaskResult = { mode_used: string; execution_location: string; model: string; output: string };
+type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; content_preview: string; word_count: number; line_count: number; top_keywords: string[] };
+type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function App() {
@@ -27,6 +31,14 @@ export default function App() {
   const [routeDecision, setRouteDecision] = useState<RouteDecision | null>(null);
   const [routeBusy, setRouteBusy] = useState(false);
   const [routeError, setRouteError] = useState("");
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [ollamaError, setOllamaError] = useState("");
+  const [ollamaModel, setOllamaModel] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<AiTaskResult | null>(null);
+  const [fileAnalysis, setFileAnalysis] = useState<FileAnalysis | null>(null);
+  const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
+  const [fileError, setFileError] = useState("");
 
   useEffect(() => {
     if (!isTauri()) {
@@ -36,6 +48,10 @@ export default function App() {
     }
     invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
     invoke<ModelInfo[]>("list_local_models").then(setModels).catch((error) => setModelError(String(error)));
+    invoke<OllamaStatus>("get_ollama_status").then((status) => {
+      setOllamaStatus(status);
+      if (status.models.length) setOllamaModel(status.models[0].name);
+    }).catch((error) => setOllamaError(String(error)));
   }, []);
 
   async function previewRoute() {
@@ -44,7 +60,7 @@ export default function App() {
     try {
       const args = {
         taskId: "desktop-task-preview",
-        operation: "user.request",
+        operation: "local.ai.generate",
         mode: executionMode,
         requiredCapabilities: ["cpu"],
         availableCapabilities: device?.logical_cpus ? ["cpu"] : [],
@@ -66,6 +82,43 @@ export default function App() {
       }
     } catch (error) { setRouteError(String(error)); }
     finally { setRouteBusy(false); }
+  }
+
+  async function runLocalAi() {
+    if (!request.trim() || aiBusy) return;
+    if (executionMode !== "fortress" && executionMode !== "smart") {
+      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner need a secure gateway.");
+      return;
+    }
+    if (!ollamaModel) { setOllamaError("Install and start Ollama, then pull a model before running local AI."); return; }
+    setAiBusy(true); setOllamaError(""); setAiResult(null);
+    try {
+      const result = await invoke<AiTaskResult>("execute_local_ai_task", { prompt: request, mode: executionMode, model: ollamaModel });
+      setAiResult(result);
+    } catch (error) { setOllamaError(String(error)); }
+    finally { setAiBusy(false); }
+  }
+
+  async function handleTextFile(event: import("react").ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileError(""); setFileAnalysis(null);
+    if (file.size > 1024 * 1024) { setFileError("Text files are limited to 1 MiB."); return; }
+    if (!isTauri()) { setFileError("Launch the Tauri desktop app to process files."); return; }
+    try { setFileAnalysis(await invoke<FileAnalysis>("analyze_text_file", { fileName: file.name, content: await file.text() })); }
+    catch (error) { setFileError(String(error)); }
+  }
+
+  async function handleImageFile(event: import("react").ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileError(""); setImageInfo(null);
+    if (file.size > 20 * 1024 * 1024) { setFileError("Images are limited to 20 MiB."); return; }
+    if (!isTauri()) { setFileError("Launch the Tauri desktop app to inspect images."); return; }
+    try {
+      const data = Array.from(new Uint8Array(await file.arrayBuffer()));
+      setImageInfo(await invoke<ImageInfo>("inspect_image_file", { fileName: file.name, data }));
+    } catch (error) { setFileError(String(error)); }
   }
 
   async function runTask() {
@@ -148,6 +201,33 @@ export default function App() {
             <small className="muted">Selecting a mode never grants consent by itself. Fortress policy preview does not disable OS networking. Worker and Partner cannot execute until a secure gateway is implemented.</small>
           </div>
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
+          <div className="model-box">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
+            <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaStatus?.available ? "Connected locally" : "Not detected"}</b><small>{ollamaStatus?.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
+            <label className="model-select">Installed Ollama model
+              <select value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)} disabled={!ollamaStatus?.models.length}>
+                {!ollamaStatus?.models.length && <option value="">No local models detected</option>}
+                {ollamaStatus?.models.map((model) => <option key={model.name} value={model.name}>{model.name}</option>)}
+              </select>
+            </label>
+            <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
+            {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
+            {aiResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Local AI result <span>{aiResult.execution_location}</span></div><p>{aiResult.output}</p><small>{aiResult.mode_used} · {aiResult.model} · no cloud fallback</small></div>}
+            <small className="muted">Fortress and Smart only. This uses HTTP to loopback Ollama; it does not itself enforce OS-wide network isolation.</small>
+          </div>
+          <div className="model-box">
+            <div className="section-heading"><div><h2><HardDrive size={18}/> Local file & image tools</h2><p>Only files explicitly selected by you are processed.</p></div><span className="muted">IN-MEMORY</span></div>
+            <label className="file-picker">Analyze text file (max 1 MiB)
+              <input type="file" accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" onChange={handleTextFile}/>
+            </label>
+            {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
+            <label className="file-picker">Inspect image metadata (max 20 MiB)
+              <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" onChange={handleImageFile}/>
+            </label>
+            {imageInfo && <div className="result"><div className="result-title">Image information <span>{imageInfo.file_name}</span></div><p>{imageInfo.description}</p></div>}
+            {fileError && <p className="error" role="alert">{fileError}</p>}
+            <small className="muted">Image inspection reads basic headers only. It does not perform OCR or visual recognition.</small>
+          </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>
             <label className="model-select">Model selection<select value={selectedModel} onChange={(event) => { setSelectedModel(event.target.value); setModelResult(null); setModelError(""); }}><option value="auto">Automatic (currently resolves to the only registered local mock)</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
