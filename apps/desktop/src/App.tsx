@@ -182,6 +182,13 @@ export default function App() {
 
   const memory = device ? `${(device.total_memory_mb / 1024).toFixed(1)} GB` : "—";
   const selected = models.find((model) => model.id === selectedModel);
+  const platformInstallHint = device?.os?.toLowerCase().includes("windows")
+    ? "Windows: download and run the official OllamaSetup.exe installer."
+    : device?.os?.toLowerCase().includes("darwin") || device?.os?.toLowerCase().includes("mac")
+      ? "macOS: download the official Ollama app and move it to Applications."
+      : device?.os?.toLowerCase().includes("linux")
+        ? "Linux: follow the official Linux installation instructions on the Ollama download page."
+        : "Choose your operating system on the official Ollama download page.";
   return <main className="shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">U</div><div><b>UJANI</b><small>PUBLIC AI</small></div></div>
@@ -225,6 +232,15 @@ export default function App() {
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
             <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaStatus?.available ? "Connected locally" : "Not detected"}</b><small>{ollamaStatus?.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
+            {!ollamaStatus?.available && <div className="install-guide">
+              <b>Set up local AI on this PC</b>
+              <p>{platformInstallHint}</p>
+              <a href="https://ollama.com/download" target="_blank" rel="noreferrer">Download Ollama from the official website ↗</a>
+              <p>After installation, open a terminal and download a model:</p>
+              <code>ollama pull llama3.2</code>
+              <p>Then keep Ollama running and refresh or reopen UJANI. Model files are downloaded separately from the Ollama application.</p>
+              <a href="https://ollama.com/library" target="_blank" rel="noreferrer">Browse available models ↗</a>
+            </div>}
             <label className="model-select">Installed Ollama model
               <select value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)} disabled={!ollamaStatus?.models.length}>
                 {!ollamaStatus?.models.length && <option value="">No local models detected</option>}
