@@ -190,6 +190,22 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
 #[cfg(test)] mod tests{
  use super::*;
  fn db()->Connection{let c=Connection::open_in_memory().unwrap();initialize(&c).unwrap();c}
+ #[test] fn encrypted_history_round_trips_and_detects_tampering() {
+  let key=[42u8;32];
+  let encrypted=encrypt_text(&key,"private prompt").unwrap();
+  assert!(encrypted.starts_with(ENCRYPTED_PREFIX));
+  assert_eq!(decrypt_text(&key,&encrypted).unwrap(),"private prompt");
+  let tampered=format!("{}A",&encrypted);
+  assert!(decrypt_text(&key,&tampered).is_err());
+ }
+ #[test] fn plaintext_history_rows_are_migrated() {
+  let db=db();
+  db.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('old prompt','old output','smart','m','chat',1)",[]).unwrap();
+  migrate_plaintext_rows(&db,&[7u8;32]).unwrap();
+  let (p,o):(String,String)=db.query_row("SELECT prompt,output FROM task_history WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+  assert!(p.starts_with(ENCRYPTED_PREFIX)); assert!(o.starts_with(ENCRYPTED_PREFIX));
+  assert_eq!(decrypt_text(&[7u8;32],&p).unwrap(),"old prompt");
+ }
  #[test] fn disabled_by_default(){let mut c=db();assert!(!is_enabled(&c).unwrap());assert!(save(&mut c,"p","o","smart","m","chat",1).is_err());}
  #[test] fn saves_lists_and_deletes(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let id=save(&mut c,"p","o","smart","m","chat",100).unwrap();assert_eq!(list(&c).unwrap().len(),1);c.execute("DELETE FROM task_history WHERE id=?1",params![id]).unwrap();assert!(list(&c).unwrap().is_empty());}
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
