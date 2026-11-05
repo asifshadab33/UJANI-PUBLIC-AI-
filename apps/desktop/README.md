@@ -45,6 +45,10 @@ npm run tauri build
 - A narrowly scoped local word-count demonstration command.
 - A typed local model adapter interface and registered-model catalog.
 - A deterministic mock adapter with explicit model selection and a local-only automatic-selection path.
+- A four-mode policy preview: Fortress, Worker, Smart (default), and Partner.
+- Separate per-task external-transfer consent in the routing preview; selecting Worker or Partner does not grant consent.
+- Bounded Partner planning (maximum three rounds) and local memory-budget checks in the policy layer.
+- Tauri command exposure of the policy preview through the existing application library.
 - Capability checks, prompt-size validation, and visible UI status/errors before adapter execution.
 - No shell execution, model-generated code execution, cloud calls, file access, device sharing or background compute.
 
@@ -55,7 +59,8 @@ npm run tauri build
 - Local model download, management or inference with a real runtime.
 - Task decomposition and model-based planning.
 - Sandboxing and OS-enforced per-task resource quotas.
-- Cloud subtask gateway and consent workflow.
+- Cloud subtask gateway and production consent workflow (the current control is a preview input only).
+- OS-enforced Fortress network isolation (the policy preview cannot disable networking).
 - Persistent encrypted history and settings.
 
 The word-count action is a deterministic plumbing test, not an AI feature. Do not describe this scaffold as a finished AI assistant.
