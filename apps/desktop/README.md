@@ -83,7 +83,7 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 - OS-enforced Fortress network isolation (the policy preview cannot disable networking).
 - Automatic browser control or browser translation API integration. Browser translation is a manual, external copy/paste path; text is not pre-filled or submitted.
 - Native OS translation APIs or downloadable OS language packs; locale detection is informational only.
-- Persistent encrypted history and settings.
+- Encrypted history and settings; current optional SQLite history is plaintext in the per-user app-data directory, with platform-dependent filesystem protection only.
 
 The word-count action is a deterministic plumbing test, not an AI feature. Do not describe this scaffold as a finished AI assistant.
 
