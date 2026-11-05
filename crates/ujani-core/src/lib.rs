@@ -185,3 +185,7 @@ pub use capability::{plan_local_task, registered_operations, CapabilityRecord, C
 
 pub use file_processor::{analyze_text, FileAnalysis};
 pub use image_processor::{inspect_image, ImageInfo};
+
+
+pub mod task_graph;
+pub use task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
