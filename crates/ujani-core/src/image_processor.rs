@@ -33,16 +33,18 @@ pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> 
             if data.len() < 10 || !(&data[..6] == b"GIF87a" || &data[..6] == b"GIF89a") { return Err("Invalid GIF header.".into()); }
             let w = u16::from_le_bytes([data[6], data[7]]) as u32;
             let h = u16::from_le_bytes([data[8], data[9]]) as u32;
+            if w == 0 || h == 0 { return Err("Invalid GIF dimensions.".into()); }
             ("GIF", Some((w, h)))
         }
         "webp" => {
-            if data.len() < 12 || &data[..4] != b"RIFF" || &data[8..12] != b"WEBP" { return Err("Invalid WebP header.".into()); }
+            if data.len() < 12 || &data[..4] != "RIFF".as_bytes() || &data[8..12] != "WEBP".as_bytes() { return Err("Invalid WebP header.".into()); }
             ("WebP", None)
         }
         "bmp" => {
             if data.len() < 26 || &data[..2] != b"BM" { return Err("Invalid BMP header.".into()); }
             let w = i32::from_le_bytes(data[18..22].try_into().map_err(|_| "Invalid BMP width.")?).unsigned_abs();
             let h = i32::from_le_bytes(data[22..26].try_into().map_err(|_| "Invalid BMP height.")?).unsigned_abs();
+            if w == 0 || h == 0 { return Err("Invalid BMP dimensions.".into()); }
             ("BMP", Some((w, h)))
         }
         _ => return Err("Unsupported image type. Supported: PNG, JPEG, GIF, WebP and BMP.".into()),
@@ -54,7 +56,9 @@ pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn reads_png_dimensions_from_header() {
+
+    #[test]
+    fn reads_png_dimensions_from_header() {
         let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
         bytes.extend_from_slice(&[0,0,0,13,b'I',b'H',b'D',b'R']);
         bytes.extend_from_slice(&640u32.to_be_bytes());
@@ -62,7 +66,25 @@ mod tests {
         let info = inspect_image("sample.png", &bytes, bytes.len() as u64).unwrap();
         assert_eq!(info.dimensions, Some((640,480)));
     }
-    #[test] fn rejects_mismatched_image_headers() {
+
+    #[test]
+    fn rejects_mismatched_image_headers() {
         assert!(inspect_image("sample.png", b"not png", 7).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_dimensions_and_size_mismatches() {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(&[0,0,0,13,b'I',b'H',b'D',b'R']);
+        bytes.extend_from_slice(&0_u32.to_be_bytes());
+        bytes.extend_from_slice(&10_u32.to_be_bytes());
+        assert!(inspect_image("sample.png", &bytes, bytes.len() as u64).is_err());
+        assert!(inspect_image("sample.png", &bytes, 1).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_and_oversized_headers() {
+        assert!(inspect_image("sample.svg", b"<svg/>", 6).is_err());
+        assert!(inspect_image("sample.png", &vec![0; MAX_IMAGE_BYTES + 1], (MAX_IMAGE_BYTES + 1) as u64).is_err());
     }
 }
