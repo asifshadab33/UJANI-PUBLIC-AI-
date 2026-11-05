@@ -91,12 +91,12 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         },
         CapabilityRecord {
             id: "gpu.compute".into(), category: "accelerator".into(),
-            state: CapabilityState::Unknown, source: "Not probed",
+            state: CapabilityState::Unknown, source: "Not probed".into(),
             detail: "GPU presence and usable runtime/driver compatibility are not verified".into(),
         },
         CapabilityRecord {
             id: "npu.compute".into(), category: "accelerator".into(),
-            state: CapabilityState::Unknown, source: "Not probed",
+            state: CapabilityState::Unknown, source: "Not probed".into(),
             detail: "NPU presence and supported runtime are not verified".into(),
         },
     ];
