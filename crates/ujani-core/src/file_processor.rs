@@ -55,14 +55,32 @@ pub fn extract_keywords(content: &str, top_n: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn analyzes_supported_text_without_filesystem_access() {
+
+    #[test]
+    fn analyzes_supported_text_without_filesystem_access() {
         let a = analyze_text("notes.md", "Rust local AI\nRust stays local").unwrap();
-        assert_eq!(a.word_count, 5);
+        assert_eq!(a.word_count, 6);
         assert_eq!(a.line_count, 2);
         assert_eq!(a.top_keywords[0], "rust");
     }
-    #[test] fn rejects_unsupported_and_oversized_input() {
+
+    #[test]
+    fn rejects_unsupported_and_oversized_input() {
         assert!(analyze_text("photo.exe", "x").is_err());
         assert!(analyze_text("notes.txt", &"x".repeat(MAX_TEXT_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_and_overlong_file_names() {
+        assert!(analyze_text("  ", "content").is_err());
+        assert!(analyze_text(&"n".repeat(256), "content").is_err());
+    }
+
+    #[test]
+    fn preview_is_bounded_by_characters_and_preserves_unicode() {
+        let content = "é".repeat(501);
+        let analysis = analyze_text("unicode.txt", &content).unwrap();
+        assert_eq!(analysis.content_preview.chars().count(), 501);
+        assert!(analysis.content_preview.ends_with('…'));
     }
 }
