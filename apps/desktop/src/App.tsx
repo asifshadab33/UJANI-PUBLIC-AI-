@@ -40,7 +40,7 @@ export default function App() {
     try {
       const output: RunResult = isTauri()
         ? await invoke<RunResult>("run_local_task", { request: text })
-        : { operation: "local.word_count", output: `Local preview completed. Your request contains ${text.split(/\\s+/).length} words. This is a demo tool, not an AI model.`, execution: "Browser demo (not a native device runtime)" };
+        : { operation: "local.word_count", output: `Local preview completed. Your request contains ${text.split(/\s+/).length} words. This is a demo tool, not an AI model.`, execution: "Browser demo (not a native device runtime)" };
       setResult(output);
       setHistory((items) => [text, ...items].slice(0, 5));
     } catch (error) {
