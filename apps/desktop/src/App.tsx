@@ -20,25 +20,29 @@ export default function App() {
       setDeviceError("Browser preview: launch the Tauri desktop app to read device information.");
       return;
     }
-    invoke<DeviceInfo>("get_device_info").then(setDevice).catch((e) => setDeviceError(String(e)));
+    invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
   }, []);
 
   async function runTask() {
     const text = request.trim();
     if (!text || busy) return;
-    setBusy(true); setResult(null);
+    setBusy(true);
+    setResult(null);
     try {
-      let output: RunResult;
-      if (isTauri()) {
-        output = await invoke<RunResult>("run_local_task", { request: text });
-      } else {
-        output = { operation: "local.word_count", output: `Local preview completed. Your request contains ${text.trim().split(/\\s+/).length} words. This is a demo tool, not an AI model.`, execution: "Browser demo (not a native device runtime)" };
-      }
+      const output: RunResult = isTauri()
+        ? await invoke<RunResult>("run_local_task", { request: text })
+        : {
+            operation: "local.word_count",
+            output: `Local preview completed. Your request contains ${text.split(/\\s+/).length} words. This is a demo tool, not an AI model.`,
+            execution: "Browser demo (not a native device runtime)"
+          };
       setResult(output);
       setHistory((items) => [text, ...items].slice(0, 5));
-    } catch (e) {
-      setResult({ operation: "local.task", output: `Task failed safely: ${String(e)}`, execution: "Local" });
-    } finally { setBusy(false); }
+    } catch (error) {
+      setResult({ operation: "local.task", output: `Task failed safely: ${String(error)}`, execution: "Local" });
+    } finally {
+      setBusy(false);
+    }
   }
 
   const memory = device ? `${(device.total_memory_mb / 1024).toFixed(1)} GB` : "—";
@@ -56,19 +60,19 @@ export default function App() {
       <div className="notice"><LockKeyhole size={17}/><span><b>Local-only policy is active.</b> This prototype does not send your request to a cloud AI service.</span></div>
       <div className="section-heading"><div><h2>Your device</h2><p>Read-only system information</p></div><span className="muted">No background compute</span></div>
       <div className="metrics">
-        <div className="metric"><Cpu/><small>PROCESSOR</small><b>{device ? `${device.logical_cpus} logical cores` : "Not detected"}</b><span>{device?.architecture ?? deviceError || "Waiting for desktop runtime"}</span></div>
+        <div className="metric"><Cpu/><small>PROCESSOR</small><b>{device ? `${device.logical_cpus} logical cores` : "Not detected"}</b><span>{(device?.architecture ?? deviceError) || "Waiting for desktop runtime"}</span></div>
         <div className="metric"><HardDrive/><small>SYSTEM MEMORY</small><b>{memory}</b><span>{device ? "Total physical memory" : "Native runtime required"}</span></div>
         <div className="metric"><Monitor/><small>PLATFORM</small><b>{device?.os ?? "Not detected"}</b><span>GPU / NPU detection not yet implemented</span></div>
       </div>
       <div className="workspace">
         <div className="task-panel">
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Try the safe local demonstration tool.</p></div><Zap size={20}/></div>
-          <textarea value={request} onChange={e=>setRequest(e.target.value)} placeholder="Describe a task… e.g. Count the words in this paragraph." rows={5}/>
-          <div className="controls"><label>Execution policy <select value={policy} onChange={e=>setPolicy(e.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running…" : "Run local task"} <Send size={15}/></button></div>
+          <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Count the words in this paragraph." rows={5}/>
+          <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running…" : "Run local task"} <Send size={15}/></button></div>
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
         </div>
         <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Tasks stay on this device in this prototype.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>Unavailable features are labelled, not simulated.</small></div></div>
-          <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item,i)=><button key={i} onClick={()=>setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
+          <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
         </div>
       </div>
       <footer>UJANI Public AI · Open source · Early prototype / pre-alpha <span>Local intelligence first.</span></footer>
