@@ -18,7 +18,6 @@ fn evaluate_task_route(
     local_memory_required_mb: u64,
     available_memory_mb: u64,
     external_data_approved: bool,
-    network_capability_available: bool,
     requested_collaboration_rounds: u8,
 ) -> Result<ModeRoutingDecision, String> {
     let mode = match mode.as_str() {
@@ -33,7 +32,7 @@ fn evaluate_task_route(
         required_capabilities: required_capabilities.into_iter().collect::<BTreeSet<_>>(),
         available_capabilities: available_capabilities.into_iter().collect::<BTreeSet<_>>(),
         local_memory_required_mb, available_memory_mb,
-        external_data_approved, network_capability_available,
+        external_data_approved, network_capability_available: false,
         requested_collaboration_rounds,
     };
     Ok(evaluate_mode(&request))
