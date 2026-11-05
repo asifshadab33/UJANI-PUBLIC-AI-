@@ -691,7 +691,7 @@ export default function App() {
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history persistent-history">
             <h3>Saved task history</h3>
-            <p>Optional local history. Saved prompts and outputs are stored as plaintext on this device.</p>
+            <p>Optional local history. Saved prompts and outputs are encrypted on this device using AES-256-GCM with a key held in the operating-system credential vault.</p>
             {historySettings && <label className="consent-row"><input type="checkbox" checked={historySettings.enabled} disabled={historyBusy} onChange={(event) => togglePersistentHistory(event.target.checked)}/> Save future task prompts and results on this device</label>}
             <small>Retention: {historySettings?.retention_days ?? 30} days · Maximum: {historySettings?.max_entries ?? 100} entries. Recording is off by default.</small>
             <div className="history-actions"><button onClick={refreshPersistentHistory} disabled={historyBusy}>{historyBusy ? "Refreshing…" : "Refresh"}</button><button onClick={clearPersistentHistory} disabled={!persistentHistory.length || historyBusy}>Delete all</button></div>
@@ -702,7 +702,7 @@ export default function App() {
               <details className="saved-history-output"><summary>View saved result</summary><p>{entry.output}</p><small>Model: {entry.model || "Not recorded"}</small></details>
               <button className="history-delete" onClick={() => deletePersistentHistory(entry.id)} aria-label={"Delete history entry " + entry.id}>Delete</button>
             </div>) : <small>No saved tasks yet.</small>}
-            <small>Deletion removes entries from the app database but is not a forensic secure-erase guarantee. Local database encryption is not currently implemented.</small>
+            <small>Deletion removes entries from the app database but is not a forensic secure-erase guarantee. Prompt/output fields are encrypted; metadata remains visible.</small>
           </div>
         </div>
       </div>
