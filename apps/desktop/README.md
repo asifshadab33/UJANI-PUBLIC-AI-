@@ -43,12 +43,16 @@ npm run tauri build
 - Tauri 2 native command bridge.
 - Read-only OS name, CPU architecture, logical CPU count and physical memory reporting.
 - A narrowly scoped local word-count demonstration command.
+- A typed local model adapter interface and registered-model catalog.
+- A deterministic mock adapter with explicit model selection and a local-only automatic-selection path.
+- Capability checks, prompt-size validation, and visible UI status/errors before adapter execution.
 - No shell execution, model-generated code execution, cloud calls, file access, device sharing or background compute.
 
 ## Not implemented yet
 
 - GPU/NPU and runtime compatibility detection.
-- Local model download, management or inference.
+- Real local model inference (the only registered adapter is deliberately a mock and performs no AI inference).
+- Local model download, management or inference with a real runtime.
 - Task decomposition and model-based planning.
 - Sandboxing and OS-enforced per-task resource quotas.
 - Cloud subtask gateway and consent workflow.
