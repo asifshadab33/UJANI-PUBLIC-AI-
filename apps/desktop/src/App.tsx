@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
+type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
 type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number; system_locale: string };
 type CapabilityRecord = { id: string; category: string; state: "available" | "unavailable" | "unknown"; source: string; detail: string };
 type OperationDescriptor = { id: string; description: string; required_capabilities: string[]; minimum_available_memory_mb: number };
@@ -53,6 +55,8 @@ export default function App() {
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaModel, setOllamaModel] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [taskProgress, setTaskProgress] = useState<TaskProgressEvent | null>(null);
   const [aiResult, setAiResult] = useState<AiTaskResult | null>(null);
   const [fileAnalysis, setFileAnalysis] = useState<FileAnalysis | null>(null);
   const [fileText, setFileText] = useState("");
@@ -107,6 +111,14 @@ export default function App() {
     invoke<HistoryEntry[]>("list_task_history").then(setPersistentHistory).catch((error) => setHistoryError(String(error)));
   }, []);
 
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    listen<TaskProgressEvent>("ujani-task-progress", (event) => setTaskProgress(event.payload))
+      .then((stop) => { unlisten = stop; })
+      .catch((error) => setOllamaError(String(error)));
+    return () => { unlisten?.(); };
+  }, []);
 
   async function refreshPersistentHistory() {
     if (!isTauri()) return;
@@ -267,17 +279,26 @@ export default function App() {
   async function runLocalAi() {
     if (!request.trim() || aiBusy) return;
     if (executionMode !== "fortress" && executionMode !== "smart") {
-      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner need a secure gateway.");
+      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner require the separately configured cloud gateway.");
       return;
     }
     if (!ollamaModel) { setOllamaError("Install and start Ollama, then pull a model before running local AI."); return; }
+    const taskId = "local-ai-" + Date.now().toString(36);
+    setActiveTaskId(taskId);
+    setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null);
     try {
-      const result = await invoke<AiTaskResult>("execute_local_ai_task", { prompt: request, mode: executionMode, model: ollamaModel });
+      const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: request, mode: executionMode, model: ollamaModel });
       setAiResult(result);
       await saveToPersistentHistory(request.trim(), result.output, "chat", result.model);
     } catch (error) { setOllamaError(String(error)); }
-    finally { setAiBusy(false); }
+    finally { setAiBusy(false); setActiveTaskId(null); }
+  }
+
+  async function cancelLocalAi() {
+    if (!activeTaskId) return;
+    try { await invoke<boolean>("cancel_local_ai_task", { taskId: activeTaskId }); }
+    catch (error) { setOllamaError("Cancellation failed: " + String(error)); }
   }
 
   async function handleTextFile(event: import("react").ChangeEvent<HTMLInputElement>) {
@@ -579,6 +600,7 @@ export default function App() {
               </select>
             </label>
             <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
+            {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             {aiResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Local AI result <span>{aiResult.execution_location}</span></div><p>{aiResult.output}</p><small>{aiResult.mode_used} · {aiResult.model} · no cloud fallback</small></div>}
             <small className="muted">Fortress and Smart only. This uses HTTP to loopback Ollama; it does not itself enforce OS-wide network isolation.</small>
