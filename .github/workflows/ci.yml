@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Keep only the newest CI run for a branch; superseded commits are not release candidates.
+concurrency:
+  group: ujani-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   core-tests:
     name: Rust core tests
