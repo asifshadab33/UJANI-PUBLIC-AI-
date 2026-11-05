@@ -17,6 +17,11 @@ fn validate_endpoint(endpoint:&str)->Result<Url,String>{
  if let Ok(ip)=host.parse::<IpAddr>(){let bad=match ip{IpAddr::V4(v)=>v.is_private()||v.is_loopback()||v.is_link_local()||v.is_unspecified(),IpAddr::V6(v)=>v.is_loopback()||v.is_unique_local()||v.is_unicast_link_local()||v.is_unspecified()};if bad{return Err("Private, loopback, and link-local IP endpoints are not allowed.".into());}}
  Ok(url)
 }
+fn validate_mode(mode:&str)->Result<(),String>{
+ if mode == "fortress" { return Err("Fortress mode is local-only; external transfer is blocked.".into()); }
+ if !matches!(mode, "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
+ Ok(())
+}
 fn validate(endpoint:&str,model:&str,key:&str,prompt:&str,approved:bool)->Result<Url,String>{
  if !approved{return Err("Cloud transfer was not approved for this task. No request was sent.".into());}
  let url=validate_endpoint(endpoint)?;
@@ -50,8 +55,7 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
 }
 
 pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool)->Result<String,String>{
- if mode == "fortress" { return Err("Fortress mode is local-only; external transfer is blocked.".into()); }
- if !matches!(mode.as_str(), "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
+ validate_mode(&mode)?;
  let url=validate(&endpoint,&model,&api_key,&prompt,approved)?;
  let host = url.host_str().ok_or_else(|| "Cloud endpoint has no host.".to_string())?.trim_start_matches('[').trim_end_matches(']').to_string();
  let addresses = resolve_public_addresses(&url).await?;
@@ -68,5 +72,6 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  parsed.choices.into_iter().next().map(|c|c.message.content).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
 }
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
+#[test]fn fortress_is_rejected_but_worker_modes_are_allowed(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_ok());assert!(validate_mode("partner").is_ok());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("8.8.8.8".parse().unwrap()));assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}
