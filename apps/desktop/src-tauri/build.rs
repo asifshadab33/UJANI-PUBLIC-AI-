@@ -9,7 +9,7 @@ fn main() {
     let icon_path = icon_dir.join("icon.png");
     if !icon_path.exists() {
         fs::create_dir_all(&icon_dir).expect("create Tauri icon directory");
-        let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/Wk8AAAAASUVORK5CYII=";
+        let encoded = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQ05b5DwACFQFdXb3nEgAAAABJRU5ErkJggg==";
         use base64::Engine as _;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(encoded)
