@@ -11,6 +11,7 @@ use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, Rout
 use sysinfo::System;
 use ujani_core::{FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
+use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
@@ -111,6 +112,21 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
 async fn plan_local_operation(operation_id: String, mode: String) -> Result<TaskPlan, String> {
     let snapshot = get_capability_snapshot().await?;
     Ok(plan_local_task(&operation_id, &mode, snapshot.available_memory_mb, &snapshot.capabilities))
+}
+
+
+/// Validates a bounded, versioned local workflow graph. This command never executes it.
+#[tauri::command]
+async fn plan_task_workflow(nodes: Vec<TaskNode>, mode: String) -> Result<TaskGraphPlan, String> {
+    if nodes.len() > 32 {
+        return Err("Workflow is limited to 32 steps.".into());
+    }
+    if nodes.iter().any(|node| node.depends_on.len() > 16) {
+        return Err("Each workflow step is limited to 16 dependencies.".into());
+    }
+    let snapshot = get_capability_snapshot().await?;
+    let graph = TaskGraph { schema_version: 1, nodes };
+    Ok(plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities))
 }
 
 #[derive(Serialize)]
@@ -260,6 +276,7 @@ pub fn run() {
             get_device_info,
             get_capability_snapshot,
             plan_local_operation,
+            plan_task_workflow,
             list_local_models,
             run_local_model_task,
             run_local_task,
