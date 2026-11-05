@@ -142,7 +142,7 @@ export default function App() {
   async function handleTextFile(event: import("react").ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFileError(""); setFileAnalysis(null); setFileText(""); setFileSummary("");
+    setFileError(""); setFileAnalysis(null); setFileText(""); setFileSummary(""); setFileTranslatedSummary("");
     if (file.size > 1024 * 1024) { setFileError("Text files are limited to 1 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to process files."); return; }
     try { const content = await file.text(); setFileText(content); setFileAnalysis(await invoke<FileAnalysis>("analyze_text_file", { fileName: file.name, content })); }
@@ -173,7 +173,7 @@ export default function App() {
   async function handlePdfFile(event: import("react").ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFileError(""); setFileAnalysis(null); setFileSummary("");
+    setFileError(""); setFileAnalysis(null); setFileSummary(""); setFileTranslatedSummary("");
     if (file.size > 10 * 1024 * 1024) { setFileError("PDF files are limited to 10 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
@@ -369,6 +369,7 @@ export default function App() {
           </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><HardDrive size={18}/> Local file & image tools</h2><p>Only files explicitly selected by you are processed.</p></div><span className="muted">IN-MEMORY</span></div>
+            <label className="consent-row"><input type="checkbox" checked={translateSummary} onChange={(event) => { setTranslateSummary(event.target.checked); setFileTranslatedSummary(""); }}/> Also translate document summaries into {targetLanguage} using the same local model</label>
             <label className="file-picker">Analyze text file (max 1 MiB)
               <input type="file" accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" onChange={handleTextFile}/>
             </label>
@@ -376,7 +377,6 @@ export default function App() {
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
             </label>
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
-            {fileAnalysis && fileText && <label className="consent-row"><input type="checkbox" checked={translateSummary} onChange={(event) => { setTranslateSummary(event.target.checked); setFileTranslatedSummary(""); }}/> Also translate the summary into {targetLanguage} using the same local model</label>}
             {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 24 * 1024}>{summaryBusy ? "Summarising locally…" : "Run integrated local document pipeline"}</button>}
             {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. No cloud transfer.</small></div>}
             {fileTranslatedSummary && <div className="result"><div className="result-title">Translated summary <span>{targetLanguage}</span></div><p>{fileTranslatedSummary}</p><small>Second local Ollama step; no browser or cloud provider contacted.</small></div>}
