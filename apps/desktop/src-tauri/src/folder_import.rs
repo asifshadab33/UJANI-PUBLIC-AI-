@@ -55,8 +55,8 @@ pub async fn process_selected_folder(
     if mode != "fortress" && mode != "smart" {
         return Err("Folder processing is local-only. Select Fortress or Smart.".into());
     }
-    if model.trim().is_empty() || model.len() > 128 {
-        return Err("Select a valid installed local model before folder summarisation.".into());
+    if model.len() > 128 {
+        return Err("Invalid local model identifier.".into());
     }
 
     let selected = tauri::async_runtime::spawn_blocking(move || {
@@ -76,7 +76,7 @@ pub async fn process_selected_folder(
     };
 
     let total_bytes = files.iter().map(|file| file.size_bytes).sum();
-    let ollama_available = crate::ollama::is_available().await;
+    let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
     let mut results = Vec::with_capacity(files.len());
 
     for file in files {
