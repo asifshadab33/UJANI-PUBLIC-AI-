@@ -94,7 +94,7 @@ The word-count action is a deterministic plumbing test, not an AI feature. Do no
 - Ollama retries are limited to three attempts for transient connection, timeout, and server failures. Client errors and invalid/oversized responses are not retried.
 - The native device report includes total and currently available system memory. GPU/NPU detection is still explicitly unavailable; the app does not fabricate accelerator capability.
 - The current file and image tools process bytes selected by the user in memory. They do not accept arbitrary filesystem paths, so there is no path-based API for an AI prompt to traverse.
-- SQLite task history and cloud cost accounting are not enabled. Persisting prompts/results requires a deliberate retention, deletion, and at-rest protection design; cost accounting requires a real cloud provider with authoritative token-usage data. Neither is simulated in this local-only prototype.
+- Optional SQLite task history is implemented with recording disabled by default, 30-day retention, a 100-entry cap, per-entry deletion and clear-all controls. It stores plaintext in the app-data directory; encryption is not implemented. Cloud cost accounting remains unavailable because no cloud provider is integrated.
 - Smart mode currently executes locally when the local Ollama route is available. It does not ask a model to estimate confidence and silently escalate. A future external fallback must wait for explicit approval for the exact data/subtask.
 
 ## Corrected implementation audit (2026-11-06)
@@ -106,7 +106,7 @@ The supplied implementation guide was reviewed against the current architecture.
 - **Async I/O:** current file processing is bounded in-memory parsing of already selected content, not filesystem I/O. Adding Tokio filesystem APIs or `spawn_blocking` would not improve this path.
 - **Image processing:** current work is lightweight header inspection only. It is deliberately not full decoding, OCR, or vision inference; the parser is synchronous because it inspects at most 64 KiB. Tests cover supported formats and malformed headers.
 - **Smart mode:** local Ollama execution remains local. Model-reported confidence is not a trustworthy security or correctness signal and must never authorize external transfer. If local execution cannot proceed, the app fails safely; no cloud fallback is implemented.
-- **Persistence:** task history is currently session/UI state, not a durable database. SQLite is deferred until retention, deletion, migration, app-data location, and at-rest protection are designed together.
+- **Persistence:** successful local AI chat, text/PDF summaries and translations can be saved to local SQLite after explicit opt-in. The feature is bounded and deletable but is not encrypted; do not enable it for sensitive content.
 - **Hardware:** available RAM is used for runtime routing checks and is reported separately from total RAM. GPU/NPU detection remains unknown until a verified platform implementation exists.
 - **Tests:** core routing, text processing, image-header validation, and Ollama identifier/retry-policy tests are present. CI must still be observed on the pushed commit; a code push alone is not evidence that tests pass.
 
