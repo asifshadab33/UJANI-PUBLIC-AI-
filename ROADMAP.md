@@ -30,7 +30,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Model catalogue with licence, checksum, source and compatibility metadata.
 - [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
 - [x] Initial registered local operation catalogue and conservative plan preview.
-- [ ] Structured task graph with dependency and output schemas (current document pipeline remains a fixed workflow).
+- [x] Versioned, bounded task graph schema with allow-listed operations, dependency validation, cycle rejection and deterministic topological planning (planning only; no general graph execution yet).
+- [ ] Typed node input/output schemas and execution adapters for graph nodes.
 - [ ] Verification and reproducible benchmark harness.
 
 ## Phase 3 — optional external assistance
