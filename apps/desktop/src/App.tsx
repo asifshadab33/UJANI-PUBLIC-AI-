@@ -370,6 +370,11 @@ export default function App() {
           <div className="model-box">
             <div className="section-heading"><div><h2><HardDrive size={18}/> Local file & image tools</h2><p>Only files explicitly selected by you are processed.</p></div><span className="muted">IN-MEMORY</span></div>
             <label className="consent-row"><input type="checkbox" checked={translateSummary} onChange={(event) => { setTranslateSummary(event.target.checked); setFileTranslatedSummary(""); }}/> Also translate document summaries into {targetLanguage} using the same local model</label>
+            <label className="model-select">Summary translation language
+              <select value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value); setFileTranslatedSummary(""); }}>
+                {["English","Arabic","Hindi","Urdu","French","Spanish","German","Chinese","Japanese","Portuguese","Russian","Bengali","Tamil"].map((language) => <option key={language} value={language}>{language}</option>)}
+              </select>
+            </label>
             <label className="file-picker">Analyze text file (max 1 MiB)
               <input type="file" accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" onChange={handleTextFile}/>
             </label>
