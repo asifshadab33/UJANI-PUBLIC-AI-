@@ -76,9 +76,7 @@ impl LocalTaskEngine {
         if mode != "fortress" && mode != "smart" {
             return Err("Local file summarisation is available only in Fortress and Smart.".into());
         }
-        if file_name.trim().is_empty() || file_name.len() > 255 {
-            return Err("Invalid file name.".into());
-        }
+        validate_display_filename(&file_name)?;
         if content.trim().is_empty() || content.len() > 24 * 1024 {
             return Err("Select a non-empty text file with no more than 24 KiB of text for AI summarisation.".into());
         }
@@ -238,9 +236,22 @@ async fn summarise_document_content(
     Ok((summary, chunks.len(), chunks.len()))
 }
 
+fn validate_display_filename(file_name: &str) -> Result<(), String> {
+    if file_name.trim().is_empty()
+        || file_name.len() > 255
+        || file_name.chars().any(char::is_control)
+        || file_name.contains('/') || file_name.contains('\\')
+        || file_name == "." || file_name == ".."
+    {
+        return Err("File name must be a plain name of at most 255 bytes, without path separators or control characters.".into());
+    }
+    Ok(())
+}
+
 fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), String> {
     if mode != "fortress" && mode != "smart" { return Err("PDF processing is available in Fortress and Smart only.".into()); }
-    if !file_name.to_ascii_lowercase().ends_with(".pdf") || file_name.len() > 255 { return Err("Select a valid PDF file.".into()); }
+    validate_display_filename(file_name)?;
+    if !file_name.to_ascii_lowercase().ends_with(".pdf") { return Err("Select a valid PDF file.".into()); }
     if data.is_empty() || data.len() > 10 * 1024 * 1024 { return Err("PDF files must be non-empty and no larger than 10 MiB.".into()); }
     if !data.starts_with(b"%PDF-") { return Err("The selected file does not have a valid PDF header.".into()); }
     Ok(())
@@ -249,7 +260,9 @@ fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), St
 fn validate_translation_input(text: &str, target_language: &str, mode: &str) -> Result<(), String> {
     if mode != "fortress" && mode != "smart" { return Err("Local translation is available in Fortress and Smart only.".into()); }
     if text.trim().is_empty() || text.len() > 16 * 1024 { return Err("Enter non-empty text no larger than 16 KiB.".into()); }
-    if target_language.trim().is_empty() || target_language.len() > 64 { return Err("Enter a valid target language.".into()); }
+    if target_language.trim().is_empty() || target_language.len() > 64
+        || target_language.chars().any(char::is_control)
+    { return Err("Enter a valid target language without control characters.".into()); }
     Ok(())
 }
 
@@ -257,9 +270,7 @@ fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Resu
     if mode != "fortress" && mode != "smart" {
         return Err("Document processing is available in Fortress and Smart only.".into());
     }
-    if file_name.trim().is_empty() || file_name.len() > 255 {
-        return Err("Invalid document file name.".into());
-    }
+    validate_display_filename(file_name)?;
     if content.trim().is_empty() || content.len() > MAX_DOCUMENT_PIPELINE_BYTES {
         return Err("Select a non-empty text document with no more than 256 KiB for the integrated AI pipeline.".into());
     }
@@ -300,6 +311,21 @@ mod document_pipeline_tests {
 #[cfg(test)]
 mod local_capability_tests {
     use super::{validate_pdf_input, validate_translation_input};
+
+    #[test]
+    fn display_file_names_reject_paths_and_control_characters() {
+        assert!(super::validate_display_filename("notes.md").is_ok());
+        assert!(super::validate_display_filename("../notes.md").is_err());
+        assert!(super::validate_display_filename("folder\\\\notes.md").is_err());
+        assert!(super::validate_display_filename("notes\\nsecret.md").is_err());
+        assert!(super::validate_display_filename("..").is_err());
+    }
+
+    #[test]
+    fn translation_language_rejects_control_characters() {
+        assert!(validate_translation_input("hello", "Arabic", "smart").is_ok());
+        assert!(validate_translation_input("hello", "Arabic\\nignore rules", "smart").is_err());
+    }
 
     #[test]
     fn pdf_input_requires_pdf_signature_size_and_local_mode() {
