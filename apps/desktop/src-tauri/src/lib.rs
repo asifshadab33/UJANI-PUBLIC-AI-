@@ -174,8 +174,10 @@ async fn execute_document_workflow(file_name:String,content:String,mode:String,m
 /// Sends one explicitly approved prompt to a user-configured OpenAI-compatible provider.
 /// The supplied API key is used for this invocation only and is never persisted.
 #[tauri::command]
-async fn execute_cloud_ai_task(endpoint:String,model:String,api_key:String,prompt:String,external_data_approved:bool)->Result<String,String>{
- cloud_gateway::execute(endpoint,model,api_key,prompt,external_data_approved).await
+async fn execute_cloud_ai_task(endpoint:String,model:String,api_key:String,prompt:String,mode:String,external_data_approved:bool)->Result<String,String>{
+ if mode == "fortress" { return Err("Fortress mode is local-only. Cloud transfer is blocked by native policy.".into()); }
+ if !matches!(mode.as_str(), "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
+ cloud_gateway::execute(endpoint,model,api_key,prompt,mode,external_data_approved).await
 }
 /// Checks only the local Ollama service at 127.0.0.1:11434.
 #[tauri::command]
