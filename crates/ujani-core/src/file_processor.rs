@@ -22,7 +22,7 @@ pub fn analyze_text(file_name: &str, content: &str) -> Result<FileAnalysis, Stri
         return Err("Text file exceeds the 1 MiB processing limit.".into());
     }
     let extension = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    if !matches!(extension.as_str(), "txt" | "md" | "csv" | "json" | "rs" | "py" | "js" | "ts" | "html" | "xml" | "log") {
+    if !matches!(extension.as_str(), "txt" | "md" | "csv" | "json" | "rs" | "py" | "js" | "ts" | "html" | "xml" | "log" | "pdf") {
         return Err("Unsupported text file type.".into());
     }
     let preview: String = content.chars().take(500).collect();
