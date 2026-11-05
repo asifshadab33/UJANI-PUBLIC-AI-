@@ -78,3 +78,13 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 - Persistent encrypted history and settings.
 
 The word-count action is a deterministic plumbing test, not an AI feature. Do not describe this scaffold as a finished AI assistant.
+
+## Security and implementation boundaries
+
+- No OpenAI API key field, cloud credential command, or cloud API integration is present. UJANI does not accept a key from the frontend and does not send prompts to OpenAI.
+- Do not set an API key in frontend code, browser storage, or a command argument. A future hosted-provider integration must use OS-backed secret storage, explicit per-task consent, bounded data minimisation, and visible cost limits before it is enabled.
+- Ollama retries are limited to three attempts for transient connection, timeout, and server failures. Client errors and invalid/oversized responses are not retried.
+- The native device report includes total and currently available system memory. GPU/NPU detection is still explicitly unavailable; the app does not fabricate accelerator capability.
+- The current file and image tools process bytes selected by the user in memory. They do not accept arbitrary filesystem paths, so there is no path-based API for an AI prompt to traverse.
+- SQLite task history and cloud cost accounting are not enabled. Persisting prompts/results requires a deliberate retention, deletion, and at-rest protection design; cost accounting requires a real cloud provider with authoritative token-usage data. Neither is simulated in this local-only prototype.
+- Smart mode currently executes locally when the local Ollama route is available. It does not ask a model to estimate confidence and silently escalate. A future external fallback must wait for explicit approval for the exact data/subtask.
