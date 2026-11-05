@@ -13,7 +13,7 @@ type InferenceResult = { model_id: string; model_name: string; output: string; e
 type RouteDecision = { mode: string; action: string; allowed: boolean; external_data_transfer_permitted: boolean; collaboration_rounds: number; reason: string; enforcement_boundary_required: boolean };
 type OllamaStatus = { available: boolean; models: { name: string; size: number }[] };
 type AiTaskResult = { mode_used: string; execution_location: string; model: string; output: string };
-type DocumentPipelineResult = { analysis: FileAnalysis; summary: string; translated_summary: string | null; translation_language: string | null; execution_location: string; model: string };
+type DocumentPipelineResult = { analysis: FileAnalysis; summary: string; translated_summary: string | null; translation_language: string | null; source_text_bytes: number; chunks_processed: number; total_chunks: number; execution_location: string; model: string };
 type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; content_preview: string; word_count: number; line_count: number; top_keywords: string[] };
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -151,8 +151,8 @@ export default function App() {
 
     async function summarizeFile() {
     if (!fileText || !fileAnalysis || summaryBusy) return;
-    if (new TextEncoder().encode(fileText).length > 24 * 1024) {
-      setFileError("The integrated AI pipeline is limited to 24 KiB. Basic text analysis remains available up to 1 MiB.");
+    if (new TextEncoder().encode(fileText).length > 256 * 1024) {
+      setFileError("The integrated AI pipeline is limited to 256 KiB per document. Basic text analysis remains available up to 1 MiB.");
       return;
     }
     if (!ollamaModel || !ollamaStatus?.available) { setFileError("Start local Ollama and select an installed model to run the document pipeline."); return; }
@@ -375,15 +375,15 @@ export default function App() {
                 {["English","Arabic","Hindi","Urdu","French","Spanish","German","Chinese","Japanese","Portuguese","Russian","Bengali","Tamil"].map((language) => <option key={language} value={language}>{language}</option>)}
               </select>
             </label>
-            <label className="file-picker">Analyze text file (max 1 MiB)
+            <label className="file-picker">Analyze text file (max 1 MiB; AI summary up to 256 KiB)
               <input type="file" accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" onChange={handleTextFile}/>
             </label>
-            <label className="file-picker">Extract and summarise PDF locally (max 10 MiB)
+            <label className="file-picker">Extract and summarise PDF locally (max 10 MiB; extracted text up to 256 KiB)
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
             </label>
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
-            {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 24 * 1024}>{summaryBusy ? "Summarising locally…" : "Run integrated local document pipeline"}</button>}
-            {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. No cloud transfer.</small></div>}
+            {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 256 * 1024}>{summaryBusy ? "Processing sections locally…" : "Run integrated local document pipeline"}</button>}
+            {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. {fileAnalysis ? "Source size: " + fileAnalysis.size_bytes.toLocaleString() + " bytes." : ""} Multi-section documents are summarised in bounded sequential stages. No cloud transfer.</small></div>}
             {fileTranslatedSummary && <div className="result"><div className="result-title">Translated summary <span>{targetLanguage}</span></div><p>{fileTranslatedSummary}</p><small>Second local Ollama step; no browser or cloud provider contacted.</small></div>}
             <label className="file-picker">Inspect image metadata (max 20 MiB)
               <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" onChange={handleImageFile}/>
