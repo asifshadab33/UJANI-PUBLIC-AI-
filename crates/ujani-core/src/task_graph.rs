@@ -233,6 +233,20 @@ mod tests {
         assert!(!plan_task_graph(&g, "smart", 128, &caps()).accepted);
     }
 
+
+    #[test]
+    fn rejects_nodes_with_too_many_dependencies() {
+        let dependencies: Vec<String> = (0..17).map(|i| format!("d{i}")).collect();
+        let g = graph(vec![TaskNode {
+            id: "target".into(),
+            operation_id: "file.analyze_text".into(),
+            depends_on: dependencies,
+        }]);
+        let plan = plan_task_graph(&g, "smart", 4096, &caps());
+        assert!(!plan.accepted);
+        assert!(plan.reason.contains("16 dependencies"));
+    }
+
     #[test]
     fn rejects_self_and_duplicate_dependencies() {
         let self_dep = graph(vec![node("a", "file.analyze_text", &["a"])]);
