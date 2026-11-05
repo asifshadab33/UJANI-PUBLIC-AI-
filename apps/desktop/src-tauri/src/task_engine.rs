@@ -268,7 +268,7 @@ fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Resu
 
 #[cfg(test)]
 mod document_pipeline_tests {
-    use super::validate_document_request;
+    use super::{validate_document_request, MAX_DOCUMENT_PIPELINE_BYTES, MAX_DOCUMENT_CHUNK_BYTES, MAX_DOCUMENT_CHUNKS};
 
     #[test]
     fn document_pipeline_validates_mode_name_and_content_limits() {
