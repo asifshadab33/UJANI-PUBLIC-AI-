@@ -173,3 +173,7 @@ mod tests {
         assert_eq!(d.location, ExecutionLocation::Unsupported);
     }
 }
+
+
+/// Four-mode execution policy preview; no execution or networking occurs here.
+pub mod router;
