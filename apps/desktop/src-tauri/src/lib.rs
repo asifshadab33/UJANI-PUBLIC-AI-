@@ -1,5 +1,7 @@
+mod commands;
 mod model_runtime;
 
+use commands::evaluate_task_route;
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
 use sysinfo::System;
@@ -73,7 +75,8 @@ pub fn run() {
             get_device_info,
             list_local_models,
             run_local_model_task,
-            run_local_task
+            run_local_task,
+            evaluate_task_route
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
