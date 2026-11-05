@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(evaluate_mode(&r).action, RouteAction::Blocked);
     }
     #[test] fn malformed_operation_is_rejected() {
-        let mut r = req(ExecutionMode::Smart); r.operation = "shell.run".into();
-        assert_eq!(evaluate_mode(&r).action, RouteAction::ExecuteLocally); // syntactically valid; allow-list belongs to executor
+        let mut r = req(ExecutionMode::Smart); r.operation = "shell run".into();
+        assert_eq!(evaluate_mode(&r).action, RouteAction::Blocked);
     }
 }
