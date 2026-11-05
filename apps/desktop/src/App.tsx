@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
-type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number };
+type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number; system_locale: string };
 type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
@@ -43,6 +43,10 @@ export default function App() {
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
+  const [translationText, setTranslationText] = useState("");
+  const [targetLanguage, setTargetLanguage] = useState("English");
+  const [translationResult, setTranslationResult] = useState("");
+  const [translationBusy, setTranslationBusy] = useState(false);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -132,6 +136,40 @@ export default function App() {
     finally { setSummaryBusy(false); }
   }
 
+  async function handlePdfFile(event: import("react").ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileError(""); setFileAnalysis(null); setFileSummary("");
+    if (file.size > 10 * 1024 * 1024) { setFileError("PDF files are limited to 10 MiB."); return; }
+    if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
+    if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
+    if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("PDF processing is available in Fortress and Smart only."); return; }
+    setSummaryBusy(true);
+    try {
+      const data = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const result = await invoke<DocumentPipelineResult>("process_selected_pdf", {
+        fileName: file.name, data, mode: executionMode, model: ollamaModel
+      });
+      setFileAnalysis(result.analysis);
+      setFileSummary(result.summary);
+      setFileText("");
+    } catch (error) { setFileError(String(error)); }
+    finally { setSummaryBusy(false); event.target.value = ""; }
+  }
+
+  async function translateLocally() {
+    if (!translationText.trim() || translationBusy) return;
+    if (!isTauri() || !ollamaStatus?.available || !ollamaModel) { setOllamaError("Local translation requires the desktop app and a running Ollama model."); return; }
+    if (executionMode !== "fortress" && executionMode !== "smart") { setOllamaError("Local translation is available in Fortress and Smart only."); return; }
+    setTranslationBusy(true); setTranslationResult(""); setOllamaError("");
+    try {
+      setTranslationResult(await invoke<string>("translate_text_local", {
+        text: translationText, targetLanguage, mode: executionMode, model: ollamaModel
+      }));
+    } catch (error) { setOllamaError(String(error)); }
+    finally { setTranslationBusy(false); }
+  }
+
   async function handleImageFile(event: import("react").ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -209,6 +247,17 @@ export default function App() {
         <div className="metric"><HardDrive/><small>SYSTEM MEMORY</small><b>{memory}</b><span>{device ? `${(device.available_memory_mb / 1024).toFixed(1)} GB currently available` : "Native runtime required"}</span></div>
         <div className="metric"><Monitor/><small>PLATFORM</small><b>{device?.os ?? "Not detected"}</b><span>GPU / NPU detection not yet implemented</span></div>
       </div>
+      <div className="model-box resource-box">
+        <div className="section-heading"><div><h2><Cpu size={18}/> Computer resource & capability centre</h2><p>Read-only information UJANI can use to select local work.</p></div><span className="muted">NO BACKGROUND COMPUTE</span></div>
+        <div className="metrics">
+          <div className="metric"><small>CPU</small><b>{device?.logical_cpus ?? "—"} logical cores</b><span>Available to local applications; usage is not reserved by UJANI.</span></div>
+          <div className="metric"><small>AVAILABLE RAM</small><b>{device ? (device.available_memory_mb / 1024).toFixed(1) + " GB" : "—"}</b><span>Changes as other apps use memory.</span></div>
+          <div className="metric"><small>OS LANGUAGE</small><b>{device?.system_locale ?? "Not detected"}</b><span>Detected preference only; not a translation engine.</span></div>
+        </div>
+        <div className="principle"><CheckCircle2/><div><b>Local AI compute</b><small>{ollamaStatus?.available ? "Ollama is available. Its configured backend may use CPU and supported GPU acceleration." : "Install Ollama to use local model inference."} UJANI does not currently detect GPU/NPU readiness itself.</small></div></div>
+        <div className="principle"><ShieldCheck/><div><b>Operating-system services</b><small>UJANI can report OS and locale now. Direct speech, OCR, accessibility, translation packs and GPU APIs need separate platform adapters and permissions.</small></div></div>
+        <div className="principle"><Monitor/><div><b>Browser capabilities</b><small>External web tools can be opened by choice. This version does not read browser tabs, use browser translation APIs, or transfer content automatically.</small></div></div>
+      </div>
       <div className="workspace">
         <div className="task-panel">
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a prompt to test the local-only execution path.</p></div><Zap size={20}/></div>
@@ -259,6 +308,9 @@ export default function App() {
             <label className="file-picker">Analyze text file (max 1 MiB)
               <input type="file" accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" onChange={handleTextFile}/>
             </label>
+            <label className="file-picker">Extract and summarise PDF locally (max 10 MiB)
+              <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
+            </label>
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
             {fileAnalysis && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 24 * 1024}>{summaryBusy ? "Summarising locally…" : "Run integrated local document pipeline"}</button>}
             {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. No cloud transfer.</small></div>}
@@ -268,6 +320,25 @@ export default function App() {
             {imageInfo && <div className="result"><div className="result-title">Image information <span>{imageInfo.file_name}</span></div><p>{imageInfo.description}</p></div>}
             {fileError && <p className="error" role="alert">{fileError}</p>}
             <small className="muted">Image inspection reads basic headers only. It does not perform OCR or visual recognition.</small>
+          </div>
+          <div className="model-box">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Translation workspace</h2><p>Choose local AI or a browser translation service.</p></div><span className="muted">USER CONTROL</span></div>
+            <label className="file-picker">Text to translate
+              <textarea rows={4} value={translationText} onChange={(event) => setTranslationText(event.target.value)} placeholder="Paste text here. For local translation, text stays with the local Ollama service."/>
+            </label>
+            <label className="model-select">Translate into
+              <select value={targetLanguage} onChange={(event) => setTargetLanguage(event.target.value)}>
+                {["English","Arabic","Hindi","Urdu","French","Spanish","German","Chinese","Japanese","Portuguese","Russian","Bengali","Tamil"].map((language) => <option key={language} value={language}>{language}</option>)}
+              </select>
+            </label>
+            <button className="model-run" onClick={translateLocally} disabled={!translationText.trim() || translationBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{translationBusy ? "Translating on this computer…" : "Translate with local AI"}</button>
+            {translationResult && <div className="result"><div className="result-title">Local translation <span>{ollamaModel}</span></div><p>{translationResult}</p><small>Processed through local Ollama on this computer. No browser or cloud translation provider was contacted.</small></div>}
+            <div className="install-guide">
+              <b>Browser translation (manual, optional)</b>
+              <p>Open a translation website, then paste the text yourself. UJANI does not automatically send your text or open a page with your content.</p>
+              <a href="https://translate.google.com/" target="_blank" rel="noreferrer">Open Google Translate ↗</a>
+              <p>Browser-based translation requires internet access and the provider may process the text. Review its privacy terms before pasting sensitive information.</p>
+            </div>
           </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>
