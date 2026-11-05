@@ -22,6 +22,8 @@ type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; 
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
+type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
+type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function App() {
@@ -61,7 +63,7 @@ export default function App() {
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
-  const [folderResults, setFolderResults] = useState<{ name: string; wordCount: number; summary: string; note: string }[]>([]);
+  const [folderResults, setFolderResults] = useState<FolderFileResult[]>([]);
   const [folderBusy, setFolderBusy] = useState(false);
   const [folderError, setFolderError] = useState("");
   const [translationText, setTranslationText] = useState("");
@@ -281,49 +283,30 @@ export default function App() {
     catch (error) { setFileError(String(error)); }
   }
 
-    // Folder import uses the operating-system file picker and File objects only.
-  // No directory path is accepted by Rust and no arbitrary filesystem traversal occurs.
-  async function handleFolderSelection(event: import("react").ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(event.target.files ?? []);
-    event.target.value = "";
+  // The native Rust command opens the OS folder dialog; the webview never supplies a path.
+  async function handleFolderSelection() {
     setFolderResults([]);
     setFolderError("");
-    if (!selected.length) return;
-    if (!isTauri()) { setFolderError("Launch the Tauri desktop app to process a selected folder."); return; }
+    if (!isTauri()) { setFolderError("Launch the Tauri desktop app to select a folder."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") {
       setFolderError("Folder processing is local-only. Select Fortress or Smart.");
       return;
     }
-    if (selected.length > 10) { setFolderError("Select a folder containing no more than 10 supported text files per batch."); return; }
-    const supported = new Set(["txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log"]);
-    const files = selected.filter((file) => supported.has(file.name.split(".").pop()?.toLowerCase() ?? ""));
-    if (files.length !== selected.length) {
-      setFolderError("The selected folder contains unsupported files. Only TXT, MD, CSV, JSON, RS, PY, JS, TS, HTML, XML and LOG files are accepted.");
-      return;
-    }
-    const totalBytes = files.reduce((total, file) => total + file.size, 0);
-    if (totalBytes > 1024 * 1024 || files.some((file) => file.size > 256 * 1024)) {
-      setFolderError("Folder batch limit: 1 MiB total and 256 KiB per file.");
-      return;
-    }
     setFolderBusy(true);
     try {
-      const results: { name: string; wordCount: number; summary: string; note: string }[] = [];
-      for (const file of files) {
-        const content = await file.text();
-        const analysis = await invoke<FileAnalysis>("analyze_text_file", { fileName: file.name, content });
-        let summary = "";
-        let note = "Analysis only; local Ollama model not available.";
-        if (ollamaStatus?.available && ollamaModel) {
-          const processed = await invoke<DocumentPipelineResult>("process_selected_document", {
-            fileName: file.name, content, mode: executionMode, model: ollamaModel, translationLanguage: null
-          });
-          summary = processed.summary;
-          note = "Summarised by local Ollama; no cloud transfer.";
-          await saveToPersistentHistory("Folder document: " + file.name, summary, "document", processed.model);
+      const result = await invoke<FolderImportResult>("process_selected_folder", {
+        mode: executionMode,
+        model: ollamaStatus?.available ? ollamaModel : ""
+      });
+      if (result.cancelled) return;
+      setFolderResults(result.files);
+      for (const item of result.files) {
+        if (item.summary) {
+          await saveToPersistentHistory("Folder document: " + item.file_name, item.summary, "document", ollamaModel || "analysis-only");
         }
-        results.push({ name: file.name, wordCount: analysis.word_count, summary, note });
-        setFolderResults([...results]);
+      }
+      if (result.files.length === 0) {
+        setFolderError("No supported text files were found in the selected folder.");
       }
     } catch (error) {
       setFolderError(String(error));
@@ -596,14 +579,18 @@ export default function App() {
             <label className="file-picker">Extract and summarise PDF locally (max 10 MiB; extracted text up to 256 KiB)
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
             </label>
-            <label className="file-picker">Analyze a user-selected folder (up to 10 text files; 1 MiB total)
-              <input type="file" multiple accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" {...({ webkitdirectory: "", directory: "" } as any)} onChange={handleFolderSelection} disabled={folderBusy}/>
-            </label>
-            <small className="muted">Folder access is granted only through the picker. Selected file contents are read into memory and processed sequentially; UJANI does not retain a folder path, recurse through directories, or follow model-supplied paths. Local summaries require Ollama.</small>
-            {folderBusy && <p className="progress" role="status">Processing selected folder files locally…</p>}
+            <div className="file-picker">
+              <b>Analyze a folder using the native folder picker</b>
+              <button type="button" className="model-run" onClick={handleFolderSelection} disabled={!isTauri() || folderBusy || (executionMode !== "fortress" && executionMode !== "smart")}>
+                {folderBusy ? "Processing selected folder…" : "Choose folder and analyze"}
+              </button>
+            </div>
+            <small className="muted">The native OS dialog grants this one-time selection. UJANI reads only direct child TXT, MD, CSV, JSON, RS, PY, JS, TS, HTML, XML and LOG files: maximum 10 files, 256 KiB each, 1 MiB total. No recursive traversal or persistent folder permission. Summaries use local Ollama only; without it, analysis still works.</small>
+            {folderBusy && <p className="progress" role="status">Processing selected folder locally…</p>}
             {folderError && <p className="error" role="alert">{folderError}</p>}
-            {folderResults.map((item) => <div className="result" key={item.name}>
-              <div className="result-title">{item.name}<span>{item.wordCount} words</span></div>
+            {folderResults.map((item) => <div className="result" key={item.file_name}>
+              <div className="result-title">{item.file_name}<span>{item.word_count} words · {item.line_count} lines · {item.size_bytes} bytes</span></div>
+              <small>Keywords: {item.top_keywords.join(", ") || "None detected"}</small>
               {item.summary && <p>{item.summary}</p>}
               <small>{item.note}</small>
             </div>)}
