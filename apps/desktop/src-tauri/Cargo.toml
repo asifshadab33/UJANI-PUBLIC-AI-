@@ -18,6 +18,10 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+aes-gcm = "0.10"
+rand = "0.8"
+keyring = "3"
+base64 = "0.22"
 sysinfo = "0.30"
 sys-locale = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
