@@ -29,7 +29,7 @@ fn retryable_status(status: reqwest::StatusCode) -> bool {
 }
 
 fn valid_model(model: &str) -> bool {
-    !model.is_empty() && model.len() <= 128 &&
+    !model.is_empty() && model.len() <= 128 && !model.contains("..") &&
         model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
 }
 async fn parse_limited<T: for<'de> Deserialize<'de>>(mut response: reqwest::Response) -> Result<T, String> {
@@ -50,7 +50,7 @@ async fn parse_limited<T: for<'de> Deserialize<'de>>(mut response: reqwest::Resp
 
 pub async fn is_available() -> bool {
     match client() {
-        Ok(c) => c.get(format!("{BASE_URL}/api/tags")).send().await
+        Ok(c) => c.get(format!("{BASE_URL}/api/tags")).timeout(Duration::from_secs(3)).send().await
             .map(|r| r.status().is_success()).unwrap_or(false),
         Err(_) => false,
     }
@@ -110,7 +110,7 @@ mod tests {
         assert!(valid_model("llama3.2"));
         assert!(valid_model("org/model:tag"));
         assert!(!valid_model(""));
-        assert!(!valid_model("../model"));
+        assert!(!valid_model("../model"));\n        assert!(!valid_model("org/../model"));
         assert!(!valid_model("model name"));
         assert!(!valid_model(&"m".repeat(129)));
     }
