@@ -33,7 +33,7 @@ export default function App() {
         ? await invoke<RunResult>("run_local_task", { request: text })
         : {
             operation: "local.word_count",
-            output: `Local preview completed. Your request contains ${text.split(/\\s+/).length} words. This is a demo tool, not an AI model.`,
+            output: `Local preview completed. Your request contains ${text.split(/\s+/).length} words. This is a demo tool, not an AI model.`,
             execution: "Browser demo (not a native device runtime)"
           };
       setResult(output);
