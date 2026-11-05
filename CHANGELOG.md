@@ -91,3 +91,22 @@ https://github.com/asifshadab33/UJANI-PUBLIC-AI-/commits/main
 - The pipeline accepts file content only, not a filesystem path. It supports Fortress and Smart only, uses the loopback Ollama service, and has no cloud fallback.
 - This is a first integrated text-document workflow, not yet a general multi-step planner, PDF extractor, OCR engine, or task-graph executor.
 
+## 2026-11-06 — PDF workflow, local translation and computer capabilities
+
+**Type:** Local-first feature integration.
+
+### Added
+- User-selected PDF text extraction using a bounded in-memory payload (10 MiB file limit), with CPU-heavy parsing dispatched through Tokio's blocking worker pool.
+- Extracted PDF text is analysed and summarised by the selected local Ollama model; the current AI text limit is 24 KiB.
+- Explicit local translation command for Fortress and Smart modes, bounded to 16 KiB and routed only to the loopback Ollama adapter.
+- Read-only operating-system locale detection for the computer capability panel.
+- A resource centre showing logical CPU count, available RAM, OS locale, local Ollama availability and honest boundaries around GPU/NPU and browser capabilities.
+- Manual browser translation option that opens Google Translate without transferring or pre-filling user text.
+
+### Limits and safety
+- Image-only/scanned PDFs return a clear message; OCR is not implemented.
+- Browser translation is a user-controlled copy/paste workflow. The current app does not read browser tabs, automate a browser session or silently submit text to a translation provider.
+- The OS locale is a language preference, not a built-in translation service. OS speech/OCR/translation packs and browser translation APIs need separate platform-specific adapters.
+- Local model compute is performed by Ollama; its CPU/GPU usage depends on the installed runtime, model and drivers. UJANI does not yet reserve CPU, inspect GPU/NPU readiness or enforce resource quotas.
+- PDF extraction and local translation are prototype features and require native build and runtime testing before release.
+
