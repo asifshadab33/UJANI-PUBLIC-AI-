@@ -24,7 +24,7 @@ fn client() -> Result<reqwest::Client, String> {
         .timeout(Duration::from_secs(120)).build()
         .map_err(|e| format!("Could not initialise local Ollama client: {e}"))
 }
-fn valid_model(model: &str) -> bool {
+fn retryable_status(status: reqwest::StatusCode) -> bool {\n    status.is_server_error()\n}\n\nfn valid_model(model: &str) -> bool {
     !model.is_empty() && model.len() <= 128 &&
         model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
 }
@@ -72,7 +72,7 @@ pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     for attempt in 0..MAX_ATTEMPTS {
         let response = c.post(format!("{BASE_URL}/api/generate")).json(&request).send().await;
         match response {
-            Ok(response) if response.status().is_server_error() => {
+            Ok(response) if retryable_status(response.status()) => {
                 last_error = format!("Local Ollama returned HTTP {}.", response.status());
             }
             Ok(response) => {
@@ -108,6 +108,6 @@ mod tests {
         assert!(!valid_model(""));
         assert!(!valid_model("../model"));
         assert!(!valid_model("model name"));
-        assert!(!valid_model(&"m".repeat(129)));
+        assert!(!valid_model(&"m".repeat(129)));\n    }\n\n    #[test]\n    fn retries_server_errors_but_not_client_errors() {\n        assert!(retryable_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR));\n        assert!(retryable_status(reqwest::StatusCode::SERVICE_UNAVAILABLE));\n        assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));\n        assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
     }
 }
