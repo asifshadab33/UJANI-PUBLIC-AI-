@@ -1,3 +1,4 @@
+mod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
@@ -303,6 +304,7 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_device_info,
             get_capability_snapshot,
@@ -322,6 +324,7 @@ pub fn run() {
             process_selected_pdf,
             translate_text_local,
             inspect_image_file,
+            folder_import::process_selected_folder,
             history::get_task_history_settings,
             history::set_task_history_enabled,
             history::save_task_history,
