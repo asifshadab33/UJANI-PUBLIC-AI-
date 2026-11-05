@@ -88,6 +88,28 @@ async fn process_selected_document(
     LocalTaskEngine::process_document(file_name, content, mode, model).await
 }
 
+/// Extracts and summarises text from a user-selected PDF, entirely on this computer.
+#[tauri::command]
+async fn process_selected_pdf(
+    file_name: String,
+    data: Vec<u8>,
+    mode: String,
+    model: String,
+) -> Result<task_engine::DocumentPipelineResult, String> {
+    LocalTaskEngine::process_pdf(file_name, data, mode, model).await
+}
+
+/// Translates user-provided text through the selected local Ollama model.
+#[tauri::command]
+async fn translate_text_local(
+    text: String,
+    target_language: String,
+    mode: String,
+    model: String,
+) -> Result<String, String> {
+    LocalTaskEngine::translate_local(text, target_language, mode, model).await
+}
+
 /// Inspects image bytes supplied by the user through the UI; never opens a path.
 #[tauri::command]
 fn inspect_image_file(file_name: String, data: Vec<u8>, file_size_bytes: u64) -> Result<ImageInfo, String> {
@@ -172,6 +194,8 @@ pub fn run() {
             analyze_text_file,
             summarize_selected_text,
             process_selected_document,
+            process_selected_pdf,
+            translate_text_local,
             inspect_image_file
         ])
         .run(tauri::generate_context!())
