@@ -290,7 +290,7 @@ async fn execute_local_ai_task(
 }
 
 #[tauri::command]
-fn cancel_local_ai_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
+fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
     let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
     if let Some(token) = active.get(&task_id) { token.cancel(); Ok(true) } else { Ok(false) }
 }
@@ -435,7 +435,7 @@ pub fn run() {
             get_model_recommendation,
             execute_document_workflow,
             execute_local_ai_task,
-            cancel_local_ai_task,
+            cancel_active_task,
             analyze_text_file,
             summarize_selected_text,
             process_selected_document,
