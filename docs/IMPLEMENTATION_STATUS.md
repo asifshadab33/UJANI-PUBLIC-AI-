@@ -74,3 +74,13 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - This is **not a persistent folder sandbox**: UJANI does not store an approved directory path, enumerate a directory through native filesystem APIs, or provide a reusable folder grant. The operating-system picker supplies the selected file objects; the app does not accept arbitrary paths or follow symlinks itself.
 - Folder import is limited to supported text formats. PDF remains available through the existing single-file PDF workflow.
 - A future native folder workflow must use an OS-scoped permission/grant, canonical path containment, symlink-safe traversal, explicit revocation and audit events before it can be described as a sandbox.
+
+## Native folder import and cross-platform checks — 2026-11-06
+
+- Replaced the browser `webkitdirectory` picker with the Tauri native folder dialog. The webview does not submit or construct a filesystem path.
+- Added `folder_import.rs`: native command opens the OS picker, canonicalizes the selected directory, reads only direct regular-file children, rejects symlink entries and symlink roots, validates containment, accepts a fixed text-extension allow-list, enforces 10-file / 256 KiB-per-file / 1 MiB-total limits, validates UTF-8, and sorts results deterministically.
+- Folder analysis runs locally. If a selected local Ollama model is available, each accepted file is summarised locally; otherwise analysis-only results are returned. No cloud transfer is implemented.
+- Added native unit tests for allow-list filtering, non-recursive behaviour, deterministic ordering, file-count limit, per-file size, total size, invalid UTF-8, and symlink rejection on Unix.
+- CI now runs the desktop Rust compile check and native unit tests on Ubuntu, Windows and macOS, in addition to core tests and the frontend build.
+- The native OS dialog itself requires interactive desktop UI and is not automated in headless CI. It still needs manual smoke testing on Windows, macOS and Linux.
+- This is a one-time picker workflow, not a persistent folder grant or a complete OS sandbox. The selected folder path is not stored. The implementation uses canonical-path and symlink checks, but does not claim race-free protection against a hostile process concurrently replacing filesystem entries.
