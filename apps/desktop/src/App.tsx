@@ -458,11 +458,12 @@ export default function App() {
 
   async function runCloudAi() {
     if (!isTauri() || !request.trim() || cloudBusy) return;
+    if (executionMode === "fortress") { setCloudError("Fortress mode is local-only. Switch to Smart, Worker, or Partner to use cloud."); return; }
     if (!cloudConsent) { setCloudError("Approve this exact task for external processing before sending."); return; }
     if (!cloudApiKey.trim()) { setCloudError("Enter your own provider API key. UJANI does not supply keys or credits."); return; }
     setCloudBusy(true); setCloudError(""); setCloudResult("");
     try {
-      setCloudResult(await invoke<string>("execute_cloud_ai_task", { endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), externalDataApproved: cloudConsent }));
+      setCloudResult(await invoke<string>("execute_cloud_ai_task", { endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), mode: executionMode, externalDataApproved: cloudConsent }));
     } catch (error) { setCloudError(String(error)); }
     finally { setCloudBusy(false); setCloudApiKey(""); setCloudConsent(false); }
   }
