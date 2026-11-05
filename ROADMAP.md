@@ -16,7 +16,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
 - [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
-- [ ] Local task history and visible progress.
+- [x] Opt-in local SQLite task history with disabled-by-default recording, 30-day retention, 100-entry cap, per-entry deletion and clear-all controls (plaintext; encryption not implemented).
 - [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
 - [x] Sequential, UTF-8-safe multi-section summarisation for documents up to 256 KiB, with bounded intermediate summaries and final synthesis; larger inputs require user splitting.
 - [x] Optional second local-model step to translate document/PDF summaries into a user-selected language.
