@@ -153,8 +153,9 @@ async fn process_selected_document(
     content: String,
     mode: String,
     model: String,
+    translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    LocalTaskEngine::process_document(file_name, content, mode, model).await
+    LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await
 }
 
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
@@ -164,8 +165,9 @@ async fn process_selected_pdf(
     data: Vec<u8>,
     mode: String,
     model: String,
+    translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    LocalTaskEngine::process_pdf(file_name, data, mode, model).await
+    LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language).await
 }
 
 /// Translates user-provided text through the selected local Ollama model.
