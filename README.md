@@ -39,7 +39,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Desktop prototype
 
-The Tauri 2 desktop prototype is in [`apps/desktop`](apps/desktop/README.md). It includes a four-mode policy preview, a loopback-only Ollama adapter for real local inference in Fortress and Smart modes, bounded in-memory text-file analysis, and basic image-header inspection. Worker/Partner cloud execution, OS-level network isolation, OCR/vision, and production sandboxing are not implemented. See the app README for Ollama setup and limitations.
+The Tauri 2 desktop prototype is in [`apps/desktop`](apps/desktop/README.md). It includes a four-mode policy preview, a loopback-only Ollama adapter for real local inference in Fortress and Smart modes, bounded in-memory text-file analysis, selected-PDF text extraction, local Ollama summarisation and translation, a read-only computer resource/OS-locale panel, and basic image-header inspection. Browser translation is a manual external option only; no text is sent automatically. Worker/Partner cloud execution, browser automation, OS-level network isolation, scanned-PDF OCR/vision, verified GPU/NPU scheduling, and production sandboxing are not implemented. See the app README for Ollama setup and limitations.
 
 ## Prototype core
 
