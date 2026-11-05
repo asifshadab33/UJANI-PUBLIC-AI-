@@ -6,6 +6,8 @@ type DeviceInfo = { os: string; architecture: string; logical_cpus: number; tota
 type CapabilityRecord = { id: string; category: string; state: "available" | "unavailable" | "unknown"; source: string; detail: string };
 type OperationDescriptor = { id: string; description: string; required_capabilities: string[]; minimum_available_memory_mb: number };
 type CapabilitySnapshot = { capabilities: CapabilityRecord[]; operations: OperationDescriptor[]; available_memory_mb: number };
+type WorkflowNode = { id: string; operation_id: string; depends_on: string[] };
+type WorkflowPlan = { accepted: boolean; schema_version: number; ordered_node_ids: string[]; required_capabilities: string[]; estimated_peak_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type TaskPlan = { operation_id: string; accepted: boolean; execution_location: string; required_capabilities: string[]; missing_capabilities: string[]; minimum_available_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
@@ -59,6 +61,8 @@ export default function App() {
   const [capabilityError, setCapabilityError] = useState("");
   const [plannedOperation, setPlannedOperation] = useState("local.ai.generate");
   const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
+  const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -93,6 +97,21 @@ export default function App() {
       }));
     } catch (error) { setCapabilityError(String(error)); }
     finally { setCapabilityBusy(false); }
+  }
+
+
+  async function previewDocumentWorkflow() {
+    if (!isTauri() || workflowBusy) return;
+    setWorkflowBusy(true); setWorkflowPlan(null); setCapabilityError("");
+    const nodes: WorkflowNode[] = [
+      { id: "analyse", operation_id: "file.analyze_text", depends_on: [] },
+      { id: "summarise", operation_id: "document.summarize", depends_on: ["analyse"] },
+      { id: "translate", operation_id: "translate.text", depends_on: ["summarise"] }
+    ];
+    try {
+      setWorkflowPlan(await invoke<WorkflowPlan>("plan_task_workflow", { nodes, mode: executionMode }));
+    } catch (error) { setCapabilityError(String(error)); }
+    finally { setWorkflowBusy(false); }
   }
 
   async function previewRoute() {
@@ -323,6 +342,17 @@ export default function App() {
           <p>{taskPlan.reason}</p>
           <small>Required: {taskPlan.required_capabilities.join(", ") || "none"} · Missing: {taskPlan.missing_capabilities.join(", ") || "none"} · Available RAM: {taskPlan.available_memory_mb} MiB · Minimum preflight: {taskPlan.minimum_available_memory_mb} MiB · Execution started: no</small>
         </div>}
+
+        <div className="result">
+          <div className="result-title"><BrainCircuit size={17}/> Integrated workflow graph <span>SCHEMA V1</span></div>
+          <p>Preview a three-step local workflow: analyse selected text → summarise with Ollama → translate with Ollama.</p>
+          <button className="model-run" onClick={previewDocumentWorkflow} disabled={!isTauri() || workflowBusy}>{workflowBusy ? "Validating workflow…" : "Validate document workflow"}</button>
+          {workflowPlan && <>
+            <p>{workflowPlan.accepted ? "Workflow plan accepted." : "Workflow cannot be planned."} {workflowPlan.reason}</p>
+            <small>Order: {workflowPlan.ordered_node_ids.join(" → ") || "Not available"} · Required: {workflowPlan.required_capabilities.join(", ") || "none"} · Conservative peak-memory preflight: {workflowPlan.estimated_peak_memory_mb} MiB · Available: {workflowPlan.available_memory_mb} MiB · Execution started: {workflowPlan.execution_started ? "yes" : "no"}</small>
+          </>}
+          <small className="muted">This is a validated plan only. It does not execute the steps, reserve resources or grant filesystem access. The existing document pipeline remains a separate fixed workflow.</small>
+        </div>
         <small className="muted">GPU/NPU are reported as unknown until verified. Memory thresholds are coarse preflight checks, not model-specific estimates or reservations. The planner supports local operations only; Worker/Partner gateway is not implemented.</small>
       </div>
       <div className="workspace">
