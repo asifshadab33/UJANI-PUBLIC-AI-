@@ -6,6 +6,7 @@ type DeviceInfo = { os: string; architecture: string; logical_cpus: number; tota
 type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
+type RouteDecision = { mode: string; action: string; allowed: boolean; external_data_transfer_permitted: boolean; collaboration_rounds: number; reason: string; enforcement_boundary_required: boolean };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function App() {
@@ -21,6 +22,11 @@ export default function App() {
   const [modelBusy, setModelBusy] = useState(false);
   const [modelResult, setModelResult] = useState<InferenceResult | null>(null);
   const [modelError, setModelError] = useState("");
+  const [executionMode, setExecutionMode] = useState("smart");
+  const [externalApproved, setExternalApproved] = useState(false);
+  const [routeDecision, setRouteDecision] = useState<RouteDecision | null>(null);
+  const [routeBusy, setRouteBusy] = useState(false);
+  const [routeError, setRouteError] = useState("");
 
   useEffect(() => {
     if (!isTauri()) {
@@ -31,6 +37,37 @@ export default function App() {
     invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
     invoke<ModelInfo[]>("list_local_models").then(setModels).catch((error) => setModelError(String(error)));
   }, []);
+
+  async function previewRoute() {
+    if (!request.trim() || routeBusy) return;
+    setRouteBusy(true); setRouteError(""); setRouteDecision(null);
+    try {
+      const args = {
+        taskId: "desktop-task-preview",
+        operation: "user.request",
+        mode: executionMode,
+        requiredCapabilities: ["cpu"],
+        availableCapabilities: device?.logical_cpus ? ["cpu"] : [],
+        localMemoryRequiredMb: 128,
+        availableMemoryMb: device?.total_memory_mb ?? 0,
+        externalDataApproved: externalApproved,
+        networkCapabilityAvailable: false,
+        requestedCollaborationRounds: 2
+      };
+      if (isTauri()) {
+        setRouteDecision(await invoke<RouteDecision>("evaluate_task_route", args));
+      } else {
+        const local = !!device;
+        setRouteDecision({
+          mode: executionMode, action: executionMode === "fortress" || executionMode === "smart" ? "execute_locally" : "await_external_approval",
+          allowed: local, external_data_transfer_permitted: false, collaboration_rounds: 0,
+          reason: "Browser preview is illustrative only. Open the desktop runtime for native policy evaluation.",
+          enforcement_boundary_required: true
+        });
+      }
+    } catch (error) { setRouteError(String(error)); }
+    finally { setRouteBusy(false); }
+  }
 
   async function runTask() {
     const text = request.trim();
@@ -95,6 +132,22 @@ export default function App() {
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a prompt to test the local-only execution path.</p></div><Zap size={20}/></div>
           <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
           <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
+          <div className="mode-panel">
+            <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
+            <label className="model-select">Execution mode
+              <select value={executionMode} onChange={(event) => { setExecutionMode(event.target.value); setRouteDecision(null); }}>
+                <option value="fortress">Fortress — local only</option>
+                <option value="smart">Smart — local first (default)</option>
+                <option value="worker">Worker — cloud planning</option>
+                <option value="partner">Partner — bounded collaboration</option>
+              </select>
+            </label>
+            <label className="consent-row"><input type="checkbox" checked={externalApproved} onChange={(event) => { setExternalApproved(event.target.checked); setRouteDecision(null); }}/> I explicitly approve external data transfer for this task</label>
+            <button className="model-run" onClick={previewRoute} disabled={!request.trim() || routeBusy}>{routeBusy ? "Evaluating policy…" : "Preview execution route"} <Send size={15}/></button>
+            {routeError && <p className="error" role="alert">{routeError}</p>}
+            {routeDecision && <div className="result"><div className="result-title"><ShieldCheck size={17}/> {routeDecision.action.replaceAll("_", " ")} <span>{routeDecision.allowed ? "Policy permits plan" : "Blocked / approval needed"}</span></div><p>{routeDecision.reason}</p><small>External transfer: {routeDecision.external_data_transfer_permitted ? "consented for a future gateway" : "not permitted"} · Rounds: {routeDecision.collaboration_rounds} · Enforcement boundary required: yes</small></div>}
+            <small className="muted">Selecting a mode never grants consent by itself. Fortress policy preview does not disable OS networking. Worker and Partner cannot execute until a secure gateway is implemented.</small>
+          </div>
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>
