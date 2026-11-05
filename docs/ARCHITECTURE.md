@@ -80,3 +80,8 @@ The desktop prototype now exposes a read-only capability snapshot containing CPU
 The built-in operation catalogue is allow-listed. The local planner checks required capabilities and a conservative minimum available-memory preflight before returning a plan. It does not execute the operation, reserve memory, estimate model-specific VRAM/RAM needs, or enable background compute. Worker and Partner remain unsupported until a separately controlled external gateway exists.
 
 The snapshot is point-in-time information and can become stale. Future work must add timestamps/expiry, explicit resource budgets, model-specific compatibility checks and cancellation before scheduling long-running work.
+
+
+## Versioned workflow graph (planning only)
+
+The core now accepts schema version 1 graphs containing at most 32 nodes. Each node must use a registered operation identifier and a bounded identifier; dependencies must exist, be unique and be acyclic. The planner produces a deterministic topological order and checks the union of required capabilities plus a conservative sequential peak-memory preflight. The desktop command rejects oversized node/dependency lists before planning. A successful plan is not an execution grant, does not reserve resources, and does not provide a sandbox. The current UI offers a fixed analyse → summarise → translate graph preview; execution still uses the dedicated document pipeline. General graph execution requires typed input/output schemas, per-node permission checks, cancellation, resource accounting and provenance before it should be enabled.
