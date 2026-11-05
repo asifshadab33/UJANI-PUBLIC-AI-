@@ -189,3 +189,6 @@ pub use image_processor::{inspect_image, ImageInfo};
 
 pub mod task_graph;
 pub use task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
+
+pub mod model_advisor;
+pub use model_advisor::{recommend_local_model, InstalledModelSize, ModelFitEstimate, ModelRecommendation};

@@ -8,6 +8,8 @@ type OperationDescriptor = { id: string; description: string; required_capabilit
 type CapabilitySnapshot = { capabilities: CapabilityRecord[]; operations: OperationDescriptor[]; available_memory_mb: number };
 type WorkflowNode = { id: string; operation_id: string; depends_on: string[] };
 type WorkflowPlan = { accepted: boolean; schema_version: number; ordered_node_ids: string[]; required_capabilities: string[]; estimated_peak_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
+type ModelRecommendation = { recommended_model: string | null; available_memory_mb: number; usable_memory_budget_mb: number; candidates: { name: string; size_bytes: number; estimated_working_memory_mb: number | null; estimated_to_fit: boolean; reason: string }[]; explanation: string };
+type WorkflowExecution = { plan: WorkflowPlan; result: DocumentPipelineResult };
 type TaskPlan = { operation_id: string; accepted: boolean; execution_location: string; required_capabilities: string[]; missing_capabilities: string[]; minimum_available_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
@@ -63,6 +65,10 @@ export default function App() {
   const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
   const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
   const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [workflowExecution, setWorkflowExecution] = useState<WorkflowExecution | null>(null);
+  const [modelRecommendation, setModelRecommendation] = useState<ModelRecommendation | null>(null);
+  const [recommendationError, setRecommendationError] = useState("");
+  const [recommendationBusy, setRecommendationBusy] = useState(false);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -77,6 +83,7 @@ export default function App() {
       setOllamaStatus(status);
       if (status.models.length) setOllamaModel(status.models[0].name);
     }).catch((error) => setOllamaError(String(error)));
+    invoke<ModelRecommendation>("get_model_recommendation").then(setModelRecommendation).catch((error) => setRecommendationError(String(error)));
   }, []);
 
   async function refreshCapabilities() {
@@ -110,6 +117,32 @@ export default function App() {
     ];
     try {
       setWorkflowPlan(await invoke<WorkflowPlan>("plan_task_workflow", { nodes, mode: executionMode }));
+    } catch (error) { setCapabilityError(String(error)); }
+    finally { setWorkflowBusy(false); }
+  }
+
+  async function refreshModelRecommendation() {
+    if (!isTauri() || recommendationBusy) return;
+    setRecommendationBusy(true); setRecommendationError("");
+    try { setModelRecommendation(await invoke<ModelRecommendation>("get_model_recommendation")); }
+    catch (error) { setRecommendationError(String(error)); }
+    finally { setRecommendationBusy(false); }
+  }
+
+  async function executeValidatedDocumentWorkflow() {
+    if (!isTauri() || workflowBusy || !fileText.trim() || !ollamaModel) return;
+    if (executionMode !== "fortress" && executionMode !== "smart") { setCapabilityError("This executable workflow is local-only. Select Fortress or Smart."); return; }
+    setWorkflowBusy(true); setCapabilityError(""); setWorkflowExecution(null);
+    try {
+      const execution = await invoke<WorkflowExecution>("execute_document_workflow", {
+        fileName: fileAnalysis?.file_name || "selected-document.txt",
+        content: fileText, mode: executionMode, model: ollamaModel,
+        translationLanguage: translateSummary ? targetLanguage : null
+      });
+      setWorkflowExecution(execution);
+      setFileSummary(execution.result.summary);
+      setFileTranslatedSummary(execution.result.translated_summary || "");
+      setFilePipelineMeta(`${execution.result.chunks_processed}/${execution.result.total_chunks} sections · validated order: ${execution.plan.ordered_node_ids.join(" → ")}`);
     } catch (error) { setCapabilityError(String(error)); }
     finally { setWorkflowBusy(false); }
   }
@@ -351,7 +384,9 @@ export default function App() {
             <p>{workflowPlan.accepted ? "Workflow plan accepted." : "Workflow cannot be planned."} {workflowPlan.reason}</p>
             <small>Order: {workflowPlan.ordered_node_ids.join(" → ") || "Not available"} · Required: {workflowPlan.required_capabilities.join(", ") || "none"} · Conservative peak-memory preflight: {workflowPlan.estimated_peak_memory_mb} MiB · Available: {workflowPlan.available_memory_mb} MiB · Execution started: {workflowPlan.execution_started ? "yes" : "no"}</small>
           </>}
-          <small className="muted">This is a validated plan only. It does not execute the steps, reserve resources or grant filesystem access. The existing document pipeline remains a separate fixed workflow.</small>
+          <button className="model-run" onClick={executeValidatedDocumentWorkflow} disabled={!isTauri() || workflowBusy || !fileText.trim() || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{workflowBusy ? "Executing validated local workflow…" : "Execute validated workflow on selected text"}</button>
+          {workflowExecution && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Workflow executed <span>LOCAL</span></div><p>{workflowExecution.result.summary}</p><small>Order: {workflowExecution.plan.ordered_node_ids.join(" → ")} · {workflowExecution.result.chunks_processed}/{workflowExecution.result.total_chunks} sections · {workflowExecution.result.model} · Execution started: yes</small>{workflowExecution.result.translated_summary && <p><b>Translation ({workflowExecution.result.translation_language}):</b> {workflowExecution.result.translated_summary}</p>}</div>}
+          <small className="muted">Only this fixed, validated local sequence executes. It uses text already selected in the app; no arbitrary graph nodes, filesystem paths, shell commands or cloud requests are executed.</small>
         </div>
         <small className="muted">GPU/NPU are reported as unknown until verified. Memory thresholds are coarse preflight checks, not model-specific estimates or reservations. The planner supports local operations only; Worker/Partner gateway is not implemented.</small>
       </div>
@@ -388,6 +423,15 @@ export default function App() {
               <code>ollama pull llama3.2</code>
               <p>Then keep Ollama running and refresh or reopen UJANI. Model files are downloaded separately from the Ollama application.</p>
               <a href="https://ollama.com/library" target="_blank" rel="noreferrer">Browse available models ↗</a>
+            </div>}
+            {modelRecommendation && <div className="install-guide">
+              <b>Local model resource advice (estimate only)</b><p>{modelRecommendation.explanation}</p>
+              <p>Available RAM: {modelRecommendation.available_memory_mb.toLocaleString()} MiB · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
+              {modelRecommendation.recommended_model ? <p>Suggested installed model: <b>{modelRecommendation.recommended_model}</b></p> : <p>No installed model can currently be recommended from the available information.</p>}
+              {modelRecommendation.candidates.slice(0,5).map(candidate => <p key={candidate.name}>{candidate.name}: {candidate.estimated_working_memory_mb===null?"unknown estimate":candidate.estimated_working_memory_mb.toLocaleString()+" MiB estimated"} · {candidate.estimated_to_fit?"within advisory budget":"not recommended"}</p>)}
+              {modelRecommendation.recommended_model && <button className="model-run" onClick={() => setOllamaModel(modelRecommendation.recommended_model!)}>Choose suggested model</button>}
+              <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Refreshing estimate…":"Refresh model advice"}</button>
+              {recommendationError && <p className="error" role="alert">{recommendationError}</p>}
             </div>}
             <label className="model-select">Installed Ollama model
               <select value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)} disabled={!ollamaStatus?.models.length}>

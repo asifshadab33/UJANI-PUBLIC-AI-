@@ -12,6 +12,7 @@ use sysinfo::System;
 use ujani_core::{FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
+use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
@@ -133,6 +134,35 @@ async fn plan_task_workflow(nodes: Vec<TaskNode>, mode: String) -> Result<TaskGr
 struct OllamaStatus {
     available: bool,
     models: Vec<ollama::OllamaModel>,
+}
+
+/// Advisory model-fit estimates; no model is automatically selected or loaded.
+#[tauri::command]
+async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
+ let mut system=System::new(); system.refresh_memory();
+ let available_memory_mb=system.available_memory()/(1024*1024);
+ let models=if ollama::is_available().await {ollama::list_models().await?.into_iter().map(|m|InstalledModelSize{name:m.name,size_bytes:m.size}).collect::<Vec<_>>()}else{Vec::new()};
+ Ok(recommend_local_model(&models,available_memory_mb))
+}
+
+#[derive(Serialize)]
+struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::DocumentPipelineResult }
+
+/// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
+#[tauri::command]
+async fn execute_document_workflow(file_name:String,content:String,mode:String,model:String,translation_language:Option<String>)->Result<WorkflowExecutionResult,String>{
+ if content.len()>256*1024{return Err("Workflow input exceeds the 256 KiB document limit.".into());}
+ if mode!="fortress"&&mode!="smart"{return Err("Executable document workflows are local-only (Fortress or Smart).".into());}
+ let snapshot=get_capability_snapshot().await?;
+ let graph=TaskGraph{schema_version:1,nodes:vec![
+ TaskNode{id:"analyse".into(),operation_id:"file.analyze_text".into(),depends_on:vec![]},
+ TaskNode{id:"summarise".into(),operation_id:"document.summarize".into(),depends_on:vec!["analyse".into()]},
+ TaskNode{id:"translate".into(),operation_id:"translate.text".into(),depends_on:vec!["summarise".into()]}]};
+ let plan=plan_task_graph(&graph,&mode,snapshot.available_memory_mb,&snapshot.capabilities);
+ if !plan.accepted{return Err(format!("Workflow preflight rejected execution: {}",plan.reason));}
+ // Do not interpret arbitrary graph data as executable code. This command runs this fixed sequence only.
+ let result=LocalTaskEngine::process_document(file_name,content,mode,model,translation_language).await?;
+ Ok(WorkflowExecutionResult{plan,result})
 }
 
 /// Checks only the local Ollama service at 127.0.0.1:11434.
@@ -282,6 +312,8 @@ pub fn run() {
             run_local_task,
             evaluate_task_route,
             get_ollama_status,
+            get_model_recommendation,
+            execute_document_workflow,
             execute_local_ai_task,
             analyze_text_file,
             summarize_selected_text,

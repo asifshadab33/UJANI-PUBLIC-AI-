@@ -51,3 +51,11 @@ A successful CI run verifies compilation/tests in its runner. It does not prove 
 ## Current next milestone
 
 Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux, including Ollama unavailable, model missing, timeout, oversized prompt/response and low-memory cases. Do not start cloud escalation until the consent and gateway controls above are implemented.
+
+
+## 2026-11-06 implementation update
+
+- Added advisory installed-model fit estimates using Ollama-reported disk sizes and current OS-reported available RAM. The estimate uses model disk size × 2 + 512 MiB and reserves 25% of currently available RAM. It is not a guarantee: quantisation, context length, runtime and accelerator offload affect actual memory. The app never changes the selected model automatically.
+- Added a native command that validates a versioned, allow-listed three-step document graph before executing the existing bounded local document pipeline. Only analyse → summarise → optional translate is executable; arbitrary graphs are never interpreted as code.
+- The desktop UI now presents model fit estimates, lets the user explicitly choose the suggested installed model, and executes the fixed validated document workflow using already-selected text.
+- Cloud gateway, GPU/NPU runtime verification, SQLite persistence, full image decoding/OCR and distributed execution remain deferred. Cross-platform native testing is still required.
