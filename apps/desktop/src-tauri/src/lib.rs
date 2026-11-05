@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
 use sysinfo::System;
 use ujani_core::{FileAnalysis, ImageInfo};
+use ujani_core::capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
 
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
@@ -43,6 +44,74 @@ fn evaluate_task_route(
     Ok(evaluate_mode(&request))
 }
 
+
+#[derive(Serialize)]
+struct CapabilitySnapshot {
+    capabilities: Vec<CapabilityRecord>,
+    operations: Vec<OperationDescriptor>,
+    available_memory_mb: u64,
+}
+
+/// Read-only capability inventory. Unknown GPU/NPU capability is never treated as available.
+#[tauri::command]
+async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
+    let mut system = System::new();
+    system.refresh_cpu();
+    system.refresh_memory();
+    let cpu_available = std::thread::available_parallelism().is_ok();
+    let ollama_available = ollama::is_available().await;
+    let capabilities = vec![
+        CapabilityRecord {
+            id: "cpu".into(), category: "compute".into(),
+            state: if cpu_available { CapabilityState::Available } else { CapabilityState::Unavailable },
+            source: "Rust standard library / OS".into(),
+            detail: format!("{} logical CPU threads reported by the OS", system.cpus().len()),
+        },
+        CapabilityRecord {
+            id: "memory".into(), category: "system".into(),
+            state: if system.available_memory() > 0 { CapabilityState::Available } else { CapabilityState::Unknown },
+            source: "sysinfo / OS".into(),
+            detail: format!("{} MiB currently available; varies with other applications", system.available_memory() / (1024 * 1024)),
+        },
+        CapabilityRecord {
+            id: "ollama.local".into(), category: "model_runtime".into(),
+            state: if ollama_available { CapabilityState::Available } else { CapabilityState::Unavailable },
+            source: "HTTP health check to 127.0.0.1:11434".into(),
+            detail: if ollama_available { "Local Ollama service responded".into() } else { "Local Ollama service not detected".into() },
+        },
+        CapabilityRecord {
+            id: "pdf.text_extraction".into(), category: "document".into(),
+            state: CapabilityState::Available, source: "Bundled PDF text parser".into(),
+            detail: "Text-based PDFs only; scanned-page OCR is not implemented".into(),
+        },
+        CapabilityRecord {
+            id: "image.header_inspection".into(), category: "image".into(),
+            state: CapabilityState::Available, source: "UJANI bounded image header parser".into(),
+            detail: "Metadata/header inspection only; no OCR or visual model inference".into(),
+        },
+        CapabilityRecord {
+            id: "gpu.compute".into(), category: "accelerator".into(),
+            state: CapabilityState::Unknown, source: "Not probed",
+            detail: "GPU presence and usable runtime/driver compatibility are not verified".into(),
+        },
+        CapabilityRecord {
+            id: "npu.compute".into(), category: "accelerator".into(),
+            state: CapabilityState::Unknown, source: "Not probed",
+            detail: "NPU presence and supported runtime are not verified".into(),
+        },
+    ];
+    Ok(CapabilitySnapshot {
+        capabilities, operations: registered_operations(),
+        available_memory_mb: system.available_memory() / (1024 * 1024),
+    })
+}
+
+/// Plans an allow-listed local operation. This command does not execute or reserve resources.
+#[tauri::command]
+async fn plan_local_operation(operation_id: String, mode: String) -> Result<TaskPlan, String> {
+    let snapshot = get_capability_snapshot().await?;
+    Ok(plan_local_task(&operation_id, &mode, snapshot.available_memory_mb, &snapshot.capabilities))
+}
 
 #[derive(Serialize)]
 struct OllamaStatus {
@@ -187,6 +256,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_device_info,
+            get_capability_snapshot,
+            plan_local_operation,
             list_local_models,
             run_local_model_task,
             run_local_task,
