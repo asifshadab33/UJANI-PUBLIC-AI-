@@ -13,14 +13,14 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
 - [ ] Read-only hardware inventory: CPU, RAM, storage and available accelerators.
 - [ ] Capability registry with provenance, freshness and permission metadata.
-- [ ] Local task history and visible progress.
+- [ ] Local task history and visible progress.\n- [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
 - [ ] Registered deterministic tools: PDF text extraction, image conversion and media metadata.
 - [ ] Sandboxed execution adapter with enforceable filesystem and resource limits.
 
 ## Phase 2 — local models and planning
 - [ ] Model catalogue with licence, checksum, source and compatibility metadata.
-- [ ] Integrate one local inference runtime behind a stable adapter.
-- [ ] Structured task graph with dependency and output schemas.
+- [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
+- [ ] Structured task graph with dependency and output schemas (future work; current document pipeline is a fixed two-stage workflow).
 - [ ] Verification and reproducible benchmark harness.
 
 ## Phase 3 — optional external assistance
