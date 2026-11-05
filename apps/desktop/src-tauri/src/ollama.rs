@@ -5,6 +5,7 @@ use std::time::Duration;
 const BASE_URL: &str = "http://127.0.0.1:11434";
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ATTEMPTS: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaModel {
@@ -56,15 +57,57 @@ pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
     let list: ModelList = parse_limited(response).await?;
     Ok(list.models)
 }
+
+/// Retry only transient connection/time-out and server failures. Validation errors,
+/// oversized responses, malformed JSON and other client errors are never retried.
 pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     if !valid_model(model) { return Err("Invalid local model identifier.".into()); }
     if prompt.trim().is_empty() { return Err("Prompt cannot be empty.".into()); }
     if prompt.len() > MAX_PROMPT_BYTES { return Err("Prompt exceeds the 32 KiB local limit.".into()); }
+
     let c = client()?;
-    let response = c.post(format!("{BASE_URL}/api/generate"))
-        .json(&GenerateRequest { model, prompt, stream: false })
-        .send().await.map_err(|e| format!("Local Ollama request failed: {e}"))?;
-    let result: GenerateResponse = parse_limited(response).await?;
-    if result.response.trim().is_empty() { return Err("Local Ollama returned an empty response.".into()); }
-    Ok(result.response)
+    let request = GenerateRequest { model, prompt, stream: false };
+    let mut last_error = String::new();
+
+    for attempt in 0..MAX_ATTEMPTS {
+        let response = c.post(format!("{BASE_URL}/api/generate")).json(&request).send().await;
+        match response {
+            Ok(response) if response.status().is_server_error() => {
+                last_error = format!("Local Ollama returned HTTP {}.", response.status());
+            }
+            Ok(response) => {
+                let result: GenerateResponse = parse_limited(response).await?;
+                if result.response.trim().is_empty() {
+                    return Err("Local Ollama returned an empty response.".into());
+                }
+                return Ok(result.response);
+            }
+            Err(error) if error.is_timeout() || error.is_connect() => {
+                last_error = format!("Local Ollama request failed: {error}");
+            }
+            Err(error) => return Err(format!("Local Ollama request failed: {error}")),
+        }
+
+        if attempt + 1 < MAX_ATTEMPTS {
+            let delay_ms = 250_u64 * (1_u64 << attempt);
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+    }
+
+    Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_bounded_local_model_identifiers() {
+        assert!(valid_model("llama3.2"));
+        assert!(valid_model("org/model:tag"));
+        assert!(!valid_model(""));
+        assert!(!valid_model("../model"));
+        assert!(!valid_model("model name"));
+        assert!(!valid_model(&"m".repeat(129)));
+    }
 }
