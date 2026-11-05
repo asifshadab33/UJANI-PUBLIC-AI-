@@ -21,7 +21,7 @@ struct GenerateResponse { response: String }
 
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder().connect_timeout(Duration::from_secs(2))
-        .timeout(Duration::from_secs(120)).build()
+        .timeout(Duration::from_secs(45)).build()
         .map_err(|e| format!("Could not initialise local Ollama client: {e}"))
 }
 fn retryable_status(status: reqwest::StatusCode) -> bool {
