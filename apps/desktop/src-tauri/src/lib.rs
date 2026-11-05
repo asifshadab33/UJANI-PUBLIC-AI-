@@ -77,6 +77,17 @@ async fn summarize_selected_text(file_name: String, content: String, mode: Strin
     LocalTaskEngine::summarize(file_name, content, mode, model).await
 }
 
+/// Runs bounded text analysis followed by local-only Ollama summarisation.
+#[tauri::command]
+async fn process_selected_document(
+    file_name: String,
+    content: String,
+    mode: String,
+    model: String,
+) -> Result<task_engine::DocumentPipelineResult, String> {
+    LocalTaskEngine::process_document(file_name, content, mode, model).await
+}
+
 /// Inspects image bytes supplied by the user through the UI; never opens a path.
 #[tauri::command]
 fn inspect_image_file(file_name: String, data: Vec<u8>, file_size_bytes: u64) -> Result<ImageInfo, String> {
@@ -160,6 +171,7 @@ pub fn run() {
             execute_local_ai_task,
             analyze_text_file,
             summarize_selected_text,
+            process_selected_document,
             inspect_image_file
         ])
         .run(tauri::generate_context!())
