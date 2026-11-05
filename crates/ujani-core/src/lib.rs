@@ -177,3 +177,8 @@ mod tests {
 
 /// Four-mode execution policy preview; no execution or networking occurs here.
 pub mod router;
+pub mod file_processor;
+pub mod image_processor;
+
+pub use file_processor::{analyze_text, FileAnalysis};
+pub use image_processor::{inspect_image, ImageInfo};
