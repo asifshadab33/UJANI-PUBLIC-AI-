@@ -88,3 +88,37 @@ mod tests {
         assert!(inspect_image("sample.png", &vec![0; MAX_IMAGE_BYTES + 1], (MAX_IMAGE_BYTES + 1) as u64).is_err());
     }
 }
+
+
+#[cfg(test)]
+mod additional_format_tests {
+    use super::*;
+
+    #[test]
+    fn inspects_jpeg_gif_webp_and_bmp_headers() {
+        let jpeg = inspect_image("photo.jpg", &[0xff, 0xd8, 0xff], 3).unwrap();
+        assert_eq!(jpeg.format, "JPEG");
+        assert_eq!(jpeg.dimensions, None);
+
+        let gif = inspect_image("animation.gif", b"GIF89a\\x20\\x00\\x10\\x00", 10).unwrap();
+        assert_eq!(gif.format, "GIF");
+        assert_eq!(gif.dimensions, Some((32, 16)));
+
+        let webp = inspect_image("picture.webp", b"RIFF\\x04\\x00\\x00\\x00WEBP", 12).unwrap();
+        assert_eq!(webp.format, "WebP");
+
+        let mut bmp = vec![0_u8; 26];
+        bmp[..2].copy_from_slice(b"BM");
+        bmp[18..22].copy_from_slice(&32_i32.to_le_bytes());
+        bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
+        let bmp_info = inspect_image("bitmap.bmp", &bmp, 26).unwrap();
+        assert_eq!(bmp_info.dimensions, Some((32, 16)));
+    }
+
+    #[test]
+    fn rejects_extension_and_header_mismatch_for_other_formats() {
+        assert!(inspect_image("photo.jpg", b"GIF89a\\x01\\x00\\x01\\x00", 10).is_err());
+        assert!(inspect_image("picture.webp", b"RIFF\\x00\\x00\\x00\\x00NOPE", 12).is_err());
+        assert!(inspect_image("bitmap.bmp", b"not a bitmap header at all", 26).is_err());
+    }
+}
