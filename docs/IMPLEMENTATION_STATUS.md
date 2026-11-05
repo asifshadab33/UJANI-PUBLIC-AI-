@@ -66,3 +66,11 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - The model-advice panel remains visible while estimates are loading and provides a retry action even when the initial recommendation request fails. Failures are shown to the user rather than silently hiding the panel.
 - Added core tests for the exact advisory-memory boundary, deterministic tie ordering and an empty installed-model catalogue.
 - The estimate remains advisory only. It is not used as a hard execution gate because disk size cannot reliably predict memory use across quantisation, context sizes, runtime configuration and accelerator offload.
+
+## 2026-11-06 selected-folder import update
+
+- Added a folder picker for user-selected batches of supported text files. The current batch is limited to 10 files, 256 KiB per file and 1 MiB total.
+- Selected file bytes are read by the frontend picker and passed to existing native analysis/local summarisation commands one file at a time. Summaries use the selected local Ollama model only; no cloud transfer occurs.
+- This is **not a persistent folder sandbox**: UJANI does not store an approved directory path, enumerate a directory through native filesystem APIs, or provide a reusable folder grant. The operating-system picker supplies the selected file objects; the app does not accept arbitrary paths or follow symlinks itself.
+- Folder import is limited to supported text formats. PDF remains available through the existing single-file PDF workflow.
+- A future native folder workflow must use an OS-scoped permission/grant, canonical path containment, symlink-safe traversal, explicit revocation and audit events before it can be described as a sandbox.
