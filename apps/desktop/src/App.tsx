@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number; system_locale: string };
+type CapabilityRecord = { id: string; category: string; state: "available" | "unavailable" | "unknown"; source: string; detail: string };
+type OperationDescriptor = { id: string; description: string; required_capabilities: string[]; minimum_available_memory_mb: number };
+type CapabilitySnapshot = { capabilities: CapabilityRecord[]; operations: OperationDescriptor[]; available_memory_mb: number };
+type TaskPlan = { operation_id: string; accepted: boolean; execution_location: string; required_capabilities: string[]; missing_capabilities: string[]; minimum_available_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
@@ -47,6 +51,11 @@ export default function App() {
   const [targetLanguage, setTargetLanguage] = useState("English");
   const [translationResult, setTranslationResult] = useState("");
   const [translationBusy, setTranslationBusy] = useState(false);
+  const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  const [capabilityBusy, setCapabilityBusy] = useState(false);
+  const [capabilityError, setCapabilityError] = useState("");
+  const [plannedOperation, setPlannedOperation] = useState("local.ai.generate");
+  const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -55,12 +64,33 @@ export default function App() {
       return;
     }
     invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
+    invoke<CapabilitySnapshot>("get_capability_snapshot").then(setCapabilitySnapshot).catch((error) => setCapabilityError(String(error)));
     invoke<ModelInfo[]>("list_local_models").then(setModels).catch((error) => setModelError(String(error)));
     invoke<OllamaStatus>("get_ollama_status").then((status) => {
       setOllamaStatus(status);
       if (status.models.length) setOllamaModel(status.models[0].name);
     }).catch((error) => setOllamaError(String(error)));
   }, []);
+
+  async function refreshCapabilities() {
+    if (!isTauri() || capabilityBusy) return;
+    setCapabilityBusy(true); setCapabilityError(""); setTaskPlan(null);
+    try {
+      setCapabilitySnapshot(await invoke<CapabilitySnapshot>("get_capability_snapshot"));
+    } catch (error) { setCapabilityError(String(error)); }
+    finally { setCapabilityBusy(false); }
+  }
+
+  async function previewLocalPlan() {
+    if (!isTauri() || capabilityBusy) return;
+    setCapabilityBusy(true); setCapabilityError(""); setTaskPlan(null);
+    try {
+      setTaskPlan(await invoke<TaskPlan>("plan_local_operation", {
+        operationId: plannedOperation, mode: executionMode
+      }));
+    } catch (error) { setCapabilityError(String(error)); }
+    finally { setCapabilityBusy(false); }
+  }
 
   async function previewRoute() {
     if (!request.trim() || routeBusy) return;
@@ -257,6 +287,34 @@ export default function App() {
         <div className="principle"><CheckCircle2/><div><b>Local AI compute</b><small>{ollamaStatus?.available ? "Ollama is available. Its configured backend may use CPU and supported GPU acceleration." : "Install Ollama to use local model inference."} UJANI does not currently detect GPU/NPU readiness itself.</small></div></div>
         <div className="principle"><ShieldCheck/><div><b>Operating-system services</b><small>UJANI can report OS and locale now. Direct speech, OCR, accessibility, translation packs and GPU APIs need separate platform adapters and permissions.</small></div></div>
         <div className="principle"><Monitor/><div><b>Browser capabilities</b><small>External web tools can be opened by choice. This version does not read browser tabs, use browser translation APIs, or transfer content automatically.</small></div></div>
+      </div>
+      <div className="model-box resource-box">
+        <div className="section-heading">
+          <div><h2><Cpu size={18}/> Capability registry & task planner</h2><p>Live, read-only capability checks and a safe plan preview. Planning never starts work.</p></div>
+          <button className="model-run" onClick={refreshCapabilities} disabled={!isTauri() || capabilityBusy}>{capabilityBusy ? "Checking…" : "Refresh capabilities"}</button>
+        </div>
+        {capabilityError && <p className="error" role="alert">{capabilityError}</p>}
+        {!isTauri() && <p className="muted">Open the desktop app to inspect real device capabilities and plan operations.</p>}
+        <div className="capability-list">
+          {(capabilitySnapshot?.capabilities ?? []).map((capability) => (
+            <div className="principle" key={capability.id}>
+              <span className={`dot ${capability.state === "available" ? "online" : ""}`}/>
+              <div><b>{capability.id.replace(/[._]/g, " ")}</b><small>{capability.state.toUpperCase()} · {capability.detail} · Source: {capability.source}</small></div>
+            </div>
+          ))}
+        </div>
+        <label className="model-select">Preview a registered local operation
+          <select value={plannedOperation} onChange={(event) => { setPlannedOperation(event.target.value); setTaskPlan(null); }}>
+            {(capabilitySnapshot?.operations ?? []).map((operation) => <option key={operation.id} value={operation.id}>{operation.id} — {operation.description}</option>)}
+          </select>
+        </label>
+        <button className="model-run" onClick={previewLocalPlan} disabled={!isTauri() || capabilityBusy}>{capabilityBusy ? "Planning…" : "Preview local task plan"}</button>
+        {taskPlan && <div className="result">
+          <div className="result-title"><ShieldCheck size={17}/> {taskPlan.accepted ? "Local plan ready" : "Plan not available"} <span>{taskPlan.execution_location}</span></div>
+          <p>{taskPlan.reason}</p>
+          <small>Required: {taskPlan.required_capabilities.join(", ") || "none"} · Missing: {taskPlan.missing_capabilities.join(", ") || "none"} · Available RAM: {taskPlan.available_memory_mb} MiB · Minimum preflight: {taskPlan.minimum_available_memory_mb} MiB · Execution started: no</small>
+        </div>}
+        <small className="muted">GPU/NPU are reported as unknown until verified. Memory thresholds are coarse preflight checks, not model-specific estimates or reservations. The planner supports local operations only; Worker/Partner gateway is not implemented.</small>
       </div>
       <div className="workspace">
         <div className="task-panel">
