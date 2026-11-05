@@ -123,6 +123,7 @@ struct DeviceInfo {
     logical_cpus: usize,
     total_memory_mb: u64,
     available_memory_mb: u64,
+    system_locale: String,
 }
 
 #[derive(Serialize)]
@@ -143,6 +144,7 @@ fn get_device_info() -> DeviceInfo {
         logical_cpus: system.cpus().len(),
         total_memory_mb: system.total_memory() / (1024 * 1024),
         available_memory_mb: system.available_memory() / (1024 * 1024),
+        system_locale: sys_locale::get_locale().unwrap_or_else(|| "Unknown".into()),
     }
 }
 
