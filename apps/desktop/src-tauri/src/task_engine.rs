@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use sysinfo::System;
 use ujani_core::router::{evaluate_mode, ExecutionMode, RouteAction, RouteRequest};
-use ujani_core::{analyze_text, inspect_image, FileAnalysis, ImageInfo};
+use ujani_core::{analyze_text as core_analyze_text, inspect_image as core_inspect_image, FileAnalysis, ImageInfo};
 use super::ollama;
 
 #[derive(Serialize)]
@@ -69,10 +69,10 @@ impl LocalTaskEngine {
     }
 
     pub fn analyze_text(file_name: &str, content: &str) -> Result<FileAnalysis, String> {
-        analyze_text(file_name, content)
+        core_analyze_text(file_name, content)
     }
 
     pub fn inspect_image(file_name: &str, data: &[u8], file_size_bytes: u64) -> Result<ImageInfo, String> {
-        inspect_image(file_name, data, file_size_bytes)
+        core_inspect_image(file_name, data, file_size_bytes)
     }
 }
