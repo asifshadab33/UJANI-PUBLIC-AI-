@@ -90,6 +90,7 @@ export default function App() {
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [cloudBusy, setCloudBusy] = useState(false);
+  const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
   const [cloudError, setCloudError] = useState("");
 
@@ -461,11 +462,20 @@ export default function App() {
     if (executionMode === "fortress") { setCloudError("Fortress mode is local-only. Switch to Smart, Worker, or Partner to use cloud."); return; }
     if (!cloudConsent) { setCloudError("Approve this exact task for external processing before sending."); return; }
     if (!cloudApiKey.trim()) { setCloudError("Enter your own provider API key. UJANI does not supply keys or credits."); return; }
+    const taskId = "cloud-ai-" + Date.now().toString(36);
+    setActiveCloudTaskId(taskId);
+    setTaskProgress({ task_id: taskId, stage: "cloud_starting", message: "Preparing approved cloud request…", progress_percent: 5 });
     setCloudBusy(true); setCloudError(""); setCloudResult("");
     try {
-      setCloudResult(await invoke<string>("execute_cloud_ai_task", { endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), mode: executionMode, externalDataApproved: cloudConsent }));
+      setCloudResult(await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), mode: executionMode, externalDataApproved: cloudConsent }));
     } catch (error) { setCloudError(String(error)); }
-    finally { setCloudBusy(false); setCloudApiKey(""); setCloudConsent(false); }
+    finally { setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); }
+  }
+
+  async function cancelCloudAi() {
+    if (!activeCloudTaskId) return;
+    try { await invoke<boolean>("cancel_local_ai_task", { taskId: activeCloudTaskId }); }
+    catch (error) { setCloudError("Cloud cancellation failed: " + String(error)); }
   }
 
   const memory = device ? `${(device.total_memory_mb / 1024).toFixed(1)} GB` : "—";
@@ -674,6 +684,7 @@ export default function App() {
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => setCloudConsent(event.target.checked)}/> I approve sending the current prompt to this provider for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send secrets or sensitive data. The key is passed to the native command for this request only, not written to app storage, and cleared after the attempt.</small>
             <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || !cloudApiKey.trim() || cloudBusy || executionMode === "fortress"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
+            {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
             {cloudResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Cloud provider response <span>{cloudModel}</span></div><p>{cloudResult}</p><small>External processing was approved for this task. Not saved to history automatically.</small></div>}
           </div>
