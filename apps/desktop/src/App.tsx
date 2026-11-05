@@ -298,7 +298,7 @@ export default function App() {
 
   async function cancelLocalAi() {
     if (!activeTaskId) return;
-    try { await invoke<boolean>("cancel_local_ai_task", { taskId: activeTaskId }); }
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeTaskId }); }
     catch (error) { setOllamaError("Cancellation failed: " + String(error)); }
   }
 
@@ -474,7 +474,7 @@ export default function App() {
 
   async function cancelCloudAi() {
     if (!activeCloudTaskId) return;
-    try { await invoke<boolean>("cancel_local_ai_task", { taskId: activeCloudTaskId }); }
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeCloudTaskId }); }
     catch (error) { setCloudError("Cloud cancellation failed: " + String(error)); }
   }
 
