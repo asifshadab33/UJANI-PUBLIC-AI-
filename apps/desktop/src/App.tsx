@@ -61,6 +61,9 @@ export default function App() {
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
+  const [folderResults, setFolderResults] = useState<{ name: string; wordCount: number; summary: string; note: string }[]>([]);
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderError, setFolderError] = useState("");
   const [translationText, setTranslationText] = useState("");
   const [targetLanguage, setTargetLanguage] = useState("English");
   const [translationResult, setTranslationResult] = useState("");
@@ -278,7 +281,58 @@ export default function App() {
     catch (error) { setFileError(String(error)); }
   }
 
-    async function summarizeFile() {
+    // Folder import uses the operating-system file picker and File objects only.
+  // No directory path is accepted by Rust and no arbitrary filesystem traversal occurs.
+  async function handleFolderSelection(event: import("react").ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    setFolderResults([]);
+    setFolderError("");
+    if (!selected.length) return;
+    if (!isTauri()) { setFolderError("Launch the Tauri desktop app to process a selected folder."); return; }
+    if (executionMode !== "fortress" && executionMode !== "smart") {
+      setFolderError("Folder processing is local-only. Select Fortress or Smart.");
+      return;
+    }
+    if (selected.length > 10) { setFolderError("Select a folder containing no more than 10 supported text files per batch."); return; }
+    const supported = new Set(["txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log"]);
+    const files = selected.filter((file) => supported.has(file.name.split(".").pop()?.toLowerCase() ?? ""));
+    if (files.length !== selected.length) {
+      setFolderError("The selected folder contains unsupported files. Only TXT, MD, CSV, JSON, RS, PY, JS, TS, HTML, XML and LOG files are accepted.");
+      return;
+    }
+    const totalBytes = files.reduce((total, file) => total + file.size, 0);
+    if (totalBytes > 1024 * 1024 || files.some((file) => file.size > 256 * 1024)) {
+      setFolderError("Folder batch limit: 1 MiB total and 256 KiB per file.");
+      return;
+    }
+    setFolderBusy(true);
+    try {
+      const results: { name: string; wordCount: number; summary: string; note: string }[] = [];
+      for (const file of files) {
+        const content = await file.text();
+        const analysis = await invoke<FileAnalysis>("analyze_text_file", { fileName: file.name, content });
+        let summary = "";
+        let note = "Analysis only; local Ollama model not available.";
+        if (ollamaStatus?.available && ollamaModel) {
+          const processed = await invoke<DocumentPipelineResult>("process_selected_document", {
+            fileName: file.name, content, mode: executionMode, model: ollamaModel, translationLanguage: null
+          });
+          summary = processed.summary;
+          note = "Summarised by local Ollama; no cloud transfer.";
+          await saveToPersistentHistory("Folder document: " + file.name, summary, "document", processed.model);
+        }
+        results.push({ name: file.name, wordCount: analysis.word_count, summary, note });
+        setFolderResults([...results]);
+      }
+    } catch (error) {
+      setFolderError(String(error));
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+
+  async function summarizeFile() {
     if (!fileText || !fileAnalysis || summaryBusy) return;
     if (new TextEncoder().encode(fileText).length > 256 * 1024) {
       setFileError("The integrated AI pipeline is limited to 256 KiB per document. Basic text analysis remains available up to 1 MiB.");
@@ -542,6 +596,17 @@ export default function App() {
             <label className="file-picker">Extract and summarise PDF locally (max 10 MiB; extracted text up to 256 KiB)
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
             </label>
+            <label className="file-picker">Analyze a user-selected folder (up to 10 text files; 1 MiB total)
+              <input type="file" multiple accept=".txt,.md,.csv,.json,.rs,.py,.js,.ts,.html,.xml,.log" {...({ webkitdirectory: "", directory: "" } as any)} onChange={handleFolderSelection} disabled={folderBusy}/>
+            </label>
+            <small className="muted">Folder access is granted only through the picker. Selected file contents are read into memory and processed sequentially; UJANI does not retain a folder path, recurse through directories, or follow model-supplied paths. Local summaries require Ollama.</small>
+            {folderBusy && <p className="progress" role="status">Processing selected folder files locally…</p>}
+            {folderError && <p className="error" role="alert">{folderError}</p>}
+            {folderResults.map((item) => <div className="result" key={item.name}>
+              <div className="result-title">{item.name}<span>{item.wordCount} words</span></div>
+              {item.summary && <p>{item.summary}</p>}
+              <small>{item.note}</small>
+            </div>)}
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
             {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 256 * 1024}>{summaryBusy ? "Processing sections locally…" : "Run integrated local document pipeline"}</button>}
             {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. {filePipelineMeta || (fileAnalysis ? "Source size: " + fileAnalysis.size_bytes.toLocaleString() + " bytes." : "")} No cloud transfer.</small></div>}
