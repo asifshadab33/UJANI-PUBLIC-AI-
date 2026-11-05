@@ -44,6 +44,7 @@ export default function App() {
   const [fileAnalysis, setFileAnalysis] = useState<FileAnalysis | null>(null);
   const [fileText, setFileText] = useState("");
   const [fileSummary, setFileSummary] = useState("");
+  const [filePipelineMeta, setFilePipelineMeta] = useState("");
   const [fileTranslatedSummary, setFileTranslatedSummary] = useState("");
   const [translateSummary, setTranslateSummary] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
@@ -142,7 +143,7 @@ export default function App() {
   async function handleTextFile(event: import("react").ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFileError(""); setFileAnalysis(null); setFileText(""); setFileSummary(""); setFileTranslatedSummary("");
+    setFileError(""); setFileAnalysis(null); setFileText(""); setFileSummary(""); setFilePipelineMeta(""); setFileTranslatedSummary("");
     if (file.size > 1024 * 1024) { setFileError("Text files are limited to 1 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to process files."); return; }
     try { const content = await file.text(); setFileText(content); setFileAnalysis(await invoke<FileAnalysis>("analyze_text_file", { fileName: file.name, content })); }
@@ -157,7 +158,7 @@ export default function App() {
     }
     if (!ollamaModel || !ollamaStatus?.available) { setFileError("Start local Ollama and select an installed model to run the document pipeline."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("The local document pipeline is available in Fortress and Smart only."); return; }
-    setSummaryBusy(true); setFileError(""); setFileSummary("");
+    setSummaryBusy(true); setFileError(""); setFileSummary(""); setFilePipelineMeta("");
     try {
       const result = await invoke<DocumentPipelineResult>("process_selected_document", {
         fileName: fileAnalysis.file_name, content: fileText, mode: executionMode, model: ollamaModel,
@@ -165,6 +166,7 @@ export default function App() {
       });
       setFileAnalysis(result.analysis);
       setFileSummary(result.summary);
+      setFilePipelineMeta(`Processed ${result.chunks_processed} of ${result.total_chunks} sections · ${result.source_text_bytes.toLocaleString()} source bytes · ${result.execution_location}`);
       setFileTranslatedSummary(result.translated_summary ?? "");
     } catch (error) { setFileError(String(error)); }
     finally { setSummaryBusy(false); }
@@ -173,7 +175,7 @@ export default function App() {
   async function handlePdfFile(event: import("react").ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFileError(""); setFileAnalysis(null); setFileSummary(""); setFileTranslatedSummary("");
+    setFileError(""); setFileAnalysis(null); setFileSummary(""); setFilePipelineMeta(""); setFileTranslatedSummary("");
     if (file.size > 10 * 1024 * 1024) { setFileError("PDF files are limited to 10 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
@@ -187,6 +189,7 @@ export default function App() {
       });
       setFileAnalysis(result.analysis);
       setFileSummary(result.summary);
+      setFilePipelineMeta(`Processed ${result.chunks_processed} of ${result.total_chunks} sections · ${result.source_text_bytes.toLocaleString()} extracted bytes · ${result.execution_location}`);
       setFileTranslatedSummary(result.translated_summary ?? "");
       setFileText("");
     } catch (error) { setFileError(String(error)); }
@@ -383,7 +386,7 @@ export default function App() {
             </label>
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
             {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 256 * 1024}>{summaryBusy ? "Processing sections locally…" : "Run integrated local document pipeline"}</button>}
-            {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. {fileAnalysis ? "Source size: " + fileAnalysis.size_bytes.toLocaleString() + " bytes." : ""} Multi-section documents are summarised in bounded sequential stages. No cloud transfer.</small></div>}
+            {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. {filePipelineMeta || (fileAnalysis ? "Source size: " + fileAnalysis.size_bytes.toLocaleString() + " bytes." : "")} No cloud transfer.</small></div>}
             {fileTranslatedSummary && <div className="result"><div className="result-title">Translated summary <span>{targetLanguage}</span></div><p>{fileTranslatedSummary}</p><small>Second local Ollama step; no browser or cloud provider contacted.</small></div>}
             <label className="file-picker">Inspect image metadata (max 20 MiB)
               <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" onChange={handleImageFile}/>
