@@ -24,7 +24,11 @@ fn client() -> Result<reqwest::Client, String> {
         .timeout(Duration::from_secs(120)).build()
         .map_err(|e| format!("Could not initialise local Ollama client: {e}"))
 }
-fn retryable_status(status: reqwest::StatusCode) -> bool {\n    status.is_server_error()\n}\n\nfn valid_model(model: &str) -> bool {
+fn retryable_status(status: reqwest::StatusCode) -> bool {
+    status.is_server_error()
+}
+
+fn valid_model(model: &str) -> bool {
     !model.is_empty() && model.len() <= 128 &&
         model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
 }
@@ -108,6 +112,14 @@ mod tests {
         assert!(!valid_model(""));
         assert!(!valid_model("../model"));
         assert!(!valid_model("model name"));
-        assert!(!valid_model(&"m".repeat(129)));\n    }\n\n    #[test]\n    fn retries_server_errors_but_not_client_errors() {\n        assert!(retryable_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR));\n        assert!(retryable_status(reqwest::StatusCode::SERVICE_UNAVAILABLE));\n        assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));\n        assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
+        assert!(!valid_model(&"m".repeat(129)));
+    }
+
+    #[test]
+    fn retries_server_errors_but_not_client_errors() {
+        assert!(retryable_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(retryable_status(reqwest::StatusCode::SERVICE_UNAVAILABLE));
+        assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));
+        assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
     }
 }
