@@ -18,12 +18,14 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
 - [ ] Local task history and visible progress.
 - [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
+- [x] Optional second local-model step to translate document/PDF summaries into a user-selected language.
 - [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
 - [ ] Image conversion and broader media metadata tools.
 - [ ] Sandboxed execution adapter with enforceable filesystem and resource limits.
 
 ## Phase 2 — local models and planning
 - [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
+- [x] Optional local translation stage in the integrated text/PDF summarisation workflow.
 - [ ] Model catalogue with licence, checksum, source and compatibility metadata.
 - [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
 - [x] Initial registered local operation catalogue and conservative plan preview.
