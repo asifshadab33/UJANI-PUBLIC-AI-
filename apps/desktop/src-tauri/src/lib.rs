@@ -1,10 +1,12 @@
 mod model_runtime;
+mod ollama;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
 use sysinfo::System;
+use ujani_core::{analyze_text, inspect_image, FileAnalysis, ImageInfo};
 
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
@@ -36,6 +38,79 @@ fn evaluate_task_route(
         requested_collaboration_rounds,
     };
     Ok(evaluate_mode(&request))
+}
+
+
+#[derive(Serialize)]
+struct OllamaStatus {
+    available: bool,
+    models: Vec<ollama::OllamaModel>,
+}
+
+/// Checks only the local Ollama service at 127.0.0.1:11434.
+#[tauri::command]
+async fn get_ollama_status() -> Result<OllamaStatus, String> {
+    let available = ollama::is_available().await;
+    let models = if available { ollama::list_models().await? } else { Vec::new() };
+    Ok(OllamaStatus { available, models })
+}
+
+#[derive(Serialize)]
+struct AiTaskResult {
+    mode_used: String,
+    execution_location: String,
+    model: String,
+    output: String,
+}
+
+/// Real local inference only. Smart and Fortress never fall back to cloud.
+#[tauri::command]
+async fn execute_local_ai_task(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
+    let execution_mode = match mode.as_str() {
+        "fortress" => ExecutionMode::Fortress,
+        "smart" => ExecutionMode::Smart,
+        "worker" | "partner" => return Err("Worker and Partner execution require a secure external gateway, which is not implemented. No cloud request was made.".into()),
+        _ => return Err("Unknown execution mode.".into()),
+    };
+    let mut system = System::new();
+    system.refresh_memory();
+    let mut available = BTreeSet::new();
+    if std::thread::available_parallelism().is_ok() { available.insert("cpu".to_string()); }
+    let route = RouteRequest {
+        task_id: "local-ai-task".into(),
+        operation: "local.ai.generate".into(),
+        mode: execution_mode,
+        required_capabilities: BTreeSet::from(["cpu".to_string()]),
+        available_capabilities: available,
+        local_memory_required_mb: 0,
+        available_memory_mb: system.total_memory() / (1024 * 1024),
+        external_data_approved: false,
+        network_capability_available: false,
+        requested_collaboration_rounds: 0,
+    };
+    let decision = evaluate_mode(&route);
+    if !decision.allowed || decision.action != ujani_core::router::RouteAction::ExecuteLocally {
+        return Err(format!("Local execution blocked by policy: {}", decision.reason));
+    }
+    let output = ollama::generate(&model, &prompt).await?;
+    Ok(AiTaskResult {
+        mode_used: mode,
+        execution_location: "Local Ollama service (127.0.0.1)".into(),
+        model,
+        output,
+    })
+}
+
+/// Processes text supplied by the user through the UI; never opens a path.
+#[tauri::command]
+fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis, String> {
+    analyze_text(&file_name, &content)
+}
+
+/// Inspects image bytes supplied by the user through the UI; never opens a path.
+#[tauri::command]
+fn inspect_image_file(file_name: String, data: Vec<u8>) -> Result<ImageInfo, String> {
+    inspect_image(&file_name, &data)
 }
 
 #[derive(Serialize)]
@@ -108,7 +183,11 @@ pub fn run() {
             list_local_models,
             run_local_model_task,
             run_local_task,
-            evaluate_task_route
+            evaluate_task_route,
+            get_ollama_status,
+            execute_local_ai_task,
+            analyze_text_file,
+            inspect_image_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
