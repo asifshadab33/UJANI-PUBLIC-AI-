@@ -27,7 +27,7 @@ struct SelectedTextFile {
 }
 
 #[derive(Serialize)]
-struct FolderFileResult {
+pub struct FolderFileResult {
     file_name: String,
     size_bytes: usize,
     word_count: usize,
@@ -38,7 +38,7 @@ struct FolderFileResult {
 }
 
 #[derive(Serialize)]
-struct FolderImportResult {
+pub struct FolderImportResult {
     cancelled: bool,
     files: Vec<FolderFileResult>,
     total_bytes: usize,
@@ -158,7 +158,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             return Err(format!("{} exceeds the 256 KiB per-file limit.", entry.file_name().to_string_lossy()));
         }
 
-        let mut handle = File::open(&canonical_file)
+        let handle = File::open(&canonical_file)
             .map_err(|error| format!("Cannot open selected file: {error}"))?;
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
         handle.take((MAX_FILE_BYTES + 1) as u64).read_to_end(&mut bytes)
