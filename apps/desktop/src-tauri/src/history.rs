@@ -49,7 +49,7 @@ fn save(db:&mut Connection,prompt:&str,output:&str,mode:&str,model:&str,kind:&st
  let stored_output = if output.len() > MAX_STORED_OUTPUT {
   let mut boundary = MAX_STORED_OUTPUT;
   while !output.is_char_boundary(boundary) { boundary -= 1; }
-  format!("{}\\n\\n[History result truncated to 64 KiB.]", &output[..boundary])
+  format!("{}\n\n[History result truncated to 64 KiB.]", &output[..boundary])
  } else { output.to_string() };
  let tx=db.transaction().map_err(|e|e.to_string())?;
  tx.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![prompt,stored_output,mode,model,kind,created_at]).map_err(|e|e.to_string())?;
