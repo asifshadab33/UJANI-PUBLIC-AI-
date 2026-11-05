@@ -25,7 +25,12 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Could not initialise local Ollama client: {e}"))
 }
 fn retryable_status(status: reqwest::StatusCode) -> bool {
-    status.is_server_error()
+    // Retry transient throttling/timeouts and server faults, but never ordinary
+    // client errors such as invalid model names or malformed requests.
+    status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_EARLY
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
 }
 
 fn valid_model(model: &str) -> bool {
@@ -118,8 +123,12 @@ mod tests {
 
     #[test]
     fn retries_server_errors_but_not_client_errors() {
+        assert!(retryable_status(reqwest::StatusCode::REQUEST_TIMEOUT));
+        assert!(retryable_status(reqwest::StatusCode::TOO_EARLY));
+        assert!(retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
         assert!(retryable_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
         assert!(retryable_status(reqwest::StatusCode::SERVICE_UNAVAILABLE));
+        assert!(!retryable_status(reqwest::StatusCode::NOT_FOUND));
         assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));
         assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
     }
