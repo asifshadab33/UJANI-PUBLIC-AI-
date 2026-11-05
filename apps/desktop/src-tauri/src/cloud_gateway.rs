@@ -49,7 +49,9 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
  Ok(resolved)
 }
 
-pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,approved:bool)->Result<String,String>{
+pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool)->Result<String,String>{
+ if mode == "fortress" { return Err("Fortress mode is local-only; external transfer is blocked.".into()); }
+ if !matches!(mode.as_str(), "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
  let url=validate(&endpoint,&model,&api_key,&prompt,approved)?;
  let host = url.host_str().ok_or_else(|| "Cloud endpoint has no host.".to_string())?.trim_start_matches('[').trim_end_matches(']').to_string();
  let addresses = resolve_public_addresses(&url).await?;
