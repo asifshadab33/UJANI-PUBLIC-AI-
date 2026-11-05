@@ -1,4 +1,5 @@
-mod cloud_gateway;\nmod folder_import;
+mod cloud_gateway;
+mod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
@@ -313,7 +314,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            cloud_gateway::execute_cloud_ai_task,\n            get_device_info,
+            execute_cloud_ai_task,
+            get_device_info,
             get_capability_snapshot,
             plan_local_operation,
             plan_task_workflow,
