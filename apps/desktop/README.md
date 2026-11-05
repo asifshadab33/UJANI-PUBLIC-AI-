@@ -52,8 +52,9 @@ npm run tauri build
 - Capability checks, prompt-size validation, and visible UI status/errors before adapter execution.
 - No shell execution, model-generated code execution, cloud calls, arbitrary filesystem path access, device sharing or background compute.
 - User-selected text files are analysed in memory (1 MiB limit).
-- User-selected PNG/JPEG/GIF/WebP/BMP image bytes are header-inspected in memory (20 MiB limit).
+- User-selected PNG/JPEG/GIF/WebP/BMP images are size-checked up to 20 MiB; only the first 64 KiB is sent to the native processor for header inspection.
 - Ollama calls are fixed to the loopback service at 127.0.0.1:11434, with prompt/response size limits and request timeouts.
+- Optional text-file summarisation runs through local Ollama only (up to 24 KiB of text).
 
 ## Using local Ollama
 
@@ -68,7 +69,6 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 ## Not implemented yet
 
 - GPU/NPU and runtime compatibility detection.
-- Real local text inference through an explicitly installed Ollama service at 127.0.0.1:11434 (Fortress and Smart only; no cloud fallback).
 - Automatic Ollama installation/model downloads and model lifecycle management.
 - Task decomposition and model-based planning.
 - Visual image understanding and OCR (the current image tool reads basic metadata only).
