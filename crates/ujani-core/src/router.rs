@@ -45,7 +45,11 @@ fn valid_id(value: &str) -> bool {
         value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
-fn registered_operation(value: &str) -> bool {\n    matches!(value, "local.ai.generate" | "local.word_count" | "file.analyze_text" | "image.inspect" | "document.summarize")\n}\n\nfn blocked(mode: ExecutionMode, reason: &str) -> ModeRoutingDecision {
+fn registered_operation(value: &str) -> bool {
+    matches!(value, "local.ai.generate" | "local.word_count" | "file.analyze_text" | "image.inspect" | "document.summarize")
+}
+
+fn blocked(mode: ExecutionMode, reason: &str) -> ModeRoutingDecision {
     ModeRoutingDecision { mode, action: RouteAction::Blocked, allowed: false,
         external_data_transfer_permitted: false, collaboration_rounds: 0,
         reason: reason.into(), enforcement_boundary_required: true }
@@ -58,7 +62,10 @@ pub fn evaluate_mode(request: &RouteRequest) -> ModeRoutingDecision {
     if !valid_id(&request.task_id) || !valid_id(&request.operation) {
         return blocked(mode, "Task ID and registered operation must be valid identifiers.");
     }
-    if !registered_operation(&request.operation) {\n        return blocked(mode, "Operation is not registered in the trusted local operation catalog.");\n    }\n    if request.local_memory_required_mb > request.available_memory_mb {
+    if !registered_operation(&request.operation) {
+        return blocked(mode, "Operation is not registered in the trusted local operation catalog.");
+    }
+    if request.local_memory_required_mb > request.available_memory_mb {
         return blocked(mode, "The task exceeds the available local memory budget.");
     }
     let local_ready = request.required_capabilities.is_subset(&request.available_capabilities);
