@@ -64,7 +64,7 @@ fn validate_mode(mode:&str)->Result<(),String>{
 fn validate(endpoint:&str,model:&str,key:&str,prompt:&str,approved:bool)->Result<Url,String>{
  if !approved{return Err("Cloud transfer was not approved for this task. No request was sent.".into());}
  let url=validate_endpoint(endpoint)?;
- if model.trim().is_empty()||model.len()>128||model.chars().any(char::is_control){return Err("Model name must be non-empty and at most 128 characters.".into());}
+ if !ujani_core::validate_model_identifier(model){return Err("Model name must be a supported identifier of at most 128 characters, without whitespace or path traversal.".into());}
  if key.trim().is_empty()||key.len()>MAX_KEY||key.chars().any(char::is_control){return Err("Enter a valid API key (maximum 4 KiB).".into());}
  if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{return Err("Cloud prompt must be non-empty and no larger than 32 KiB.".into());}
  Ok(url)
@@ -111,9 +111,25 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
  Ok(resolved)
 }
 
+/// Validate all local BYOK request fields before reserving quota or starting network work.
+pub fn validate_request(
+    endpoint: &str,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+    mode: &str,
+    approved: bool,
+    token_parameter: &str,
+) -> Result<(), String> {
+    validate_mode(mode)?;
+    let _url = validate(endpoint, model, api_key, prompt, approved)?;
+    let _limits = token_limits(model, token_parameter)?;
+    Ok(())
+}
+
 pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String)->Result<String,String>{
  let api_key = Zeroizing::new(api_key);
- validate_mode(&mode)?;
+ validate_request(&endpoint,&model,api_key.as_str(),&prompt,&mode,approved,&token_parameter)?;
  let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
  let host = url.host_str().ok_or_else(|| "Cloud endpoint has no host.".to_string())?.trim_start_matches('[').trim_end_matches(']').to_string();
  let addresses = resolve_public_addresses(&url).await?;
