@@ -4,7 +4,45 @@ use serde::{Deserialize, Serialize};
 use std::{net::{IpAddr, SocketAddr}, time::Duration};
 use zeroize::{Zeroize, Zeroizing};
 const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize=64*1024;
-#[derive(Serialize)] struct ChatRequest<'a>{model:&'a str,messages:[ChatMessage<'a>;1],max_tokens:u16,stream:bool}
+#[derive(Serialize)]
+struct ChatRequest<'a> {
+ model: &'a str,
+ messages: [ChatMessage<'a>; 1],
+ #[serde(skip_serializing_if = "Option::is_none")]
+ max_tokens: Option<u16>,
+ #[serde(skip_serializing_if = "Option::is_none")]
+ max_completion_tokens: Option<u16>,
+ stream: bool,
+}
+const DEFAULT_MAX_TOKENS: u16 = 2_048;
+const REASONING_MAX_COMPLETION_TOKENS: u16 = 8_192;
+
+/// Identifies model families that normally use the newer completion-token field.
+fn is_reasoning_model(model: &str) -> bool {
+ let model = model.trim().to_ascii_lowercase();
+ model.starts_with("gpt-5")
+  || model.starts_with("o1")
+  || model.starts_with("o3")
+  || model.starts_with("o4")
+}
+
+/// Selects a provider token field. "auto" preserves standard-model behaviour while
+/// allowing recognised reasoning models on custom/Azure endpoints to use the
+/// completion-token field. Explicit overrides support provider deployment aliases.
+fn token_limits(model: &str, preference: &str) -> Result<(Option<u16>, Option<u16>), String> {
+ let use_completion_tokens = match preference {
+  "auto" => is_reasoning_model(model),
+  "max_tokens" => false,
+  "max_completion_tokens" => true,
+  _ => return Err("Token parameter must be auto, max_tokens, or max_completion_tokens.".into()),
+ };
+ let budget = if is_reasoning_model(model) || use_completion_tokens {
+  REASONING_MAX_COMPLETION_TOKENS
+ } else {
+  DEFAULT_MAX_TOKENS
+ };
+ Ok(if use_completion_tokens { (None, Some(budget)) } else { (Some(budget), None) })
+}
 #[derive(Serialize)] struct ChatMessage<'a>{role:&'static str,content:&'a str}
 #[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>}
 #[derive(Deserialize)] struct Choice{message:Message}
@@ -73,7 +111,7 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
  Ok(resolved)
 }
 
-pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool)->Result<String,String>{
+pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String)->Result<String,String>{
  let api_key = Zeroizing::new(api_key);
  validate_mode(&mode)?;
  let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
@@ -85,7 +123,14 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  auth_text.zeroize();
  auth.set_sensitive(true); headers.insert(header::AUTHORIZATION,auth); headers.insert(header::CONTENT_TYPE,header::HeaderValue::from_static("application/json"));
  let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).redirect(Policy::none()).no_proxy().resolve_to_addrs(&host, &addresses).default_headers(headers).build().map_err(|e|format!("Could not initialise cloud client: {e}"))?;
- let body=ChatRequest{model:&model,messages:[ChatMessage{role:"user",content:&prompt}],max_tokens:2048,stream:false};
+ let (max_tokens, max_completion_tokens) = token_limits(&model, &token_parameter)?;
+ let body=ChatRequest {
+  model:&model,
+  messages:[ChatMessage{role:"user",content:&prompt}],
+  max_tokens,
+  max_completion_tokens,
+  stream:false,
+ };
  let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
@@ -103,4 +148,14 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
+#[test]fn automatic_token_selection_supports_reasoning_models_on_custom_hosts(){
+ assert_eq!(token_limits("gpt-5","auto").unwrap(),(None,Some(REASONING_MAX_COMPLETION_TOKENS)));
+ assert_eq!(token_limits("o3-mini","auto").unwrap(),(None,Some(REASONING_MAX_COMPLETION_TOKENS)));
+ assert_eq!(token_limits("gpt-4o","auto").unwrap(),(Some(DEFAULT_MAX_TOKENS),None));
+}
+#[test]fn custom_provider_deployment_aliases_can_override_the_token_field(){
+ assert_eq!(token_limits("azure-deployment-17","max_completion_tokens").unwrap(),(None,Some(REASONING_MAX_COMPLETION_TOKENS)));
+ assert_eq!(token_limits("provider-model","max_tokens").unwrap(),(Some(DEFAULT_MAX_TOKENS),None));
+ assert!(token_limits("provider-model","invalid").is_err());
+}
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}

@@ -17,13 +17,13 @@
 
 - Fortress means **no external task-data transfer**. Ollama is contacted over local loopback HTTP; this is local IPC/network communication and does not provide OS-wide network isolation.
 - A mode selection is not consent. An explicit approval checkbox is required before a future external transfer can be considered.
-- The router is a policy evaluator, not an executor. Only the native task engine invokes the currently implemented local Ollama adapter.
+- The router and resource scheduler are policy evaluators, not general executors. The native task engine invokes the local Ollama adapter; the separate BYOK gateway sends only explicitly approved Smart-mode requests to a user-configured provider.
 - A model's self-reported confidence must never grant external-transfer permission. If a local model cannot complete a task, the current product should explain the limitation and ask the user before any future external gateway is used.
-- Worker and Partner are policy previews only. The secure gateway, signed task-spec validation, external provider integration, cost controls and cloud execution are not implemented.
+- Worker and Partner remain policy previews only. BYOK Smart-mode cloud requests are implemented through a bounded native gateway, but distributed peer execution, Enterprise worker transport, automatic provider cost controls and cross-device execution are not implemented.
 
 ## Deferred deliberately
 
-1. **Secure cloud gateway and Smart escalation:** implement only after a provider adapter, per-task approval UX, data minimisation, strict operation allow-list, cancellation, usage/cost limits, response validation and audit trail are designed and tested.
+1. **Cloud gateway hardening:** the initial BYOK gateway exists; complete provider-specific integration tests, usage/cost accounting, user-configurable spend limits, field-level data minimisation and durable audit evidence before treating it as production-ready.
 2. **Persistent history / SQLite:** defer until retention controls, user-visible deletion/export, encryption-at-rest expectations and migration strategy are defined.
 3. **GPU/NPU detection:** do not infer accelerator support from hardware presence alone. Verify driver/runtime compatibility and report unknown when uncertain.
 4. **Full image processing:** add decoding/OCR/vision only with pixel, dimension, memory and decompression-bomb limits.
@@ -58,7 +58,7 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - Added advisory installed-model fit estimates using Ollama-reported disk sizes and current OS-reported available RAM. The estimate uses model disk size × 2 + 512 MiB and reserves 25% of currently available RAM. It is not a guarantee: quantisation, context length, runtime and accelerator offload affect actual memory. The app never changes the selected model automatically.
 - Added a native command that validates a versioned, allow-listed three-step document graph before executing the existing bounded local document pipeline. Only analyse → summarise → optional translate is executable; arbitrary graphs are never interpreted as code.
 - The desktop UI now presents model fit estimates, lets the user explicitly choose the suggested installed model, and executes the fixed validated document workflow using already-selected text.
-- Cloud gateway, GPU/NPU runtime verification, SQLite persistence, full image decoding/OCR and distributed execution remain deferred. Cross-platform native testing is still required.
+- GPU/NPU runtime verification, durable receipt storage, full image decoding/OCR, real distributed execution and production-grade cloud usage/cost controls remain deferred. Cross-platform native testing is still required.
 
 
 ## 2026-11-06 reliability follow-up
@@ -84,3 +84,12 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - CI now runs the desktop Rust compile check and native unit tests on Ubuntu, Windows and macOS, in addition to core tests and the frontend build.
 - The native OS dialog itself requires interactive desktop UI and is not automated in headless CI. It still needs manual smoke testing on Windows, macOS and Linux.
 - This is a one-time picker workflow, not a persistent folder grant or a complete OS sandbox. The selected folder path is not stored. The implementation uses canonical-path and symlink checks, but does not claim race-free protection against a hostile process concurrently replacing filesystem entries.
+
+
+## 2026-11-06 security follow-up
+
+- Native IPC inputs now have explicit size/character bounds for task identifiers, route/capability requests, workflow identifiers and cancellation identifiers.
+- The unused frontend `dialog:default` permission was removed. Native application-owned dialogs remain in use.
+- History key bytes, encoded key material and the caller-owned base64 decode buffer use zeroizing storage. This reduces residual memory exposure but cannot guarantee erasure of copies inside dependencies, allocators or the OS credential provider.
+- Optional cargo-fuzz targets exist for image-header and PDF-text parsers. A completed fuzz campaign is not claimed.
+- The BYOK gateway chooses the completion-token parameter by recognised model family, including custom endpoints, with an explicit override for provider deployment aliases. This is a compatibility heuristic; live provider integration tests remain required.

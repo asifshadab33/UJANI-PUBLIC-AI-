@@ -115,11 +115,12 @@ export default function App() {
   const [recommendationBusy, setRecommendationBusy] = useState(false);
   const [cloudEndpoint, setCloudEndpoint] = useState("https://api.openai.com/v1/chat/completions");
   const [cloudModel, setCloudModel] = useState("gpt-4o-mini");
+  const [cloudTokenParameter, setCloudTokenParameter] = useState("auto");
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
-  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudConversationPrompt, executionMode]);
+  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
@@ -573,7 +574,7 @@ export default function App() {
     setTaskProgress({ task_id: taskId, stage: "cloud_starting", message: "Preparing approved cloud request…", progress_percent: 5 });
     setCloudBusy(true); setCloudError(""); setCloudResult("");
     try {
-      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: cloudConversationPrompt, mode: executionMode, externalDataApproved: cloudConsent });
+      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: cloudConversationPrompt, mode: executionMode, externalDataApproved: cloudConsent, tokenParameter: cloudTokenParameter });
       setCloudResult(response);
       setCloudChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: response }]);
       setRequest("");
@@ -855,6 +856,8 @@ export default function App() {
             }}>{CLOUD_PROVIDER_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
             <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => { setCloudEndpoint(event.target.value); setCloudProviderPreset("custom"); }} placeholder="https://api.example.com/v1/chat/completions"/></label>
             <label className="model-select">Model name<input value={cloudModel} onChange={(event) => { setCloudModel(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }} maxLength={128} placeholder="Provider model identifier"/></label>
+            <label className="model-select">Token parameter<select value={cloudTokenParameter} onChange={(event) => { setCloudTokenParameter(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }}><option value="auto">Automatic (recognised model families)</option><option value="max_tokens">max_tokens (standard models)</option><option value="max_completion_tokens">max_completion_tokens (reasoning / compatible deployments)</option></select></label>
+            <small className="muted">Automatic mode uses a larger token budget for recognised reasoning models, including on custom endpoints. For provider-specific deployment aliases, choose the compatible field explicitly. Provider support varies.</small>
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation and current message to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>

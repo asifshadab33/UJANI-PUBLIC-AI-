@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rand::rngs::OsRng;
+use zeroize::Zeroizing;
 
 const KEYRING_SERVICE: &str = "org.ujani.publicai";
 const KEYRING_USER: &str = "local-history-v1";
@@ -25,17 +26,25 @@ pub struct HistoryEntry { pub id:i64, pub prompt:String, pub output:String, pub 
 pub struct HistorySettings { pub enabled:bool, pub retention_days:i64, pub max_entries:i64 }
 
 
-fn history_key() -> Result<[u8; 32], String> {
+fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
  let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
   .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;
  match entry.get_password() {
   Ok(encoded) => {
-   let decoded = B64.decode(encoded).map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
-   decoded.try_into().map_err(|_| "Stored history key has an invalid length.".to_string())
+   let encoded = Zeroizing::new(encoded);
+   // Decode into caller-owned zeroizing storage so even a partially written
+   // output buffer is erased if the decoder reports malformed base64.
+   let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
+   let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
+       .map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
+   decoded.truncate(decoded_len);
+   let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
+   Ok(Zeroizing::new(key))
   }
   Err(keyring::Error::NoEntry) => {
-   let key: [u8; 32] = Aes256Gcm::generate_key(&mut OsRng).into();
-   entry.set_password(&B64.encode(key)).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
+   let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
+   let encoded = Zeroizing::new(B64.encode(&*key));
+   entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
    Ok(key)
   }
   Err(e) => Err(format!("Could not read history key from OS credential vault: {e}")),
