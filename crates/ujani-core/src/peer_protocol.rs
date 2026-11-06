@@ -1,7 +1,7 @@
 //! Signed, consent-scoped Worker/Partner task envelope contract.
 //! This module defines verification primitives only; it does not enroll peers,
 //! open network listeners, or dispatch remote tasks.
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -179,6 +179,7 @@ fn validate_fields(e: &TaskEnvelope, now: u64) -> Result<(), EnvelopeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
 
     fn envelope() -> TaskEnvelope {
         TaskEnvelope {
