@@ -12,6 +12,7 @@ use ujani_core::registered_operations;
 use ujani_core::{sha256_hex, validate_receipt, ExecutionReceipt};
 
 const MAX_RECEIPTS: i64 = 10_000;
+const RECEIPT_SLOT_TTL_SECONDS: u64 = 900;
 const MAX_REPLAY_ENTRIES: i64 = 4_096;
 const MAX_NONCE_TTL_SECONDS: u64 = 300;
 const DAILY_CLOUD_TOKEN_RESERVATION: i64 = 250_000;
@@ -71,6 +72,10 @@ fn initialize(db: &Connection) -> Result<(), String> {
            record_hash TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS idx_receipts_task ON execution_receipts(task_id);
+         CREATE TABLE IF NOT EXISTS receipt_slots(
+           task_id TEXT PRIMARY KEY,
+           reserved_at INTEGER NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS peer_replay_nonces(
            peer_id TEXT NOT NULL,
            nonce TEXT NOT NULL,
@@ -102,8 +107,12 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    if count >= MAX_RECEIPTS {
-        return Err("Execution receipt ledger reached its 10,000-entry safety limit; export/archive support is required before accepting more receipts.".into());
+    let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let owns_slot: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots WHERE task_id=?1", params![receipt.task_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if count >= MAX_RECEIPTS || (owns_slot == 0 && count.saturating_add(reserved) >= MAX_RECEIPTS) {
+        return Err("Execution receipt ledger is full or has no reserved capacity; archive support is required before accepting more receipts.".into());
     }
     let previous: Option<String> = tx.query_row(
         "SELECT record_hash FROM execution_receipts ORDER BY id DESC LIMIT 1", [], |r| r.get(0)
@@ -114,6 +123,8 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
         "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
         params![receipt.task_id, receipt_json, previous_hash, record_hash]
     ).map_err(|e| format!("Could not append execution receipt: {e}"))?;
+    tx.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![receipt.task_id])
+        .map_err(|e| format!("Could not consume execution receipt reservation: {e}"))?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(record_hash)
 }
@@ -216,6 +227,68 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
 
 pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetStatus, String> {
     reserve_budget_db(&mut open(app)?, prompt_bytes, completion_tokens, now_seconds()?)
+}
+
+/// Holds one durable ledger slot while a local or cloud inference is in flight.
+pub struct ReceiptSlotReservation {
+    app: AppHandle,
+    task_id: String,
+    consumed: bool,
+}
+
+impl ReceiptSlotReservation {
+    /// Persist the completed receipt and atomically consume this reservation.
+    pub fn persist(mut self, receipt: ExecutionReceipt) -> Result<String, String> {
+        if receipt.task_id != self.task_id {
+            return Err("Execution receipt task identifier does not match its reserved ledger slot.".into());
+        }
+        let result = append_execution_receipt(self.app.clone(), receipt)?;
+        self.consumed = true;
+        Ok(result)
+    }
+}
+
+impl Drop for ReceiptSlotReservation {
+    fn drop(&mut self) {
+        if !self.consumed {
+            let _ = release_receipt_slot(&self.app, &self.task_id);
+        }
+    }
+}
+
+fn release_receipt_slot(app: &AppHandle, task_id: &str) -> Result<(), String> {
+    open(app)?.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![task_id])
+        .map(|_| ()).map_err(|e| format!("Could not release execution receipt reservation: {e}"))
+}
+
+/// Reserve a durable receipt slot before inference. The reservation is released on drop
+/// if the request fails, is cancelled, or never reaches successful receipt persistence.
+pub fn reserve_execution_receipt_slot(
+    app: &AppHandle,
+    task_id: &str,
+) -> Result<ReceiptSlotReservation, String> {
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier for execution receipt reservation.".into());
+    }
+    let now = now_seconds()?;
+    let mut db = open(app)?;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM receipt_slots WHERE reserved_at <= ?1", params![now.saturating_sub(RECEIPT_SLOT_TTL_SECONDS) as i64])
+        .map_err(|e| e.to_string())?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if count.saturating_add(reserved) >= MAX_RECEIPTS {
+        return Err("Execution receipt ledger is full; new inference is blocked until receipts can be archived.".into());
+    }
+    tx.execute(
+        "INSERT INTO receipt_slots(task_id,reserved_at) VALUES(?1,?2)",
+        params![task_id, now as i64]
+    ).map_err(|e| format!("Could not reserve execution receipt capacity: {e}"))?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
 }
 
 pub fn append_execution_receipt(app: AppHandle, receipt: ExecutionReceipt) -> Result<String, String> {
