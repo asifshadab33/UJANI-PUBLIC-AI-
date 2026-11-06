@@ -1,6 +1,6 @@
 //! Durable security state for provenance receipts, peer replay protection and cloud budgets.
 //! This module stores metadata only; it never stores prompts, outputs, API keys or peer private keys.
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
 use ed25519_dalek::VerifyingKey;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
@@ -145,7 +145,13 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
     Ok(ReceiptLedgerStatus { entries, valid, head_sha256: previous })
 }
 
-fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
+fn claim_nonce_tx(
+    tx: &Transaction<'_>,
+    peer_id: &str,
+    nonce: &str,
+    expires_at: u64,
+    now: u64,
+) -> Result<(), String> {
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Peer replay namespace requires a valid device fingerprint.".into());
     }
@@ -155,7 +161,6 @@ fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u
     if expires_at <= now || expires_at.saturating_sub(now) > MAX_NONCE_TTL_SECONDS {
         return Err("Peer nonce expiry is invalid or exceeds the five-minute protocol limit.".into());
     }
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM peer_replay_nonces WHERE expires_at <= ?1", params![now as i64])
         .map_err(|e| e.to_string())?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM peer_replay_nonces", [], |r| r.get(0))
@@ -170,6 +175,12 @@ fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u
         if e.to_string().contains("UNIQUE") { "Peer task replay detected; nonce was already used.".into() }
         else { format!("Could not persist peer replay nonce: {e}") }
     })?;
+    Ok(())
+}
+
+fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    claim_nonce_tx(&tx, peer_id, nonce, expires_at, now)?;
     tx.commit().map_err(|e| e.to_string())
 }
 
@@ -355,7 +366,8 @@ pub fn verify_and_claim_peer_envelope(
         return Err("Peer payload exceeds the 10 MiB verification limit.".into());
     }
     let mut db = open(&app)?;
-    let public_key_hex: String = db.query_row(
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let public_key_hex: String = tx.query_row(
         "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
         params![peer_id.to_ascii_lowercase()], |row| row.get(0)
     ).optional().map_err(|e| e.to_string())?
@@ -375,7 +387,8 @@ pub fn verify_and_claim_peer_envelope(
     let now = now_seconds()?;
     signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
         .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
-    claim_nonce_db(&mut db, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)
+    claim_nonce_tx(&tx, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)?;
+    tx.commit().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
