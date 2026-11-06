@@ -134,6 +134,7 @@ mod additional_format_tests {
         assert!(inspect_image("legacy-os2.bmp", &bmp, bmp.len() as u64).is_err());
     }
 
+    #[test]
     fn rejects_extension_and_header_mismatch_for_other_formats() {
         assert!(inspect_image("photo.jpg", b"GIF89a\x01\x00\x01\x00", 10).is_err());
         assert!(inspect_image("picture.webp", b"RIFF\x00\x00\x00\x00NOPE", 12).is_err());
