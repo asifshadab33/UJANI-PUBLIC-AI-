@@ -90,6 +90,7 @@ export default function App() {
   const [fileTranslatedSummary, setFileTranslatedSummary] = useState("");
   const [translateSummary, setTranslateSummary] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [activeDocumentTaskId, setActiveDocumentTaskId] = useState<string | null>(null);
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
   const [folderResults, setFolderResults] = useState<FolderFileResult[]>([]);
@@ -99,6 +100,7 @@ export default function App() {
   const [targetLanguage, setTargetLanguage] = useState("English");
   const [translationResult, setTranslationResult] = useState("");
   const [translationBusy, setTranslationBusy] = useState(false);
+  const [activeTranslationTaskId, setActiveTranslationTaskId] = useState<string | null>(null);
   const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
   const [capabilityBusy, setCapabilityBusy] = useState(false);
   const [capabilityError, setCapabilityError] = useState("");
@@ -451,10 +453,12 @@ export default function App() {
     }
     if (!ollamaModel || !ollamaStatus?.available) { setFileError("Start local Ollama and select an installed model to run the document pipeline."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("The local document pipeline is available in Fortress and Smart only."); return; }
+    const taskId = "document-" + Date.now().toString(36);
+    setActiveDocumentTaskId(taskId);
     setSummaryBusy(true); setFileError(""); setFileSummary(""); setFilePipelineMeta("");
     try {
       const result = await invoke<DocumentPipelineResult>("process_selected_document", {
-        fileName: fileAnalysis.file_name, content: fileText, mode: executionMode, model: ollamaModel,
+        taskId, fileName: fileAnalysis.file_name, content: fileText, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
       });
       setFileAnalysis(result.analysis);
@@ -463,7 +467,7 @@ export default function App() {
       setFileTranslatedSummary(result.translated_summary ?? "");
       await saveToPersistentHistory("Document: " + fileAnalysis.file_name, result.summary, "document", result.model);
     } catch (error) { setFileError(String(error)); }
-    finally { setSummaryBusy(false); }
+    finally { setSummaryBusy(false); setActiveDocumentTaskId(null); }
   }
 
   async function handlePdfFile(event: import("react").ChangeEvent<HTMLInputElement>) {
@@ -474,11 +478,13 @@ export default function App() {
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("PDF processing is available in Fortress and Smart only."); return; }
+    const taskId = "pdf-" + Date.now().toString(36);
+    setActiveDocumentTaskId(taskId);
     setSummaryBusy(true);
     try {
       const data = Array.from(new Uint8Array(await file.arrayBuffer()));
       const result = await invoke<DocumentPipelineResult>("process_selected_pdf", {
-        fileName: file.name, data, mode: executionMode, model: ollamaModel,
+        taskId, fileName: file.name, data, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
       });
       setFileAnalysis(result.analysis);
@@ -488,22 +494,36 @@ export default function App() {
       await saveToPersistentHistory("PDF: " + file.name, result.summary, "pdf", result.model);
       setFileText("");
     } catch (error) { setFileError(String(error)); }
-    finally { setSummaryBusy(false); event.target.value = ""; }
+    finally { setSummaryBusy(false); setActiveDocumentTaskId(null); event.target.value = ""; }
+  }
+
+  async function cancelDocumentTask() {
+    if (!activeDocumentTaskId) return;
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeDocumentTaskId }); }
+    catch (error) { setFileError("Could not cancel document task: " + String(error)); }
+  }
+
+  async function cancelTranslationTask() {
+    if (!activeTranslationTaskId) return;
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeTranslationTaskId }); }
+    catch (error) { setOllamaError("Could not cancel translation: " + String(error)); }
   }
 
   async function translateLocally() {
     if (!translationText.trim() || translationBusy) return;
     if (!isTauri() || !ollamaStatus?.available || !ollamaModel) { setOllamaError("Local translation requires the desktop app and a running Ollama model."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setOllamaError("Local translation is available in Fortress and Smart only."); return; }
+    const taskId = "translation-" + Date.now().toString(36);
+    setActiveTranslationTaskId(taskId);
     setTranslationBusy(true); setTranslationResult(""); setOllamaError("");
     try {
       const translated = await invoke<string>("translate_text_local", {
-        text: translationText, targetLanguage, mode: executionMode, model: ollamaModel
+        taskId, text: translationText, targetLanguage, mode: executionMode, model: ollamaModel
       });
       setTranslationResult(translated);
       await saveToPersistentHistory("Translate to " + targetLanguage + ": " + translationText.slice(0, 200), translated, "translation", ollamaModel);
     } catch (error) { setOllamaError(String(error)); }
-    finally { setTranslationBusy(false); }
+    finally { setTranslationBusy(false); setActiveTranslationTaskId(null); }
   }
 
   async function handleImageFile(event: import("react").ChangeEvent<HTMLInputElement>) {
@@ -817,6 +837,7 @@ export default function App() {
             </div>)}
             {fileAnalysis && <div className="result"><div className="result-title">Text analysis <span>{fileAnalysis.file_name}</span></div><p>{fileAnalysis.word_count} words · {fileAnalysis.line_count} lines · {fileAnalysis.size_bytes} bytes</p><small>Keywords: {fileAnalysis.top_keywords.join(", ") || "None detected"}</small><p>{fileAnalysis.content_preview}</p></div>}
             {fileAnalysis && fileText && <button className="model-run" onClick={summarizeFile} disabled={summaryBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart") || new TextEncoder().encode(fileText).length > 256 * 1024}>{summaryBusy ? "Processing sections locally…" : "Run integrated local document pipeline"}</button>}
+            {summaryBusy && <button type="button" className="model-run" onClick={cancelDocumentTask} disabled={!activeDocumentTaskId}>Cancel document processing</button>}
             {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. {filePipelineMeta || (fileAnalysis ? "Source size: " + fileAnalysis.size_bytes.toLocaleString() + " bytes." : "")} No cloud transfer.</small></div>}
             {fileTranslatedSummary && <div className="result"><div className="result-title">Translated summary <span>{targetLanguage}</span></div><p>{fileTranslatedSummary}</p><small>Second local Ollama step; no browser or cloud provider contacted.</small></div>}
             <label className="file-picker">Inspect image metadata (max 20 MiB)
@@ -838,6 +859,7 @@ export default function App() {
             </label>
             <button className="model-run" onClick={translateLocally} disabled={!translationText.trim() || translationBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{translationBusy ? "Translating on this computer…" : "Translate with local AI"}</button>
             {translationResult && <div className="result"><div className="result-title">Local translation <span>{ollamaModel}</span></div><p>{translationResult}</p><small>Processed through local Ollama on this computer. No browser or cloud translation provider was contacted.</small></div>}
+            {translationBusy && <button type="button" className="model-run" onClick={cancelTranslationTask} disabled={!activeTranslationTaskId}>Cancel translation</button>}
             <div className="install-guide">
               <b>Browser translation (manual, optional)</b>
               <p>Open a translation website, then paste the text yourself. UJANI does not automatically send your text or open a page with your content.</p>
