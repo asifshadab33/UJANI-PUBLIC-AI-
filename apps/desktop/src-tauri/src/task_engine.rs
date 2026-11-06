@@ -302,10 +302,30 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .kill_on_drop(true);
 
+    #[cfg(target_os = "linux")]
+    let network_syscall_filter = {
+        // BPF program returns EPERM for socket/network syscalls and allows the
+        // remaining parser/runtime syscalls. Construct it before fork/exec.
+        let denied = [
+            libc::SYS_socket, libc::SYS_socketpair, libc::SYS_connect, libc::SYS_bind,
+            libc::SYS_listen, libc::SYS_accept, libc::SYS_accept4, libc::SYS_sendto,
+            libc::SYS_recvfrom, libc::SYS_sendmsg, libc::SYS_recvmsg, libc::SYS_sendmmsg,
+            libc::SYS_recvmmsg, libc::SYS_getsockopt, libc::SYS_setsockopt, libc::SYS_shutdown,
+        ];
+        let mut filter = Vec::<libc::sock_filter>::with_capacity(denied.len() * 2 + 2);
+        filter.push(libc::sock_filter { code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16, jt: 0, jf: 0, k: 0 });
+        for syscall in denied {
+            filter.push(libc::sock_filter { code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16, jt: 0, jf: 1, k: syscall as u32 });
+            filter.push(libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16, jt: 0, jf: 0, k: libc::SECCOMP_RET_ERRNO | libc::EPERM as u32 });
+        }
+        filter.push(libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16, jt: 0, jf: 0, k: libc::SECCOMP_RET_ALLOW });
+        filter
+    };
+
     #[cfg(unix)]
     unsafe {
         use std::os::unix::process::CommandExt;
-        command.as_std_mut().pre_exec(|| {
+        command.as_std_mut().pre_exec(move || {
             let limits = [
                 (libc::RLIMIT_CPU, 45_u64, 45_u64),
                 (libc::RLIMIT_AS, 768 * 1024 * 1024, 768 * 1024 * 1024),
@@ -318,8 +338,18 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
                 if libc::setrlimit(resource, &limit) != 0 { return Err(std::io::Error::last_os_error()); }
             }
             #[cfg(target_os = "linux")]
-            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-                return Err(std::io::Error::last_os_error());
+            {
+                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut filter = network_syscall_filter;
+                let program = libc::sock_fprog { len: filter.len() as u16, filter: filter.as_mut_ptr() };
+                if libc::prctl(
+                    libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER,
+                    &program as *const _ as libc::c_ulong, 0, 0
+                ) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
             Ok(())
         });
