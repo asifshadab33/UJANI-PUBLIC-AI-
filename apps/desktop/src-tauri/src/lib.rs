@@ -393,13 +393,44 @@ async fn process_selected_document(
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
 #[tauri::command]
 async fn process_selected_pdf(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
     file_name: String,
     data: Vec<u8>,
     mode: String,
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language).await
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier.".into());
+    }
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+        active.insert(task_id.clone(), token.clone());
+    }
+    emit_task_progress(&app, &task_id, "pdf_starting", "Starting isolated PDF extraction.", 5);
+    let execution = LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language);
+    let result = tokio::select! {
+        _ = token.cancelled() => Err("PDF processing cancelled by user; isolated worker stopped.".to_string()),
+        outcome = tokio::time::timeout(std::time::Duration::from_secs(180), execution) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err("PDF processing exceeded the 180-second time budget.".into()),
+            }
+        }
+    };
+    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+    match &result {
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "PDF processing completed locally.", 100),
+        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
+        Err(error) if error.contains("180-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
+        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+    }
+    result
 }
 
 /// Translates user-provided text through the selected local Ollama model.
