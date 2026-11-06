@@ -3,6 +3,7 @@
 //! open network listeners, or dispatch remote tasks.
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -68,6 +69,17 @@ impl SignedTaskEnvelope {
         let bytes = serde_json::to_vec(&envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
         let signature = key.sign(&bytes).to_bytes().to_vec();
         Ok(Self { envelope, signature })
+    }
+
+    /// Verify that the separately transported task payload matches the signed SHA-256 digest.
+    pub fn verify_payload(&self, payload: &[u8]) -> Result<(), EnvelopeError> {
+        let digest = Sha256::digest(payload);
+        let actual = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        if actual == self.envelope.input_sha256.to_ascii_lowercase() {
+            Ok(())
+        } else {
+            Err(EnvelopeError::InvalidDigest)
+        }
     }
 
     /// Verify against an already trusted peer key, current wall clock and replay guard.
@@ -151,6 +163,17 @@ mod tests {
         let mut guard = ReplayGuard::default();
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard), Ok(()));
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard), Err(EnvelopeError::ReplayDetected));
+    }
+
+    #[test]
+    fn verifies_payload_against_signed_digest() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let payload = b"approved document bytes";
+        let mut e = envelope();
+        e.input_sha256 = Sha256::digest(payload).iter().map(|byte| format!("{byte:02x}")).collect();
+        let signed = SignedTaskEnvelope::sign(e, &key).unwrap();
+        assert_eq!(signed.verify_payload(payload), Ok(()));
+        assert_eq!(signed.verify_payload(b"different bytes"), Err(EnvelopeError::InvalidDigest));
     }
 
     #[test]
