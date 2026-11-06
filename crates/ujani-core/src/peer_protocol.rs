@@ -13,7 +13,7 @@ pub const MAX_TASK_TTL_SECONDS: u64 = 300;
 /// Maximum number of unexpired nonces retained by the in-memory replay guard.
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
-const SIGNING_DOMAIN: &[u8] = b"UJANI-PUBLIC-PEER-TASK-ENVELOPE-V2\\0";
+const SIGNING_DOMAIN: &[u8] = b"UJANI-PUBLIC-PEER-TASK-ENVELOPE-V2\0";
 
 /// Domain-separated, length-prefixed signing bytes. The envelope schema remains JSON,
 /// but its exact serialized bytes are length-bound and cannot be reused in another protocol.
