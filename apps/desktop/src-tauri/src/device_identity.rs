@@ -59,6 +59,33 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
 }
 
 
+
+#[tauri::command]
+pub fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
+    let current = get_or_create_device_identity(app.clone())?;
+    let approved = app.dialog()
+        .message(format!("Rotate this device's Ed25519 identity?\\n\\nCurrent fingerprint: {}\\n\nOther devices will need to re-enrol this device before peer tasks can be verified.", current.device_id))
+        .title("Confirm device identity rotation")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved {
+        return Err("Device identity rotation was cancelled.".into());
+    }
+    let entry = keyring::Entry::new(SERVICE, USER)
+        .map_err(|e| format!("OS credential vault unavailable: {e}"))?;
+    let mut seed = Zeroizing::new([0_u8; 32]);
+    OsRng.fill_bytes(&mut *seed);
+    let signing = SigningKey::from_bytes(&seed);
+    let encoded = Zeroizing::new(B64.encode(&*seed));
+    entry.set_password(encoded.as_str())
+        .map_err(|e| format!("Could not rotate device identity in OS credential vault: {e}"))?;
+    let public = signing.verifying_key().to_bytes();
+    let public_key_hex = hex(&public);
+    let device_id = ujani_core::sha256_hex(&public);
+    Ok(DeviceIdentity { device_id, public_key_hex, algorithm: "Ed25519" })
+}
+
 #[tauri::command]
 pub fn sign_peer_task_envelope(
     app: AppHandle,
