@@ -90,6 +90,8 @@ export default function App() {
   const [cloudModel, setCloudModel] = useState("gpt-4o-mini");
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
+  const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
+  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), request.trim(), executionMode]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
@@ -281,7 +283,7 @@ export default function App() {
   async function runLocalAi() {
     if (!request.trim() || aiBusy) return;
     if (executionMode !== "fortress" && executionMode !== "smart") {
-      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner require the separately configured cloud gateway.");
+      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner peer execution is not implemented in this build; use Smart for optional BYOK cloud processing.");
       return;
     }
     if (!ollamaModel) { setOllamaError("Install and start Ollama, then pull a model before running local AI."); return; }
@@ -460,8 +462,15 @@ export default function App() {
 
   async function runCloudAi() {
     if (!isTauri() || !request.trim() || cloudBusy) return;
-    if (executionMode === "fortress") { setCloudError("Fortress mode is local-only. Switch to Smart, Worker, or Partner to use cloud."); return; }
-    if (!cloudConsent) { setCloudError("Approve this exact task for external processing before sending."); return; }
+    if (executionMode !== "smart") {
+      setCloudError("The BYOK cloud gateway is available in Smart mode only. Worker and Partner peer execution are not implemented in this build; Fortress remains local-only.");
+      return;
+    }
+    if (!cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot) {
+      setCloudConsent(false); setCloudConsentSnapshot("");
+      setCloudError("The prompt, provider endpoint, model, or mode changed after approval. Review the current task and approve it again.");
+      return;
+    }
     if (!cloudApiKey.trim()) { setCloudError("Enter your own provider API key. UJANI does not supply keys or credits."); return; }
     const taskId = "cloud-ai-" + Date.now().toString(36);
     setActiveCloudTaskId(taskId);
@@ -470,7 +479,7 @@ export default function App() {
     try {
       setCloudResult(await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), mode: executionMode, externalDataApproved: cloudConsent }));
     } catch (error) { setCloudError(String(error)); }
-    finally { setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); }
+    finally { setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); setCloudConsentSnapshot(""); }
   }
 
   async function cancelCloudAi() {
@@ -679,13 +688,13 @@ export default function App() {
           </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Optional cloud AI gateway</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
-            <p className="muted">Supports OpenAI-compatible Chat Completions APIs. You may use a provider's free-tier key if offered, or your own hosted endpoint. UJANI does not provide keys, credits, or guarantee free usage.</p>
+            <p className="muted">Supports OpenAI-compatible Chat Completions APIs in Smart mode only. You may use a provider's free-tier key if offered, or your own hosted endpoint. UJANI does not provide keys, credits, or guarantee free usage. Worker/Partner peer execution is not available yet; Fortress is local-only.</p>
             <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => setCloudEndpoint(event.target.value)} placeholder="https://api.example.com/v1/chat/completions"/></label>
             <label className="model-select">Model name<input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} maxLength={128} placeholder="Provider model identifier"/></label>
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
-            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => setCloudConsent(event.target.checked)}/> I approve sending the current prompt to this provider for this task only.</label>
+            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact prompt to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send secrets or sensitive data. The key is passed to the native command for this request only, not written to app storage, and cleared after the attempt.</small>
-            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || !cloudApiKey.trim() || cloudBusy || executionMode === "fortress"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
+            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot || !cloudApiKey.trim() || cloudBusy || executionMode !== "smart"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
             {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
             {cloudResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Cloud provider response <span>{cloudModel}</span></div><p>{cloudResult}</p><small>External processing was approved for this task. Not saved to history automatically.</small></div>}

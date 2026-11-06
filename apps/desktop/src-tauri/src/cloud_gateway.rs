@@ -2,6 +2,7 @@
 use reqwest::{header, redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
 use std::{net::{IpAddr, SocketAddr}, time::Duration};
+use zeroize::{Zeroize, Zeroizing};
 const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize=64*1024;
 #[derive(Serialize)] struct ChatRequest<'a>{model:&'a str,messages:[ChatMessage<'a>;1],max_tokens:u16,stream:bool}
 #[derive(Serialize)] struct ChatMessage<'a>{role:&'static str,content:&'a str}
@@ -19,7 +20,7 @@ fn validate_endpoint(endpoint:&str)->Result<Url,String>{
 }
 fn validate_mode(mode:&str)->Result<(),String>{
  if mode == "fortress" { return Err("Fortress mode is local-only; external transfer is blocked.".into()); }
- if !matches!(mode, "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
+ if mode != "smart" { return Err("The BYOK cloud gateway is available in Smart mode only; Worker/Partner peer execution is not implemented and Fortress is local-only.".into()); }
  Ok(())
 }
 fn validate(endpoint:&str,model:&str,key:&str,prompt:&str,approved:bool)->Result<Url,String>{
@@ -73,12 +74,15 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
 }
 
 pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool)->Result<String,String>{
+ let api_key = Zeroizing::new(api_key);
  validate_mode(&mode)?;
- let url=validate(&endpoint,&model,&api_key,&prompt,approved)?;
+ let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
  let host = url.host_str().ok_or_else(|| "Cloud endpoint has no host.".to_string())?.trim_start_matches('[').trim_end_matches(']').to_string();
  let addresses = resolve_public_addresses(&url).await?;
  let mut headers=header::HeaderMap::new();
- let mut auth=header::HeaderValue::from_str(&format!("Bearer {}",api_key.trim())).map_err(|_|"API key cannot be used in an authorization header.".to_string())?;
+ let mut auth_text=format!("Bearer {}",api_key.trim());
+ let mut auth=header::HeaderValue::from_str(&auth_text).map_err(|_|"API key cannot be used in an authorization header.".to_string())?;
+ auth_text.zeroize();
  auth.set_sensitive(true); headers.insert(header::AUTHORIZATION,auth); headers.insert(header::CONTENT_TYPE,header::HeaderValue::from_static("application/json"));
  let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).redirect(Policy::none()).no_proxy().resolve_to_addrs(&host, &addresses).default_headers(headers).build().map_err(|e|format!("Could not initialise cloud client: {e}"))?;
  let body=ChatRequest{model:&model,messages:[ChatMessage{role:"user",content:&prompt}],max_tokens:2048,stream:false};
@@ -90,6 +94,6 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  parsed.choices.into_iter().next().map(|c|c.message.content).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
 }
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
-#[test]fn fortress_is_rejected_but_worker_modes_are_allowed(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_ok());assert!(validate_mode("partner").is_ok());assert!(validate_mode("unknown").is_err());}
+#[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}

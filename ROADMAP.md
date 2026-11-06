@@ -36,10 +36,10 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Verification and reproducible benchmark harness.
 
 ## Phase 3 — optional external assistance
-- [x] User-configured OpenAI-compatible cloud gateway with per-task approval.
+- [x] User-configured OpenAI-compatible cloud gateway in Smart mode with approval bound to the exact endpoint, model, prompt and mode; API-key strings are zeroized in the native gateway where possible. Worker/Partner peer execution remains unavailable.
 - [x] Native Fortress-mode rejection for cloud requests (application-level policy only).
 - [x] Signed Worker/Partner task-envelope primitives with Ed25519 identity signatures, expiry, consent, allow-listed scopes, payload digest binding and in-memory replay checks (protocol foundation only).
-- [ ] Authenticated peer enrollment, trusted-key lifecycle, encrypted peer transport, actual worker dispatch/execution and durable audit receipts.
+- [ ] Authenticated peer enrollment, trusted-key lifecycle, encrypted peer transport, actual worker dispatch/execution and durable audit receipts. Until these exist, Worker/Partner are intentionally blocked from the BYOK cloud gateway.
 - [ ] Per-subtask data minimisation and explicit approval receipts.
 - [ ] Local-only mode tested with network disabled.
 - [ ] Clear provenance for local, remote and deterministic-tool work.

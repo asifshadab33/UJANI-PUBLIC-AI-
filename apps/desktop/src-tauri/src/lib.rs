@@ -195,8 +195,9 @@ async fn execute_cloud_ai_task(
  if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
   return Err("Invalid task identifier.".into());
  }
- if mode == "fortress" { return Err("Fortress mode is local-only. Cloud transfer is blocked by native policy.".into()); }
- if !matches!(mode.as_str(), "smart" | "worker" | "partner") { return Err("Unknown cloud execution mode.".into()); }
+ if mode != "smart" {
+  return Err("The BYOK cloud gateway is available in Smart mode only. Worker/Partner peer execution is not implemented; Fortress is local-only.".into());
+ }
  let token = CancellationToken::new();
  {
   let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
