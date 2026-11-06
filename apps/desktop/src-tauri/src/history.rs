@@ -32,14 +32,14 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
  match entry.get_password() {
   Ok(encoded) => {
    let encoded = Zeroizing::new(encoded);
-   let decoded = Zeroizing::new(B64.decode(&*encoded).map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?);
+   let decoded = Zeroizing::new(B64.decode(encoded.as_bytes()).map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
    Ok(Zeroizing::new(key))
   }
   Err(keyring::Error::NoEntry) => {
    let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
    let encoded = Zeroizing::new(B64.encode(&*key));
-   entry.set_password(&encoded).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
+   entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
    Ok(key)
   }
   Err(e) => Err(format!("Could not read history key from OS credential vault: {e}")),
