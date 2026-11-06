@@ -338,12 +338,17 @@ async fn pull_ollama_model(
     if mode != "smart" {
         return Err("Model downloads are available only in Smart mode.".into());
     }
-    let approved = app.dialog()
-        .message(format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry."))
+    if !ollama::valid_pull_model(&model) {
+        return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2.".into());
+    }
+    let (approval_tx, approval_rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(format!("Download {model} from the internet via the local Ollama service?\\n\\nOllama will contact its model registry."))
         .title("Approve model download")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+        .show(move |approved| { let _ = approval_tx.send(approved); });
+    let approved = approval_rx.await.unwrap_or(false);
     if !approved {
         return Err("Model download was not approved. No download was started.".into());
     }
