@@ -30,7 +30,7 @@ function composeConversationPrompt(messages: ChatMessage[], current: string): st
   const currentText = current.trim();
   const context = messages.slice(-8).map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content.slice(0, 2400)}`).join("\n\n");
   const contextBudget = Math.max(0, 14000 - currentText.length - 40);
-  const clippedContext = context.slice(-contextBudget);
+  const clippedContext = contextBudget > 0 ? context.slice(-contextBudget) : "";
   return clippedContext ? `Conversation context (recent messages):\n${clippedContext}\n\nUser: ${currentText}\nAssistant:` : currentText;
 }
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
