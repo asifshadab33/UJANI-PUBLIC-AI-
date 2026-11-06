@@ -1,6 +1,6 @@
 //! Native orchestration boundary for local tasks.
 //! The core crate remains side-effect-free; this module enforces policy before invoking local adapters.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use sysinfo::System;
 use ujani_core::router::{evaluate_mode, ExecutionMode, RouteAction, RouteRequest};
@@ -11,6 +11,12 @@ use ujani_core::safety_policy::WorkloadIntent;
 use super::ollama;
 
 #[derive(Serialize)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChatTurn {
+    pub role: String,
+    pub content: String,
+}
+
 pub struct AiTaskResult {
     pub mode_used: String,
     pub execution_location: String,
@@ -138,6 +144,35 @@ fn is_installed_model(model: &str, installed_names: &[&str]) -> bool {
 
 impl LocalTaskEngine {
     pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
+        Self::execute_chat(
+            vec![ChatTurn { role: "user".into(), content: prompt }],
+            mode,
+            model,
+        ).await
+    }
+
+    /// Execute a bounded local conversation with actual role separation.
+    pub async fn execute_chat(
+        turns: Vec<ChatTurn>,
+        mode: String,
+        model: String,
+    ) -> Result<AiTaskResult, String> {
+        if turns.is_empty() || turns.len() > 17 {
+            return Err("Local conversation must contain 1 to 17 messages.".into());
+        }
+        if turns.last().map(|turn| turn.role.as_str()) != Some("user") {
+            return Err("The last local conversation message must come from the user.".into());
+        }
+        let total_bytes = turns.iter().try_fold(0usize, |total, turn| {
+            total.checked_add(turn.content.len())
+        }).ok_or_else(|| "Local conversation size overflow.".to_string())?;
+        if total_bytes == 0 || total_bytes > 32 * 1024
+            || turns.iter().any(|turn| turn.content.trim().is_empty())
+            || turns.iter().any(|turn| turn.role != "user" && turn.role != "assistant")
+        {
+            return Err("Local conversation contains an empty, invalid, or oversized message.".into());
+        }
+
         let execution_mode = match mode.as_str() {
             "fortress" => ExecutionMode::Fortress,
             "smart" => ExecutionMode::Smart,
@@ -166,7 +201,10 @@ impl LocalTaskEngine {
         if !decision.allowed || decision.action != RouteAction::ExecuteLocally {
             return Err(format!("Local execution blocked by policy: {}", decision.reason));
         }
-        let output = ollama::generate(&model, &prompt).await?;
+        let borrowed: Vec<ollama::Turn<'_>> = turns.iter()
+            .map(|turn| ollama::Turn { role: &turn.role, content: &turn.content })
+            .collect();
+        let output = ollama::chat(&model, None, &borrowed).await?;
         Ok(AiTaskResult {
             mode_used: mode,
             execution_location: "Local Ollama service (127.0.0.1)".into(),
