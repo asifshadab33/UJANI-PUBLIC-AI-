@@ -288,7 +288,7 @@ mod tests {
             let mut request = vec![0u8; 4096];
             let _ = socket.read(&mut request).await.unwrap();
             let response = format!(
-                "HTTP/1.1 302 Found\\r\\nLocation: http://{target_addr}/prompt-leak\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                "HTTP/1.1 302 Found\r\nLocation: http://{target_addr}/prompt-leak\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             );
             socket.write_all(response.as_bytes()).await.unwrap();
         });
@@ -333,7 +333,7 @@ mod tests {
             let (mut socket, _) = target.accept().await.unwrap();
             let mut request = vec![0u8; 4096];
             let _ = socket.read(&mut request).await.unwrap();
-            socket.write_all(b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok").await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await.unwrap();
         });
         let proxy_task = tokio::spawn(async move {
             tokio::time::timeout(Duration::from_millis(250), proxy.accept()).await
