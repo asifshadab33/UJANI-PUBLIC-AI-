@@ -178,6 +178,7 @@ fn claim_nonce_tx(
     Ok(())
 }
 
+#[cfg(test)]
 fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     claim_nonce_tx(&tx, peer_id, nonce, expires_at, now)?;
