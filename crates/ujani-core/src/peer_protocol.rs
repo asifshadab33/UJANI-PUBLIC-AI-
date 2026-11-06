@@ -6,12 +6,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
+/// Current recipient-bound peer task envelope protocol version.
 pub const PROTOCOL_VERSION: u16 = 2;
+/// Maximum accepted lifetime of a signed peer task envelope.
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
+/// Maximum number of unexpired nonces retained by the in-memory replay guard.
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Signed authorization metadata for one recipient-bound peer task.
 pub struct TaskEnvelope {
     pub protocol_version: u16,
     pub task_id: String,
@@ -32,6 +36,7 @@ pub struct TaskEnvelope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Task envelope plus its Ed25519 signature.
 pub struct SignedTaskEnvelope {
     pub envelope: TaskEnvelope,
     /// Ed25519 signature over the canonical serde JSON serialization of envelope.
@@ -39,6 +44,7 @@ pub struct SignedTaskEnvelope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Validation and verification failures for peer task envelopes.
 pub enum EnvelopeError {
     InvalidVersion,
     InvalidTaskId,
@@ -58,16 +64,20 @@ pub enum EnvelopeError {
 }
 
 #[derive(Default)]
+/// Bounded in-memory replay guard; production adapters also persist nonce claims.
 pub struct ReplayGuard {
     seen: HashMap<String, u64>,
 }
 
 impl ReplayGuard {
+    /// Return the number of unexpired nonces currently retained.
     pub fn len(&self) -> usize { self.seen.len() }
+    /// Return whether the replay guard contains no unexpired nonces.
     pub fn is_empty(&self) -> bool { self.seen.is_empty() }
 }
 
 impl SignedTaskEnvelope {
+    /// Validate and sign an envelope with the sender's Ed25519 private key.
     pub fn sign(envelope: TaskEnvelope, key: &SigningKey) -> Result<Self, EnvelopeError> {
         validate_fields(&envelope, envelope.issued_at)?;
         let bytes = serde_json::to_vec(&envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
