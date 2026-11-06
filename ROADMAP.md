@@ -12,7 +12,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 ## Phase 1 — desktop proof of concept
 - [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
 - [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
-- [ ] Verified GPU/NPU and model-runtime compatibility inventory across supported operating systems (presence alone is insufficient).
+- [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.\n- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
 - [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
@@ -22,7 +22,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Optional second local-model step to translate document/PDF summaries into a user-selected language.
 - [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
 - [ ] Image conversion and broader media metadata tools.
-- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token and firewall policy; macOS sandbox/entitlements; Linux namespaces/seccomp/Landlock where supported. Fail closed if isolation cannot be enforced.
+- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token and firewall policy; macOS sandbox/entitlements; Linux namespaces/seccomp/Landlock where supported. Current app-level cloud blocking is not OS isolation.
 
 ## Phase 2 — local models and planning
 - [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
@@ -41,18 +41,18 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Local-only mode tested with network disabled.
 - [ ] Clear provenance for local, remote and deterministic-tool work.
 
-## Phase 4 — hardening and community\n- [x] Tauri updater plugin, startup update check, signed update verification and user-controlled install/restart UI.\n- [x] Tagged multi-platform installer workflow for Windows, macOS Intel/Apple Silicon and Linux, with merged updater manifest.\n- [ ] Configure owner-held updater key pair in GitHub Actions secrets and publish/verify the first signed release.
-- [x] Configure signed Tauri updater artifacts and a GitHub Releases update endpoint (requires owner-generated signing keys in GitHub Actions secrets before a signed release can be built).
-- [x] Add tagged-release installer pipeline for Windows, macOS and Linux, including signed update manifest generation.
-- [ ] Generate and pin the production updater key pair; publish the first signed release and verify update/install/rollback behavior on clean machines.
-- [ ] Verified GPU/NPU detection and model-runtime compatibility across Windows, macOS and Linux; report driver/runtime versions and confidence, never infer compatibility from device presence alone.
-- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token + firewall policy; macOS sandbox profile/entitlements; Linux namespaces/seccomp/landlock as supported. Deny-by-default, test escape boundaries and fail closed when enforcement is unavailable.
-- [ ] Secure Worker/Partner peer gateway: authenticated device enrollment, mutual TLS or signed identities, short-lived signed task envelopes, explicit per-task data scopes and consent, replay protection, encrypted transport, resource quotas, audit receipts, revocation and abuse controls.
-- [ ] Threat-model review and platform-specific security testing for each of the three capabilities before claiming production support.
-- [ ] Threat model and independent security review.
-- [ ] Signed releases and software bill of materials.
-- [ ] Accessibility, internationalisation and installer testing.
-- [ ] Public benchmark methodology and issue triage process.
+## Phase 4 — hardening and community
+- [x] Tauri updater plugin, startup update check, signed update verification and user-controlled install/restart UI.
+- [x] Tagged multi-platform installer workflow for Windows, macOS Intel/Apple Silicon and Linux, with merged updater manifest and SHA-256 checksums.
+- [x] Release pipeline gates packaging on frontend builds and Rust tests on Windows, macOS and Linux.
+- [ ] Configure owner-held updater key pair in GitHub Actions secrets and publish/verify the first signed release.
+- [ ] Configure Windows Authenticode and Apple Developer ID signing/notarization secrets before broad distribution.
+- [ ] Verified GPU/NPU detection and model-runtime compatibility across Windows, macOS and Linux. Current GPU status becomes Available only when Ollama reports positive VRAM allocation for a running model; this is runtime evidence, not a full hardware/driver inventory. NPU remains Unknown.
+- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token + firewall policy; macOS sandbox profile/entitlements; Linux namespaces/seccomp/Landlock as supported. Current native Fortress policy blocks UJANI cloud requests but does not isolate the application process or its loopback Ollama traffic.
+- [x] Signed Worker/Partner task-envelope protocol foundation: Ed25519 signatures, short-lived envelopes, exact task consent, allow-listed data scopes, payload digest binding and in-memory replay protection.
+- [ ] Secure Worker/Partner peer gateway: authenticated device enrollment, trusted-key lifecycle, mutual TLS or equivalent secure transport, task dispatch/execution, durable replay protection, revocation, quotas, audit receipts and abuse controls.
+- [ ] Threat-model review and platform-specific security testing for each capability before production claims.
+- [ ] Independent security review, software bill of materials, accessibility and installer testing.
 
 ## Later
 - [ ] Android and iOS capability adapters, subject to OS restrictions.
