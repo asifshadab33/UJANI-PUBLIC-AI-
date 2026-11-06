@@ -74,6 +74,7 @@ mod tests {
         assert!(analyze_text("notes.txt", "hello").is_ok());
     }
 
+    #[test]
     fn rejects_unsupported_and_oversized_input() {
         assert!(analyze_text("photo.exe", "x").is_err());
         assert!(analyze_text("notes.txt", &"x".repeat(MAX_TEXT_BYTES + 1)).is_err());
