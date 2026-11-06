@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-protocol_version="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \\([0-9][0-9]*\\);/\\1/p' crates/ujani-core/src/peer_protocol.rs)"
+protocol_version="$(sed -n 's/^pub const PROTOCOL_VERSION: u16 = \([0-9][0-9]*\);/\1/p' crates/ujani-core/src/peer_protocol.rs)"
 if [[ "$protocol_version" != "2" ]]; then
   echo "Expected peer protocol v2; found '$protocol_version'." >&2
   exit 1
