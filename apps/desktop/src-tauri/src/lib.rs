@@ -612,6 +612,7 @@ pub fn run() {
             security_store::enroll_trusted_peer,
             security_store::revoke_trusted_peer,
             security_store::list_trusted_peers,
+            security_store::verify_and_claim_peer_envelope,
             device_identity::get_or_create_device_identity
         ])
         .run(tauri::generate_context!())
