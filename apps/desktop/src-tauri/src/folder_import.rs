@@ -52,6 +52,7 @@ pub async fn process_selected_folder(
     mode: String,
     model: String,
 ) -> Result<FolderImportResult, String> {
+    let _reservation = crate::resource_runtime::MemoryReservation::acquire("folder-import")?;
     if mode != "fortress" && mode != "smart" {
         return Err("Folder processing is local-only. Select Fortress or Smart.".into());
     }
