@@ -1,0 +1,33 @@
+name: UJANI parser fuzz smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 3 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ujani-parser-fuzz
+  cancel-in-progress: true
+
+jobs:
+  parser-fuzz-smoke:
+    name: Bounded parser fuzz smoke (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [image_header, pdf_text]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Run bounded fuzz smoke
+        working-directory: fuzz
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=45 -timeout=10 -rss_limit_mb=2048 -max_len=10485760
