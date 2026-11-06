@@ -24,11 +24,13 @@ fn validate_admission(task_id: &str, available_mb: u64, active: &HashMap<String,
     Ok(())
 }
 
+/// Process-local admission guard that serializes UJANI local AI work and checks free RAM.
 pub struct MemoryReservation {
     task_id: String,
 }
 
 impl MemoryReservation {
+    /// Reserve the single local-AI execution slot if the 1 GiB free-memory floor is met.
     pub fn acquire(task_id: &str) -> Result<Self, String> {
         let mut system = System::new();
         system.refresh_memory();
