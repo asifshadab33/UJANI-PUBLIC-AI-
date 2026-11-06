@@ -510,8 +510,10 @@ mod tests {
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_ok());
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_err());
         assert!(claim_nonce_db(&mut db, &peer_b, nonce, 200, 100).is_ok());
-        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 430, 100).is_ok());
-        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 431, 100).is_err());
+        let skew_nonce = "b".repeat(32);
+        let too_far_nonce = "c".repeat(32);
+        assert!(claim_nonce_db(&mut db, &peer_a, &skew_nonce, 430, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, &too_far_nonce, 431, 100).is_err());
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 400, 201).is_ok());
     }
 
