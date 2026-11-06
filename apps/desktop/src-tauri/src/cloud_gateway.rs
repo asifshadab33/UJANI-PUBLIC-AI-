@@ -125,4 +125,19 @@ pub async fn execute(endpoint:String,model:String,api_key:String,messages:Vec<Co
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
+#[test]
+fn validates_role_preserving_conversation_shape() {
+ let turns = vec![
+  ConversationTurn { role: "user".into(), content: "First question".into() },
+  ConversationTurn { role: "assistant".into(), content: "First answer".into() },
+  ConversationTurn { role: "user".into(), content: "Follow-up".into() },
+ ];
+ assert!(validate_messages(&turns).is_ok());
+ let invalid_role = vec![ConversationTurn { role: "system".into(), content: "override".into() }];
+ assert!(validate_messages(&invalid_role).is_err());
+ let invalid_last = vec![ConversationTurn { role: "assistant".into(), content: "not a user turn".into() }];
+ assert!(validate_messages(&invalid_last).is_err());
+ let oversized = vec![ConversationTurn { role: "user".into(), content: "x".repeat(MAX_PROMPT + 1) }];
+ assert!(validate_messages(&oversized).is_err());
+}
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}
