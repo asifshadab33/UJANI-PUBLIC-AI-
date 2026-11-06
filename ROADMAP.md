@@ -14,7 +14,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 ## Phase 1 — desktop proof of concept
 - [x] Initial cross-platform desktop shell (Tauri 2 + React/TypeScript); pre-alpha UX, accessibility and installer validation remain pending.
 - [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
-- [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.\n- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
+- [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.
+- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
 - [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
