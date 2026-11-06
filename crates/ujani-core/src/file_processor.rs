@@ -69,7 +69,7 @@ pub fn extract_keywords(content: &str, top_n: usize) -> Vec<String> {
     let mut run = Vec::<char>::new();
     let mut add_run = |run: &mut Vec<char>, frequencies: &mut std::collections::BTreeMap<String, usize>| {
         for pair in run.windows(2) {
-            let token: String = pair.iter().collect();
+            let token: String = pair.iter().copied().collect();
             *frequencies.entry(token).or_default() += 1;
         }
         run.clear();
