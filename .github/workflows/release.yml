@@ -147,5 +147,7 @@ jobs:
           gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
           mkdir release-assets
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
+          find release-assets -type f -printf '%P\\t%s bytes\\t%.2f MiB\\n' | sort > INSTALLER_SIZES.txt
           (cd release-assets && sha256sum * > SHA256SUMS)
+          gh release upload "$TAG" INSTALLER_SIZES.txt --clobber --repo "$REPOSITORY"
           gh release upload "$TAG" release-assets/SHA256SUMS --clobber --repo "$REPOSITORY"
