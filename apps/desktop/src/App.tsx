@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import UpdateNotice from "./components/UpdateNotice";
+import UpdateNotice from "./UpdateNotice";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
