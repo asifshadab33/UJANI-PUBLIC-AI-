@@ -395,13 +395,31 @@ mod tests {
         assert!(claim_nonce_db(&mut db, nonce, 400, 201).is_ok());
     }
 
+
+    #[test]
+    fn trusted_peer_public_key_must_be_exactly_32_bytes() {
+        assert!(decode_public_key(&"a".repeat(64)).is_ok());
+        assert!(decode_public_key("abc").is_err());
+        assert!(decode_public_key(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn receipt_ledger_refuses_to_prune_chain_history() {
+        let mut db = db();
+        db.execute("INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES('old','{}',?1,?2)", params![GENESIS_HASH, "0".repeat(64)]).unwrap();
+        db.execute("UPDATE execution_receipts SET id=?1", params![MAX_RECEIPTS]).unwrap();
+        assert!(append_receipt_db(&mut db, &receipt("task-new")).is_err());
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get::<_, i64>(0)).unwrap(), MAX_RECEIPTS);
+    }
+
     #[test]
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
-        assert_eq!(status.reserved_tokens, 9_192);
+        assert_eq!(status.reserved_tokens, 10_192);
+        for _ in 0..9 { reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).unwrap(); }
         assert!(reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).is_err());
         let next_day = reserve_budget_db(&mut db, 100, 100, 172_800).unwrap();
-        assert_eq!(next_day.reserved_tokens, 125);
+        assert_eq!(next_day.reserved_tokens, 150);
     }
 }
