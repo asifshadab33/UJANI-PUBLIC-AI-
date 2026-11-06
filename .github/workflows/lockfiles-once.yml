@@ -1,0 +1,46 @@
+name: One-time dependency lockfile generation
+
+on:
+  push:
+    branches:
+      - feature/resource-aware-runtime-2026-11
+    paths:
+      - .github/workflows/lockfiles-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lockfiles:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out remediation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: feature/resource-aware-runtime-2026-11
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: stable
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Generate root Rust workspace lockfile
+        run: cargo generate-lockfile
+      - name: Generate desktop Rust workspace lockfile
+        run: cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Generate frontend npm lockfile
+        working-directory: apps/desktop
+        run: npm install --package-lock-only --ignore-scripts --no-audit
+      - name: Commit lockfiles
+        run: |
+          git add Cargo.lock apps/desktop/src-tauri/Cargo.lock apps/desktop/package-lock.json
+          if git diff --cached --quiet; then
+            echo "No lockfile changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build(deps): add reviewed Rust and npm lockfiles"
+          git push origin HEAD:feature/resource-aware-runtime-2026-11
