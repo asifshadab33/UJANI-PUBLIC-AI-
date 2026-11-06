@@ -293,6 +293,18 @@ pub fn enroll_trusted_peer(
 
 }
 
+pub fn is_active_trusted_peer(app: &AppHandle, peer_id: &str) -> Result<bool, String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer fingerprint.".into());
+    }
+    let db = open(app)?;
+    let count: i64 = db.query_row(
+        "SELECT COUNT(*) FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
+        params![peer_id.to_ascii_lowercase()], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    Ok(count == 1)
+}
+
 #[tauri::command]
 pub fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, String> {
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
