@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use sysinfo::System;
 use ujani_core::router::{evaluate_mode, ExecutionMode, RouteAction, RouteRequest};
 use ujani_core::{analyze_text as core_analyze_text, inspect_image as core_inspect_image, FileAnalysis, ImageInfo};
-use ujani_core::capability::{plan_local_task, CapabilityRecord, CapabilityState};
+use ujani_core::capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState};
+use ujani_core::policy_gate::{evaluate_execution, DataClass, ExecutionRequest, ExecutionTarget, GateDecision};
+use ujani_core::safety_policy::WorkloadIntent;
 use super::ollama;
 
 #[derive(Serialize)]
@@ -94,12 +96,29 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
     system.refresh_memory();
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
-    plan_with_runtime_capabilities(
-        operation_id,
-        system.available_memory() / (1024 * 1024),
-        cpu_available,
-        ollama_available,
-    )?;
+    let available_memory_mb = system.available_memory() / (1024 * 1024);
+    let policy = evaluate_execution(&ExecutionRequest {
+        task_id: "native-local-preflight".into(),
+        operation_id: operation_id.to_string(),
+        target: ExecutionTarget::LocalModel,
+        intent: WorkloadIntent::OrdinaryProductivity,
+        authorization_verified: false,
+        data_class: DataClass::Internal,
+        external_transfer: false,
+        user_approved_transfer: false,
+        admin_approved_worker: false,
+        owner_opted_in: false,
+        operation_registered: registered_operations().iter().any(|operation| operation.id == operation_id),
+        policy_version: 1,
+        max_runtime_seconds: 180,
+        requested_runtime_seconds: 140,
+        max_memory_mb: available_memory_mb.max(512),
+        requested_memory_mb: 512,
+    });
+    if policy.decision != GateDecision::Allow {
+        return Err(format!("Native safety policy blocked this local operation: {}", policy.reason));
+    }
+    plan_with_runtime_capabilities(operation_id, available_memory_mb, cpu_available, ollama_available)?;
     let installed = ollama::list_models().await?;
     let installed_names: Vec<&str> = installed.iter().map(|entry| entry.name.as_str()).collect();
     if !is_installed_model(model, &installed_names) {
