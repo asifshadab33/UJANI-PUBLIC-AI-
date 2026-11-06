@@ -202,6 +202,7 @@ struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::Docum
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
 async fn execute_document_workflow(file_name:String,content:String,mode:String,model:String,translation_language:Option<String>)->Result<WorkflowExecutionResult,String>{
+ let _reservation = resource_runtime::MemoryReservation::acquire("document-workflow")?;
  if content.len()>256*1024{return Err("Workflow input exceeds the 256 KiB document limit.".into());}
  if mode!="fortress"&&mode!="smart"{return Err("Executable document workflows are local-only (Fortress or Smart).".into());}
  let snapshot=get_capability_snapshot().await?;
@@ -477,6 +478,7 @@ fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis,
 /// Summarises explicitly selected text with Ollama on loopback only.
 #[tauri::command]
 async fn summarize_selected_text(file_name: String, content: String, mode: String, model: String) -> Result<String, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("selected-text-summary")?;
     LocalTaskEngine::summarize(file_name, content, mode, model).await
 }
 
@@ -489,6 +491,7 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("selected-document")?;
     LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await
 }
 
@@ -501,6 +504,7 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("selected-pdf")?;
     LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language).await
 }
 
@@ -512,6 +516,7 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("local-translation")?;
     LocalTaskEngine::translate_local(text, target_language, mode, model).await
 }
 
