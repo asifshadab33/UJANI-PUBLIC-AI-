@@ -90,7 +90,7 @@ jobs:
           APP_VERSION=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
           TAG_VERSION="${RELEASE_TAG#v}"
           test "$TAG_VERSION" = "$APP_VERSION" || { echo "::error::Release tag $RELEASE_TAG does not match app version $APP_VERSION"; exit 1; }
-          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\\n');"
+          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -169,9 +169,9 @@ jobs:
             process.exit(1);
           }
           files.sort((a, b) => a.name.localeCompare(b.name));
-          const lines = ['UJANI installer size report', 'Filename\\tBytes\\tMiB'];
-          for (const file of files) lines.push(`${file.name}\\t${file.bytes}\\t${file.mib}`);
-          fs.writeFileSync('INSTALLER_SIZES.txt', lines.join('\\n') + '\\n');
+          const lines = ['UJANI installer size report', 'Filename\tBytes\tMiB'];
+          for (const file of files) lines.push(`${file.name}\t${file.bytes}\t${file.mib}`);
+          fs.writeFileSync('INSTALLER_SIZES.txt', lines.join('\n') + '\n');
           NODE
           cp INSTALLER_SIZES.txt release-assets/INSTALLER_SIZES.txt
           (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
