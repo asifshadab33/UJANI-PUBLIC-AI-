@@ -127,3 +127,8 @@ The supplied implementation guide was reviewed against the current architecture.
 - **Tests:** core routing, text processing, image-header validation, and Ollama identifier/retry-policy tests are present. CI must still be observed on the pushed commit; a code push alone is not evidence that tests pass.
 
 These choices keep the application honest and preserve its pre-alpha status. They are not claims of production-grade sandboxing or OS-level network isolation.
+
+
+## Audit hardening
+
+See [Security review](../../docs/SECURITY_REVIEW_2026-11.md) and [Fuzzing guide](../../docs/FUZZING.md). The fuzz harnesses are added but not yet run as a completed campaign.
