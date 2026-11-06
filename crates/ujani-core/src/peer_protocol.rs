@@ -1,7 +1,7 @@
 //! Signed, consent-scoped Worker/Partner task envelope contract.
 //! This module defines verification primitives only; it does not enroll peers,
 //! open network listeners, or dispatch remote tasks.
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -13,6 +13,19 @@ pub const MAX_TASK_TTL_SECONDS: u64 = 300;
 /// Maximum number of unexpired nonces retained by the in-memory replay guard.
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
+const SIGNING_DOMAIN: &[u8] = b"UJANI-PUBLIC-PEER-TASK-ENVELOPE-V2\\0";
+
+/// Domain-separated, length-prefixed signing bytes. The envelope schema remains JSON,
+/// but its exact serialized bytes are length-bound and cannot be reused in another protocol.
+fn signing_bytes(envelope: &TaskEnvelope) -> Result<Vec<u8>, EnvelopeError> {
+    let encoded = serde_json::to_vec(envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+    let len = u32::try_from(encoded.len()).map_err(|_| EnvelopeError::InvalidSignature)?;
+    let mut bytes = Vec::with_capacity(SIGNING_DOMAIN.len() + 4 + encoded.len());
+    bytes.extend_from_slice(SIGNING_DOMAIN);
+    bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(&encoded);
+    Ok(bytes)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Signed authorization metadata for one recipient-bound peer task.
@@ -39,7 +52,7 @@ pub struct TaskEnvelope {
 /// Task envelope plus its Ed25519 signature.
 pub struct SignedTaskEnvelope {
     pub envelope: TaskEnvelope,
-    /// Ed25519 signature over the canonical serde JSON serialization of envelope.
+    /// Ed25519 signature over domain-separated, length-prefixed envelope bytes.
     pub signature: Vec<u8>,
 }
 
@@ -80,7 +93,7 @@ impl SignedTaskEnvelope {
     /// Validate and sign an envelope with the sender's Ed25519 private key.
     pub fn sign(envelope: TaskEnvelope, key: &SigningKey) -> Result<Self, EnvelopeError> {
         validate_fields(&envelope, envelope.issued_at)?;
-        let bytes = serde_json::to_vec(&envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        let bytes = signing_bytes(&envelope)?;
         let signature = key.sign(&bytes).to_bytes().to_vec();
         Ok(Self { envelope, signature })
     }
@@ -106,9 +119,9 @@ impl SignedTaskEnvelope {
         registered_operations: &HashSet<String>,
     ) -> Result<(), EnvelopeError> {
         validate_fields(&self.envelope, now)?;
-        let bytes = serde_json::to_vec(&self.envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        let bytes = signing_bytes(&self.envelope)?;
         let signature = Signature::from_slice(&self.signature).map_err(|_| EnvelopeError::InvalidSignature)?;
-        trusted_key.verify(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
+        trusted_key.verify_strict(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
         if !registered_operations.contains(&self.envelope.operation) {
             return Err(EnvelopeError::UnknownOperation);
         }
