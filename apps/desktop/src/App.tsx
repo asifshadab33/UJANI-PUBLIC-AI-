@@ -908,7 +908,7 @@ export default function App() {
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history receipt-history">
             <h3>Privacy & execution receipts</h3>
-            <p>Metadata-only records of completed local and approved cloud AI tasks. Prompts and outputs are not stored in this ledger.</p>
+            <p>Metadata-only records for supported local chat and approved cloud chat tasks. Document, PDF, translation and model-download operations are not yet connected to this receipt ledger. Prompts and outputs are not stored in this ledger.</p>
             <div className="history-actions">
               <button onClick={refreshExecutionReceipts} disabled={!isTauri() || receiptBusy}>{receiptBusy ? "Verifying…" : "Verify & refresh receipts"}</button>
             </div>
