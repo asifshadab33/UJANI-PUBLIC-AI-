@@ -17,7 +17,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.\n- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
 - [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
-- [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
+- [x] Core resource-scheduling policy contract: freshness checks, CPU/RAM budgets, verified GPU-runtime/VRAM requirements, thermal deferral, concurrency limits, and opt-in/idle/AC-power gates for background tasks (pure policy; native telemetry wiring and execution enforcement remain pending).\n- [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
 - [x] Opt-in local SQLite task history with disabled-by-default recording, 30-day retention, 100-entry cap, per-entry deletion and clear-all controls; prompt/output encrypted with AES-256-GCM and key stored in OS credential vault (metadata remains plaintext).
 - [x] First integrated local text-document pipeline: bounded analysis followed by Ollama summarisation.
 - [x] Sequential, UTF-8-safe multi-section summarisation for documents up to 256 KiB, with bounded intermediate summaries and final synthesis; larger inputs require user splitting.
@@ -34,8 +34,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Initial registered local operation catalogue and conservative plan preview.
 - [x] Versioned, bounded task graph schema with allow-listed operations, dependency validation, cycle rejection and deterministic topological planning (planning only; no general graph execution yet).
 - [x] Execute one fixed, validated local text workflow (analyse → summarise → optional translate); arbitrary graph nodes are still not executable.
-- [ ] Typed node input/output schemas and execution adapters for graph nodes.
-- [ ] Verification and reproducible benchmark harness.
+- [ ] Typed node input/output schemas and execution adapters for graph nodes.\n- [x] Deterministic resource-aware scheduling decision contract with fail-closed stale telemetry and explicit CPU fallback policy (not yet connected to task dispatch).
+- [ ] Verification and reproducible benchmark harness.\n- [ ] Native OS telemetry adapter, scheduling integration, task reservation/release, and measured workload benchmarks.
 
 ## Phase 3 — optional external assistance
 - [x] User-configured OpenAI-compatible cloud gateway in Smart mode with approval bound to the exact endpoint, model, prompt and mode; API-key strings are zeroized in the native gateway where possible. Worker/Partner peer execution remains unavailable.
