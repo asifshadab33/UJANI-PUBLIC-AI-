@@ -11,13 +11,36 @@ export default function UpdateNotice() {
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
+  async function checkForUpdates() {
+    if (!isTauri() || isDevBuild || installing) return;
+    setMessage("Checking for a signed update…");
+    try {
+      const update = await check();
+      setAvailable(update);
+      setMessage(update ? "" : "UJANI is up to date. No signed update is currently available.");
+    } catch (error) {
+      setMessage("Update check failed: " + String(error));
+    }
+  }
+
   useEffect(() => {
     if (!isTauri() || isDevBuild) return;
     let active = true;
-    check()
-      .then((update) => { if (active && update) setAvailable(update); })
-      .catch((error) => { if (active) setMessage("Automatic update check failed: " + String(error)); });
-    return () => { active = false; };
+    const runInitialCheck = async () => {
+      try {
+        const update = await check();
+        if (active) {
+          setAvailable(update);
+          setMessage(update ? "" : "No update available. UJANI is up to date.");
+        }
+      } catch (error) {
+        if (active) setMessage("Automatic update check failed: " + String(error));
+      }
+    };
+    const onManualCheck = () => { void checkForUpdates(); };
+    window.addEventListener("ujani-check-updates", onManualCheck);
+    void runInitialCheck();
+    return () => { active = false; window.removeEventListener("ujani-check-updates", onManualCheck); };
   }, []);
 
   async function installUpdate() {
@@ -46,13 +69,14 @@ export default function UpdateNotice() {
     }}>
       <div style={{ minWidth: 0 }}>
         <strong style={{ display: "block", marginBottom: 3 }}>
-          {available ? "UJANI update available · " + available.version : "UJANI updater"}
+          {available ? "UJANI update available · " + available.version : "UJANI update center"}
         </strong>
         <span style={{ fontSize: 13, opacity: .85, overflowWrap: "anywhere" }}>
           {message || available?.body || "A signed update is ready to install."}
         </span>
       </div>
       <div style={{ display: "flex", flexShrink: 0, gap: 8 }}>
+        {!available && !installing && <button type="button" onClick={() => { void checkForUpdates(); }}>Check again</button>}
         {available && <button type="button" onClick={installUpdate} disabled={installing}>
           {installing ? "Installing…" : "Install and restart"}
         </button>}

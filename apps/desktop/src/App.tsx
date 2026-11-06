@@ -509,14 +509,41 @@ export default function App() {
     </aside>
     <section className="main">
       <header><div><span className="eyebrow">PERSONAL AI RUNTIME</span><h1>Make your device work smarter.</h1><p>Start locally. Keep control. Ask for outside help only when you choose.</p></div><div className="status"><span/> PRE-ALPHA</div></header>
-      <div className="notice"><LockKeyhole size={17}/><span><b>Local-only policy is active.</b> This prototype does not send your request to a cloud AI service.</span></div>
+      <div className="notice"><LockKeyhole size={17}/><span><b>Local-first by default.</b> Chat with a local model, or choose an online provider and approve each transfer. UJANI never silently switches your data to the cloud.</span></div>
+      <section className="launcher-section" aria-labelledby="launcher-title">
+        <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
+        <div className="launcher-grid">
+          <button className="launcher-card launcher-primary" onClick={() => document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <span className="launcher-icon"><BrainCircuit size={21}/></span><b>Chat with my local AI</b><small>Use models running on this computer. No provider key or cloud transfer.</small><span className="launcher-action">Open local chat →</span>
+          </button>
+          <button className="launcher-card" onClick={() => document.getElementById("online-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <span className="launcher-icon"><Zap size={21}/></span><b>Chat with online AI</b><small>Use a hosted AI model over the internet. Bring a provider key or compatible API.</small><span className="launcher-action">Set up online chat →</span>
+          </button>
+          <button className="launcher-card" onClick={() => document.getElementById("document-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <span className="launcher-icon"><HardDrive size={21}/></span><b>Work with my files</b><small>Analyze documents, PDFs, folders and image metadata using local tools.</small><span className="launcher-action">Open file tools →</span>
+          </button>
+          <button className="launcher-card" onClick={() => document.getElementById("local-resources")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <span className="launcher-icon"><Cpu size={21}/></span><b>Set up local AI</b><small>Check Ollama, installed models, memory and available device capabilities.</small><span className="launcher-action">View device setup →</span>
+          </button>
+          <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
+            <span className="launcher-icon"><Monitor size={21}/></span><b>Worker mode</b><small>Delegate approved tasks to trusted worker devices.</small><span className="launcher-action">Not available yet</span>
+          </button>
+          <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
+            <span className="launcher-icon"><Activity size={21}/></span><b>Partner mode</b><small>Collaborate with enrolled peers on bounded tasks.</small><span className="launcher-action">Not available yet</span>
+          </button>
+          <button className="launcher-card" onClick={() => window.dispatchEvent(new Event("ujani-check-updates"))}>
+            <span className="launcher-icon"><CheckCircle2 size={21}/></span><b>Updates & releases</b><small>Check for a signed UJANI update and install it when available.</small><span className="launcher-action">Check for updates →</span>
+          </button>
+        </div>
+        <p className="launcher-footnote" id="peer-mode-status">Worker and Partner are intentionally disabled until device enrollment, encrypted peer transport, task isolation and revocation are ready. This protects your files and device from untrusted peers.</p>
+      </section>
       <div className="section-heading"><div><h2>Your device</h2><p>Read-only system information</p></div><span className="muted">No background compute</span></div>
       <div className="metrics">
         <div className="metric"><Cpu/><small>PROCESSOR</small><b>{device ? `${device.logical_cpus} logical cores` : "Not detected"}</b><span>{(device?.architecture ?? deviceError) || "Waiting for desktop runtime"}</span></div>
         <div className="metric"><HardDrive/><small>SYSTEM MEMORY</small><b>{memory}</b><span>{device ? `${(device.available_memory_mb / 1024).toFixed(1)} GB currently available` : "Native runtime required"}</span></div>
         <div className="metric"><Monitor/><small>PLATFORM</small><b>{device?.os ?? "Not detected"}</b><span>GPU / NPU detection not yet implemented</span></div>
       </div>
-      <div className="model-box resource-box">
+      <div className="model-box resource-box" id="local-resources">
         <div className="section-heading"><div><h2><Cpu size={18}/> Computer resource & capability centre</h2><p>Read-only information UJANI can use to select local work.</p></div><span className="muted">NO BACKGROUND COMPUTE</span></div>
         <div className="metrics">
           <div className="metric"><small>CPU</small><b>{device?.logical_cpus ?? "—"} logical cores</b><span>Available to local applications; usage is not reserved by UJANI.</span></div>
@@ -568,7 +595,7 @@ export default function App() {
         </div>
         <small className="muted">GPU/NPU are reported as unknown until verified. Memory thresholds are coarse preflight checks, not model-specific estimates or reservations. The planner supports local operations only; Worker/Partner gateway is not implemented.</small>
       </div>
-      <div className="workspace">
+      <div className="workspace" id="chat-workspace">
         <div className="task-panel">
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a prompt to test the local-only execution path.</p></div><Zap size={20}/></div>
           <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
@@ -590,8 +617,8 @@ export default function App() {
             <small className="muted">Selecting a mode never grants consent by itself. Fortress policy preview does not disable OS networking. Worker and Partner cannot execute until a secure gateway is implemented.</small>
           </div>
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
-          <div className="model-box">
-            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
+          <div className="model-box" id="local-ai-workspace">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI chat</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
             <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaStatus === null ? "Checking local service…" : ollamaStatus.available ? "Connected locally" : "Not detected"}</b><small>{ollamaStatus === null ? "Checking 127.0.0.1:11434…" : ollamaStatus.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
             <button className="model-run" onClick={refreshOllamaStatus} disabled={!isTauri() || ollamaBusy}>{ollamaBusy ? "Checking Ollama…" : "Refresh Ollama status"}</button>
             {(!ollamaStatus?.available || ollamaStatus.models.length === 0) && <div className="install-guide">
@@ -625,9 +652,9 @@ export default function App() {
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             {aiResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Local AI result <span>{aiResult.execution_location}</span></div><p>{aiResult.output}</p><small>{aiResult.mode_used} · {aiResult.model} · no cloud fallback</small></div>}
-            <small className="muted">Fortress and Smart only. This uses HTTP to loopback Ollama; it does not itself enforce OS-wide network isolation.</small>
+            <small className="muted">Fortress and Smart only. This uses HTTP to loopback Ollama. Fortress does not yet provide OS-wide process or network isolation on this build.</small>
           </div>
-          <div className="model-box">
+          <div className="model-box" id="document-workspace">
             <div className="section-heading"><div><h2><HardDrive size={18}/> Local file & image tools</h2><p>Only files explicitly selected by you are processed.</p></div><span className="muted">IN-MEMORY</span></div>
             <label className="consent-row"><input type="checkbox" checked={translateSummary} onChange={(event) => { setTranslateSummary(event.target.checked); setFileTranslatedSummary(""); }}/> Also translate document summaries into {targetLanguage} using the same local model</label>
             <label className="model-select">Summary translation language
@@ -686,14 +713,14 @@ export default function App() {
               <p>Browser-based translation requires internet access and the provider may process the text. Review its privacy terms before pasting sensitive information.</p>
             </div>
           </div>
-          <div className="model-box">
-            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Optional cloud AI gateway</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
-            <p className="muted">Supports OpenAI-compatible Chat Completions APIs in Smart mode only. You may use a provider's free-tier key if offered, or your own hosted endpoint. UJANI does not provide keys, credits, or guarantee free usage. Worker/Partner peer execution is not available yet; Fortress is local-only.</p>
+          <div className="model-box" id="online-ai-workspace">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Online AI chat — no local model required</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
+            <p className="muted">This sends your prompt to an AI model hosted by your chosen provider over the internet. You do not need to install or run a local model. Add your own provider API key or use a compatible service that offers a free tier. UJANI does not provide keys, credits, or guarantee free usage. Each request requires explicit approval. Smart mode only; Fortress is local-only.</p>
             <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => setCloudEndpoint(event.target.value)} placeholder="https://api.example.com/v1/chat/completions"/></label>
             <label className="model-select">Model name<input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} maxLength={128} placeholder="Provider model identifier"/></label>
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact prompt to this exact endpoint and model for this task only.</label>
-            <small className="muted">Provider terms, data retention and billing apply. Do not send secrets or sensitive data. The key is passed to the native command for this request only, not written to app storage, and cleared after the attempt.</small>
+            <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>
             <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot || !cloudApiKey.trim() || cloudBusy || executionMode !== "smart"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
             {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
