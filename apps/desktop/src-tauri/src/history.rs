@@ -43,7 +43,7 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
   }
   Err(keyring::Error::NoEntry) => {
    let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
-   let encoded = Zeroizing::new(B64.encode(&*key));
+   let encoded = Zeroizing::new(B64.encode(*key));
    entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
    Ok(key)
   }
@@ -104,6 +104,7 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
  tx.commit().map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)] // Keep persisted history fields explicit at this private DB boundary.
 fn save_secure(db: &mut Connection, key: &[u8; 32], prompt: &str, output: &str, mode: &str, model: &str, kind: &str, created_at: i64) -> Result<i64, String> {
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
  if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT { return Err("History prompt must be non-empty and at most 32 KiB.".into()); }
@@ -226,7 +227,7 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   let encrypted=encrypt_text(&key,"private prompt",1,"prompt").unwrap();
   assert!(encrypted.starts_with(ENC_V2));
   assert_eq!(decrypt_text(&key,&encrypted,1,"prompt").unwrap(),"private prompt");
-  let tampered=format!("{}A",&encrypted);
+  let tampered=format!("{}A",encrypted);
   assert!(decrypt_text(&key,&tampered,1,"prompt").is_err());
  }
  #[test] fn ciphertext_cannot_be_moved_between_rows_or_columns() {
