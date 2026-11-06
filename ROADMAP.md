@@ -73,7 +73,7 @@ No release should be described as secure, private-by-design in implementation, o
 ## Resource scheduling and provenance — rebased implementation status (2026-11-06)
 
 - [x] Add deterministic, fail-closed local scheduling policy contract for telemetry freshness, CPU/RAM budgets, verified GPU runtime/VRAM, thermal state, concurrency and background-work opt-in/idle/AC-power rules. This is policy-only; native telemetry, atomic reservations and dispatch are not implemented.
-- [x] Add typed execution receipt contract with SHA-256 input/output digests, adapter/model identity, execution location, timestamps and external approval reference. Native adapter integration and durable persistence remain pending.
+- [x] Add typed execution receipt contract with SHA-256 input/output digests, adapter/model identity, execution location, timestamps and external approval reference. The desktop now persists successful local/cloud chat receipts in a bounded SQLite hash chain; signatures and external anchoring remain pending.
 - [x] Add core unit/integration tests for scheduler decisions and receipt validation.
 - [x] Add reproducible benchmark protocol documentation. Benchmark harness execution and retained measured results remain pending.
 
