@@ -35,7 +35,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Versioned, bounded task graph schema with allow-listed operations, dependency validation, cycle rejection and deterministic topological planning (planning only; no general graph execution yet).
 - [x] Execute one fixed, validated local text workflow (analyse → summarise → optional translate); arbitrary graph nodes are still not executable.
 - [ ] Typed node input/output schemas and execution adapters for graph nodes.\n- [x] Deterministic resource-aware scheduling decision contract with fail-closed stale telemetry and explicit CPU fallback policy (not yet connected to task dispatch).
-- [ ] Verification and reproducible benchmark harness.\n- [ ] Native OS telemetry adapter, scheduling integration, task reservation/release, and measured workload benchmarks.
+- [x] Typed execution provenance receipt contract with SHA-256 input/output digests, adapter/model identity, execution location, timestamps and external approval reference (adapter integration and durable persistence remain pending).\n- [ ] Verification and reproducible benchmark harness.\n- [ ] Native OS telemetry adapter, scheduling integration, task reservation/release, and measured workload benchmarks.
 
 ## Phase 3 — optional external assistance
 - [x] User-configured OpenAI-compatible cloud gateway in Smart mode with approval bound to the exact endpoint, model, prompt and mode; API-key strings are zeroized in the native gateway where possible. Worker/Partner peer execution remains unavailable.
@@ -44,7 +44,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Authenticated peer enrollment, trusted-key lifecycle, encrypted peer transport, actual worker dispatch/execution and durable audit receipts. Until these exist, Worker/Partner are intentionally blocked from the BYOK cloud gateway.
 - [ ] Per-subtask data minimisation and explicit approval receipts.
 - [ ] Local-only mode tested with network disabled.
-- [ ] Clear provenance for local, remote and deterministic-tool work.
+- [ ] Clear provenance for local, remote and deterministic-tool work.\n- [x] Core receipt schema and structural validation contract; native adapters must still create and persist receipts on real execution.
 
 ## Phase 4 — hardening and community
 - [x] Tauri updater plugin, startup update check, signed update verification and user-controlled install/restart UI.
