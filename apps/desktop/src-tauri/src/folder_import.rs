@@ -46,7 +46,6 @@ pub struct FolderImportResult {
 
 /// Opens a native OS folder picker and processes only its immediate text-file children.
 /// The command deliberately accepts no filesystem path from the webview.
-#[tauri::command]
 pub async fn process_selected_folder(
     app: tauri::AppHandle,
     mode: String,
