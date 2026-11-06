@@ -17,6 +17,7 @@ pub struct ChatTurn {
     pub content: String,
 }
 
+#[derive(Serialize)]
 pub struct AiTaskResult {
     pub mode_used: String,
     pub execution_location: String,
@@ -112,8 +113,6 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
         data_class: DataClass::Internal,
         external_transfer: false,
         user_approved_transfer: false,
-        admin_approved_worker: false,
-        owner_opted_in: false,
         operation_registered: registered_operations().iter().any(|operation| operation.id == operation_id),
         policy_version: 1,
         max_runtime_seconds: 180,
