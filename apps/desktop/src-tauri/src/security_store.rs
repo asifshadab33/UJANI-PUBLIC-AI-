@@ -4,7 +4,11 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use ed25519_dalek::VerifyingKey;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, dialog::DialogExt};
+use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogKind};
+use std::collections::HashSet;
+use ujani_core::peer_protocol::{ReplayGuard, SignedTaskEnvelope};
+use ujani_core::registered_operations;
 use ujani_core::{sha256_hex, validate_receipt, ExecutionReceipt};
 
 const MAX_RECEIPTS: i64 = 10_000;
@@ -94,6 +98,11 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
         return Err("Execution receipt exceeds the 16 KiB storage limit.".into());
     }
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if count >= MAX_RECEIPTS {
+        return Err("Execution receipt ledger reached its 10,000-entry safety limit; export/archive support is required before accepting more receipts.".into());
+    }
     let previous: Option<String> = tx.query_row(
         "SELECT record_hash FROM execution_receipts ORDER BY id DESC LIMIT 1", [], |r| r.get(0)
     ).optional().map_err(|e| e.to_string())?;
@@ -103,10 +112,6 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
         "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
         params![receipt.task_id, receipt_json, previous_hash, record_hash]
     ).map_err(|e| format!("Could not append execution receipt: {e}"))?;
-    tx.execute(
-        "DELETE FROM execution_receipts WHERE id NOT IN (SELECT id FROM execution_receipts ORDER BY id DESC LIMIT ?1)",
-        params![MAX_RECEIPTS]
-    ).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(record_hash)
 }
@@ -253,10 +258,15 @@ pub fn enroll_trusted_peer(
     peer_id: String,
     public_key_hex: String,
     label: String,
-    owner_approved: bool,
 ) -> Result<TrustedPeer, String> {
-    if !owner_approved {
-        return Err("Peer enrollment requires explicit device-owner approval.".into());
+    let approved = app.dialog()
+        .message(format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {peer_id}"))
+        .title("Approve trusted device enrollment")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved {
+        return Err("Peer enrollment was not approved by the device owner.".into());
     }
     if label.trim().is_empty() || label.len() > 64 || label.chars().any(char::is_control) {
         return Err("Peer label must be 1–64 printable characters.".into());
@@ -301,6 +311,40 @@ pub fn list_trusted_peers(app: AppHandle) -> Result<Vec<TrustedPeer>, String> {
         enrolled_at: row.get(3)?, revoked_at: row.get(4)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+
+/// Verify a signed task from an enrolled, non-revoked peer and persist its nonce
+/// before returning. This authenticates an envelope only; no peer transport or
+/// task execution is implemented by this command.
+#[tauri::command]
+pub fn verify_and_claim_peer_envelope(
+    app: AppHandle,
+    peer_id: String,
+    signed: SignedTaskEnvelope,
+    payload: Vec<u8>,
+) -> Result<(), String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer identifier.".into());
+    }
+    if payload.len() > 10 * 1024 * 1024 {
+        return Err("Peer payload exceeds the 10 MiB verification limit.".into());
+    }
+    let db = open(&app)?;
+    let public_key_hex: String = db.query_row(
+        "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
+        params![peer_id.to_ascii_lowercase()], |row| row.get(0)
+    ).optional().map_err(|e| e.to_string())?
+      .ok_or_else(|| "Peer is not enrolled or has been revoked.".to_string())?;
+    let public = decode_public_key(&public_key_hex)?;
+    let key = VerifyingKey::from_bytes(&public)
+        .map_err(|_| "Stored peer public key is invalid.".to_string())?;
+    signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
+    let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
+    let now = now_seconds()?;
+    signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
+        .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
+    claim_nonce_db(&mut open(&app)?, &signed.envelope.nonce, signed.envelope.expires_at, now)
 }
 
 #[cfg(test)]
