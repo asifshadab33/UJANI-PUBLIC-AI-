@@ -32,6 +32,14 @@ Release builds require repository Actions secrets `TAURI_UPDATER_PUBLIC_KEY`, `T
 
 If these secrets are absent, signed release builds intentionally fail rather than publishing unsigned or unverifiable updates. Local development and browser preview do not perform update checks.
 
+To prepare the first release:
+1. From `apps/desktop`, run `npm run tauri signer generate -- -w ~/.tauri/ujani-updater.key` and keep the private key file offline in a secure backup.
+2. In GitHub repository Settings → Secrets and variables → Actions, add `TAURI_SIGNING_PRIVATE_KEY` (full private-key file contents), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (the password used when generating it; an empty password may be left unset), and `TAURI_UPDATER_PUBLIC_KEY` (full public-key file contents).
+3. Update `apps/desktop/src-tauri/tauri.conf.json` version, commit and push, then create and push the matching tag, for example `v0.1.0`. The tag without its leading `v` must exactly match the app version.
+4. The release workflow first runs frontend and Rust checks, then builds Windows MSI/NSIS, Linux DEB/AppImage, and macOS Intel/Apple Silicon DMG artifacts. It merges signed updater entries into `latest.json`, publishes only after all platform builds finish, and attaches SHA-256 checksums.
+
+The Tauri updater signature is separate from operating-system publisher signing. The current workflow does not yet provide Windows Authenticode signing or Apple Developer ID signing/notarization. Until those certificates are configured, Windows/macOS may show publisher or Gatekeeper warnings even though Tauri verifies the updater payload signature. Add the platform signing certificates and notarization workflow before broad public distribution.
+
 From this directory:
 
 ```sh
