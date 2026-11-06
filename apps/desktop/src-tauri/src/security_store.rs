@@ -354,6 +354,10 @@ pub fn verify_and_claim_peer_envelope(
     if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
         return Err("Stored peer identity fingerprint does not match its public key.".into());
     }
+    let local_identity = crate::device_identity::get_or_create_device_identity(app.clone())?;
+    if signed.envelope.recipient_device_id != local_identity.device_id {
+        return Err("Signed peer task is addressed to a different UJANI device.".into());
+    }
     signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
     let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
     let now = now_seconds()?;
