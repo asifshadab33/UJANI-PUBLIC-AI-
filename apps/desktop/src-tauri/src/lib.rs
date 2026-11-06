@@ -132,9 +132,14 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             detail: "NPU hardware and runtime are not probed; remains Unknown until a supported OS/runtime API confirms a usable NPU".into(),
         },
         CapabilityRecord {
+            id: "pdf.worker.resource_limits".into(), category: "security".into(),
+            state: CapabilityState::Available, source: "OS process limits (Unix rlimits / Windows Job Object)".into(),
+            detail: "The untrusted PDF parser child is capped at 768 MiB memory, 45 seconds CPU, 16 file descriptors and no file growth; Linux also enables no_new_privs. This is worker hardening, not a complete application sandbox.".into(),
+        },
+        CapabilityRecord {
             id: "fortress.os_isolation".into(), category: "security".into(),
-            state: CapabilityState::Unavailable, source: "No OS sandbox adapter is currently installed".into(),
-            detail: "Fortress blocks UJANI cloud requests at the native command boundary, but OS-enforced process and network isolation is not active on this build".into(),
+            state: CapabilityState::Unavailable, source: "Full application sandbox adapter not yet installed".into(),
+            detail: "Fortress blocks UJANI cloud requests and the PDF worker has OS resource limits, but full application process, filesystem and network isolation is not active on this build.".into(),
         },
     ];
     Ok(CapabilitySnapshot {
