@@ -92,3 +92,10 @@ The core now accepts schema version 1 graphs containing at most 32 nodes. Each n
 The Rust core now exposes a deterministic scheduler contract. A caller supplies a timestamped resource snapshot and a typed task request; the policy rejects stale or unknown telemetry, defers work under memory/CPU/concurrency or thermal pressure, requires explicit opt-in and idle/AC-power policy for background work, and selects GPU only when runtime compatibility and free VRAM are reported. CPU fallback is used only when the task explicitly permits it.
 
 This is policy logic only. It does not read OS sensors, reserve resources, start tasks, pre-empt foreground work, or connect to a device-wide scheduler. The desktop native layer must supply fresh platform telemetry and enforce decisions at the actual execution adapter before UJANI may claim resource-aware execution. A scheduling decision is never a permission grant.
+
+
+## Execution provenance receipt contract
+
+The core exposes a versioned receipt schema for trusted adapters to record task and operation IDs, execution location, adapter/model identity, SHA-256 digests of exact input/output bytes, start/completion timestamps, and an approval reference for external-provider execution. Structural validation rejects malformed identifiers, digests, timestamps, incomplete model identity and external receipts without an approval reference.
+
+The receipt contract is not itself proof that an output is correct, that a digest was computed over the true bytes, or that a record was durably stored. Those guarantees require adapter-side digest computation, verifier logic, durable append-only receipt storage and tests against the real local/cloud dispatch paths. Do not expose a "verified" badge based only on successful receipt validation.
