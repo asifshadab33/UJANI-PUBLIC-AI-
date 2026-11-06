@@ -11,7 +11,7 @@ The shared Ollama HTTP client is built with both:
 - `redirect(reqwest::redirect::Policy::none())`: a local service response cannot redirect a prompt-bearing request to another host.
 - `no_proxy()`: proxy environment variables are not consulted for this client.
 
-The same builder is used by the normal local client and the model-pull client. A regression test starts a local HTTP redirector and a second listener; it asserts that the response remains HTTP 302 and the redirect target receives no request.
+The same builder is used by the normal local client and the model-pull client. Regression tests start a local HTTP redirector and a second listener, and set proxy environment variables against a local target; they assert that the redirect is not followed and the configured proxy receives no local request.
 
 The Ollama endpoint remains fixed to `http://127.0.0.1:11434`; user-supplied endpoints are not accepted by this adapter.
 
@@ -39,7 +39,7 @@ This is process isolation and bounded execution, not a full OS sandbox. The work
 
 ## Verification added
 
-- Ollama local HTTP redirect regression test.
+- Ollama local HTTP redirect and Unix proxy-environment regression tests.
 - History row/column AAD swap tests.
 - Legacy v1 one-time migration boundary test.
 - Existing PDF worker timeout and output-bound enforcement retained.
