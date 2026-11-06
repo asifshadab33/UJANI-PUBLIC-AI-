@@ -3,7 +3,7 @@
 //! open network listeners, or dispatch remote tasks.
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
@@ -54,7 +54,7 @@ pub enum EnvelopeError {
 
 #[derive(Default)]
 pub struct ReplayGuard {
-    seen: HashSet<String>,
+    seen: HashMap<String, u64>,
 }
 
 impl ReplayGuard {
@@ -79,16 +79,18 @@ impl SignedTaskEnvelope {
         replay: &mut ReplayGuard,
     ) -> Result<(), EnvelopeError> {
         validate_fields(&self.envelope, now)?;
-        if replay.seen.contains(&self.envelope.nonce) {
+        let bytes = serde_json::to_vec(&self.envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        let signature = Signature::from_slice(&self.signature).map_err(|_| EnvelopeError::InvalidSignature)?;
+        trusted_key.verify(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
+        // Expired nonce entries can be removed because envelope expiry was checked above.
+        replay.seen.retain(|_, expires_at| *expires_at > now);
+        if replay.seen.contains_key(&self.envelope.nonce) {
             return Err(EnvelopeError::ReplayDetected);
         }
         if replay.seen.len() >= MAX_REPLAY_ENTRIES {
             return Err(EnvelopeError::ReplayCacheFull);
         }
-        let bytes = serde_json::to_vec(&self.envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
-        let signature = Signature::from_slice(&self.signature).map_err(|_| EnvelopeError::InvalidSignature)?;
-        trusted_key.verify(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
-        replay.seen.insert(self.envelope.nonce.clone());
+        replay.seen.insert(self.envelope.nonce.clone(), self.envelope.expires_at);
         Ok(())
     }
 }
