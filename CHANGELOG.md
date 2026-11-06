@@ -1,3 +1,18 @@
+## 2026-11-06 — Workspace launcher, multi-turn chat and verified CI
+
+### Added
+- First-run workspace launcher for local AI, online BYOK AI, file workflows, local setup, updates, and visibly unavailable Worker/Partner modes.
+- Bounded multi-turn local and online chat context with independent clear-chat controls.
+- Fresh cloud approval is bound to the exact conversation prompt, endpoint, model and execution mode.
+- Worker/Partner peer execution remains blocked until authenticated enrollment, encrypted transport, task isolation and revocation are implemented.
+
+### Verification
+- GitHub Actions run [42175618714](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/42175618714) passed Rust core tests, Tauri native checks on Windows/macOS/Linux, and the React TypeScript build.
+
+### Release limitations
+- Signed installer generation requires owner-provided updater signing secrets in GitHub Actions. No signing key is generated or committed by contributors.
+- CI success is not equivalent to production security review or platform installer signing/notarization.
+
 
 ## 2026-11-06 — Optional persistent local task history
 

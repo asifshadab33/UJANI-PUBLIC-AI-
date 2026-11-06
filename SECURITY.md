@@ -14,6 +14,12 @@ Include:
 - proof-of-concept that avoids accessing real user data;
 - suggested mitigation, if known.
 
+## Automated security checks
+
+- GitHub Actions CI runs Rust tests, native Tauri checks on Windows/macOS/Linux, and the React TypeScript build.
+- CodeQL scans Rust and JavaScript/TypeScript on pushes, pull requests, and a weekly schedule.
+- Dependabot checks Rust dependencies and GitHub Actions for updates weekly. Review and test dependency update pull requests before merging.
+
 ## Security requirements
 
 - No arbitrary model-generated shell execution.
