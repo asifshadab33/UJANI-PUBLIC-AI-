@@ -36,6 +36,7 @@ fn valid_command_identifier(value: &str, max_len: usize) -> bool {
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
 fn evaluate_task_route(
     task_id: String,
     operation: String,
@@ -232,6 +233,7 @@ async fn execute_document_workflow(file_name:String,content:String,mode:String,m
 /// Sends one explicitly approved prompt to a user-configured OpenAI-compatible provider.
 /// The supplied API key is used for this invocation only and is never persisted.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
 async fn execute_cloud_ai_task(
  app: AppHandle,
  control: State<'_, TaskControlState>,
@@ -619,20 +621,6 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
     })
 }
 
-#[cfg(test)]
-mod ipc_input_tests {
-    use super::valid_command_identifier;
-
-    #[test]
-    fn command_identifiers_are_bounded_and_path_safe() {
-        assert!(valid_command_identifier("task-01", 96));
-        assert!(!valid_command_identifier("", 96));
-        assert!(!valid_command_identifier("../task", 96));
-        assert!(!valid_command_identifier("task\nadmin", 96));
-        assert!(!valid_command_identifier(&"x".repeat(97), 96));
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -683,4 +671,18 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
+}
+
+#[cfg(test)]
+mod ipc_input_tests {
+    use super::valid_command_identifier;
+
+    #[test]
+    fn command_identifiers_are_bounded_and_path_safe() {
+        assert!(valid_command_identifier("task-01", 96));
+        assert!(!valid_command_identifier("", 96));
+        assert!(!valid_command_identifier("../task", 96));
+        assert!(!valid_command_identifier("task\nadmin", 96));
+        assert!(!valid_command_identifier(&"x".repeat(97), 96));
+    }
 }
