@@ -1,0 +1,118 @@
+name: UJANI unsigned preview installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ujani-preview-installers
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build unsigned installer (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: windows-x64
+            runner: windows-latest
+            bundles: msi,nsis
+            target: ""
+          - name: linux-x64
+            runner: ubuntu-24.04
+            bundles: deb,appimage
+            target: ""
+          - name: macos-intel
+            runner: macos-latest
+            bundles: dmg
+            target: x86_64-apple-darwin
+          - name: macos-apple-silicon
+            runner: macos-latest
+            bundles: dmg
+            target: aarch64-apple-darwin
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package.json
+
+      - name: Install Linux native build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev patchelf xdg-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm install
+
+      - name: Disable updater artifacts for unsigned preview builds
+        shell: node {0}
+        run: |
+          const fs = require('fs');
+          const path = 'apps/desktop/src-tauri/tauri.conf.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+          config.bundle.createUpdaterArtifacts = false;
+          config.plugins.updater.pubkey = '';
+          fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
+
+      - name: Build preview installer
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_ARGS=()
+          if [ -n "${{ matrix.target }}" ]; then TARGET_ARGS+=(--target "${{ matrix.target }}"); fi
+          npm run tauri build -- --bundles "${{ matrix.bundles }}" "${TARGET_ARGS[@]}"
+
+      - name: Collect Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path preview-installers | Out-Null
+          Get-ChildItem apps/desktop/src-tauri/target -Recurse -Include *.msi,*.exe | Where-Object { $_.FullName -match 'bundle' } | Copy-Item -Destination preview-installers -ErrorAction Stop
+          if (-not (Get-ChildItem preview-installers -File)) { throw 'No Windows installer was produced.' }
+
+      - name: Collect Linux installers
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p preview-installers
+          find apps/desktop/src-tauri/target -type f \( -name '*.deb' -o -name '*.AppImage' \) -path '*/bundle/*' -exec cp {} preview-installers/ \;
+          test -n "$(find preview-installers -type f -print -quit)"
+
+      - name: Collect macOS installers
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p preview-installers
+          find apps/desktop/src-tauri/target -type f -name '*.dmg' -path '*/bundle/*' -exec cp {} preview-installers/ \;
+          test -n "$(find preview-installers -type f -print -quit)"
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          cd preview-installers
+          if command -v sha256sum >/dev/null 2>&1; then sha256sum * > SHA256SUMS; else shasum -a 256 * > SHA256SUMS; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ujani-${{ matrix.name }}-unsigned-preview
+          path: preview-installers/*
+          if-no-files-found: error
+          retention-days: 14
