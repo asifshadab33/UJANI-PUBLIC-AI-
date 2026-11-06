@@ -4,7 +4,24 @@ use serde::{Deserialize, Serialize};
 use std::{net::{IpAddr, SocketAddr}, time::Duration};
 use zeroize::{Zeroize, Zeroizing};
 const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize=64*1024;
-#[derive(Serialize)] struct ChatRequest<'a>{model:&'a str,messages:[ChatMessage<'a>;1],max_tokens:u16,stream:bool}
+#[derive(Serialize)]
+struct ChatRequest<'a> {
+ model: &'a str,
+ messages: [ChatMessage<'a>; 1],
+ #[serde(skip_serializing_if = "Option::is_none")]
+ max_tokens: Option<u16>,
+ #[serde(skip_serializing_if = "Option::is_none")]
+ max_completion_tokens: Option<u16>,
+ stream: bool,
+}
+fn uses_completion_token_parameter(host: &str, model: &str) -> bool {
+ if !host.eq_ignore_ascii_case("api.openai.com") { return false; }
+ let model = model.to_ascii_lowercase();
+ model.starts_with("gpt-5")
+  || model.starts_with("o1")
+  || model.starts_with("o3")
+  || model.starts_with("o4")
+}
 #[derive(Serialize)] struct ChatMessage<'a>{role:&'static str,content:&'a str}
 #[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>}
 #[derive(Deserialize)] struct Choice{message:Message}
@@ -85,7 +102,14 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  auth_text.zeroize();
  auth.set_sensitive(true); headers.insert(header::AUTHORIZATION,auth); headers.insert(header::CONTENT_TYPE,header::HeaderValue::from_static("application/json"));
  let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).redirect(Policy::none()).no_proxy().resolve_to_addrs(&host, &addresses).default_headers(headers).build().map_err(|e|format!("Could not initialise cloud client: {e}"))?;
- let body=ChatRequest{model:&model,messages:[ChatMessage{role:"user",content:&prompt}],max_tokens:2048,stream:false};
+ let use_completion_tokens = uses_completion_token_parameter(&host, &model);
+ let body=ChatRequest {
+  model:&model,
+  messages:[ChatMessage{role:"user",content:&prompt}],
+  max_tokens:(!use_completion_tokens).then_some(2048),
+  max_completion_tokens:use_completion_tokens.then_some(2048),
+  stream:false,
+ };
  let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
@@ -103,4 +127,10 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
+#[test]fn token_parameter_is_selected_only_for_known_openai_model_families(){
+ assert!(uses_completion_token_parameter("api.openai.com","gpt-5"));
+ assert!(uses_completion_token_parameter("api.openai.com","o3-mini"));
+ assert!(!uses_completion_token_parameter("api.openai.com","gpt-4o"));
+ assert!(!uses_completion_token_parameter("api.example.com","gpt-5"));
+}
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}
