@@ -272,15 +272,24 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     let mut stdin = child.stdin.take().ok_or("PDF worker stdin unavailable")?;
     let mut stdout = child.stdout.take().ok_or("PDF worker stdout unavailable")?;
     let work = async move {
-        let writer = tokio::spawn(async move { stdin.write_all(&data).await });
-        let mut output = Vec::new();
-        (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
-            .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
-        writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
-            .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
+        // Read and write concurrently so neither pipe can fill and deadlock the child.
+        // Both futures are owned by this scope; cancellation drops the child and its pipes.
+        let writer = async {
+            stdin.write_all(&data).await
+                .map_err(|e| format!("Could not send PDF to worker: {e}"))
+        };
+        let reader = async {
+            let mut output = Vec::new();
+            (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
+                .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
+            if output.len() > 1024 * 1024 {
+                return Err("PDF extraction output exceeded the 1 MiB limit.".to_string());
+            }
+            Ok::<Vec<u8>, String>(output)
+        };
+        let (_, output) = tokio::try_join!(writer, reader)?;
         let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
         if !status.success() { return Err("PDF text extraction failed or exceeded its output limit.".into()); }
-        if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
         String::from_utf8(output).map_err(|_| "PDF worker returned invalid UTF-8.".into())
     };
     tokio::time::timeout(std::time::Duration::from_secs(45), work).await
