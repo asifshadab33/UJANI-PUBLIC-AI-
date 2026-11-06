@@ -149,6 +149,7 @@ impl LocalTaskEngine {
         system.refresh_memory();
         let mut available = BTreeSet::new();
         if std::thread::available_parallelism().is_ok() { available.insert("cpu".to_string()); }
+        available.insert("ollama.local".to_string());
         let route = RouteRequest {
             task_id: "local-ai-task".into(),
             operation: "local.ai.generate".into(),
