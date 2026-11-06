@@ -8,13 +8,14 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Define local-first product principles and explicit non-goals.
 - [x] Add an initial typed Rust task/capability model and routing tests.
 - [x] Document privacy, security and contribution expectations.
-- [ ] Establish CI for formatting, linting, tests and dependency review.
+- [x] Establish CI for Rust core/native tests and frontend type-check/build on Linux, Windows and macOS; formatting, linting and automated dependency review remain pending.
 - [ ] Agree a versioned task protocol shared with UJANI Enterprise AI.
 
 ## Phase 1 — desktop proof of concept
-- [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
+- [x] Initial cross-platform desktop shell (Tauri 2 + React/TypeScript); pre-alpha UX, accessibility and installer validation remain pending.
 - [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
-- [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.\n- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
+- [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.
+- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
 - [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
@@ -67,3 +68,11 @@ This roadmap describes intended work, not completed features. Items are not prod
 ## Release gates
 
 No release should be described as secure, private-by-design in implementation, or production-ready solely because it follows this roadmap. Those claims require implementation evidence, tests and review.
+
+
+## Resource scheduling and provenance — rebased implementation status (2026-11-06)
+
+- [x] Add deterministic, fail-closed local scheduling policy contract for telemetry freshness, CPU/RAM budgets, verified GPU runtime/VRAM, thermal state, concurrency and background-work opt-in/idle/AC-power rules. This is policy-only; native telemetry, atomic reservations and dispatch are not implemented.
+- [x] Add typed execution receipt contract with SHA-256 input/output digests, adapter/model identity, execution location, timestamps and external approval reference. Native adapter integration and durable persistence remain pending.
+- [x] Add core unit/integration tests for scheduler decisions and receipt validation.
+- [x] Add reproducible benchmark protocol documentation. Benchmark harness execution and retained measured results remain pending.

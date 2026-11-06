@@ -93,3 +93,11 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - History key bytes, encoded key material and the caller-owned base64 decode buffer use zeroizing storage. This reduces residual memory exposure but cannot guarantee erasure of copies inside dependencies, allocators or the OS credential provider.
 - Optional cargo-fuzz targets exist for image-header and PDF-text parsers. A completed fuzz campaign is not claimed.
 - The BYOK gateway chooses the completion-token parameter by recognised model family, including custom endpoints, with an explicit override for provider deployment aliases. This is a compatibility heuristic; live provider integration tests remain required.
+
+
+## Rebased resource scheduling and provenance update — 2026-11-06
+
+- The core now includes a deterministic resource-scheduling policy contract. It fails closed on stale/unknown telemetry, respects CPU/RAM/concurrency and thermal constraints, requires verified GPU runtime plus VRAM, and requires explicit owner opt-in/idle/AC-power policy for background work.
+- The core now includes a typed execution receipt contract with exact-byte SHA-256 fields, adapter/model provenance, execution location, timestamps and external approval reference.
+- These additions are policy/schema foundations only. No native telemetry adapter, atomic reservation, task dispatcher, durable receipt ledger, signed receipt verification or real distributed execution is claimed.
+- A reproducible benchmark protocol is documented; no benchmark campaign or measured performance claim is asserted.
