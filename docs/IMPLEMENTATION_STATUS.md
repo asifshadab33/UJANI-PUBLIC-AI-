@@ -95,3 +95,7 @@ Stabilise and test the Fortress/Smart workflows on Windows, macOS and Linux, inc
 - Enterprise admission hardening is being tracked separately in the Enterprise repository. Signed administrator approval, class-policy validation, AC-power polarity and in-memory lease semantics are prototypes only; the Enterprise crate is not a durable scheduler or worker agent.
 - The common task wrapper can cancel async model work and enforces a wall-clock deadline. The native OS folder picker itself is a blocking OS dialog and cannot be forcibly dismissed by the cancellation token while it is open.
 - Still open: OS-level PDF worker memory/CPU limits, signed updater key configuration and signed-install verification, lockfiles, provider-specific cloud chat compatibility, durable execution receipts, folder-picker cancellation semantics, persistent peer replay protection, cross-platform packaged-app smoke tests and independent external review.
+
+- Multilingual text analysis now extracts overlapping CJK bigrams instead of returning no keywords for whitespace-free Chinese/Japanese text; Arabic and other alphabetic scripts retain Unicode-aware token handling.
+- BMP header inspection now validates the complete fixed header before slicing fields, preventing a malformed short BMP input from panicking the native process.
+- Local, cloud, PDF, document, translation, workflow, folder and model-download operations use a common cancellation/deadline lifecycle. The folder picker dialog remains a blocking OS UI operation that cannot be force-dismissed while open.
