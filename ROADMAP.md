@@ -76,3 +76,11 @@ No release should be described as secure, private-by-design in implementation, o
 - [x] Add typed execution receipt contract with SHA-256 input/output digests, adapter/model identity, execution location, timestamps and external approval reference. Native adapter integration and durable persistence remain pending.
 - [x] Add core unit/integration tests for scheduler decisions and receipt validation.
 - [x] Add reproducible benchmark protocol documentation. Benchmark harness execution and retained measured results remain pending.
+
+
+## Audit remediation update — cancellable local tasks
+
+- [x] Route text summarisation, integrated document processing, PDF extraction/summarisation and standalone local translation through a shared native task registry.
+- [x] Apply task identifier validation, duplicate-active-task rejection, explicit cancellation tokens, progress events, registry cleanup and a 240-second wall-clock budget.
+- [x] Expose cancel controls in the desktop UI for document/PDF and translation tasks.
+- [ ] Verify the updated native and frontend code on Windows, macOS and Linux CI; cancellation is cooperative at async boundaries and does not make the whole application an OS sandbox.
