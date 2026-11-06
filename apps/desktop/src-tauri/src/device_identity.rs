@@ -67,6 +67,9 @@ pub fn sign_peer_task_envelope(
     payload: Vec<u8>,
     requested_scopes: Vec<String>,
 ) -> Result<SignedTaskEnvelope, String> {
+    if requested_scopes.len() > 3 || requested_scopes.iter().any(|scope| scope.len() > 32) {
+        return Err("Peer task may request at most three short data scopes.".into());
+    }
     if payload.len() > 10 * 1024 * 1024 {
         return Err("Peer payload exceeds the 10 MiB signing limit.".into());
     }
