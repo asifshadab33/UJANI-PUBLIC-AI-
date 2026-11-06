@@ -206,3 +206,7 @@ pub mod policy_gate;
 pub use policy_gate::{evaluate_execution, DataClass, ExecutionRequest, ExecutionTarget, GateDecision, GateResult};
 pub mod energy_telemetry;
 pub use energy_telemetry::{aggregate_observations, validate_observation, DashboardTotals, EnergyObservation, MeasurementKind, ObservationError};
+
+/// Fail-closed resource-aware scheduling policy; decisions do not execute or reserve work.
+pub mod resource_scheduler;
+pub use resource_scheduler::{plan_local_schedule, LocalPlacement, ResourceSnapshot, ScheduleDecision, TaskResourceRequest, ThermalState};
