@@ -1,14 +1,12 @@
 mod cloud_gateway;
 mod folder_import;
 mod history;
-mod model_runtime;
 mod ollama;
 pub mod pdf_worker;
 mod task_engine;
 
 use task_engine::LocalTaskEngine;
 
-use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
 use std::{collections::{BTreeSet, HashMap}, future::Future, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, State};
@@ -514,22 +512,6 @@ fn get_device_info() -> DeviceInfo {
     }
 }
 
-/// Returns only models registered by the application. No model files are scanned.
-#[tauri::command]
-fn list_local_models() -> Vec<ModelInfo> {
-    let mut system = System::new();
-    system.refresh_cpu();
-    discover_models(!system.cpus().is_empty())
-}
-
-/// Runs an explicitly selected local adapter. No network or cloud fallback exists.
-#[tauri::command]
-fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
-    let mut system = System::new();
-    system.refresh_cpu();
-    run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
-}
-
 /// Narrow demonstration operation: no shell, scripts, filesystem or network access.
 #[tauri::command]
 fn run_local_task(request: String) -> Result<RunResult, String> {
@@ -562,8 +544,6 @@ pub fn run() {
             get_tool_catalogue,
             plan_local_operation,
             plan_task_workflow,
-            list_local_models,
-            run_local_model_task,
             run_local_task,
             evaluate_task_route,
             get_ollama_status,
