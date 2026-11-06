@@ -85,3 +85,10 @@ The snapshot is point-in-time information and can become stale. Future work must
 ## Versioned workflow graph (planning only)
 
 The core now accepts schema version 1 graphs containing at most 32 nodes. Each node must use a registered operation identifier and a bounded identifier; dependencies must exist, be unique and be acyclic. The planner produces a deterministic topological order and checks the union of required capabilities plus a conservative sequential peak-memory preflight. The desktop command rejects oversized node/dependency lists before planning. A successful plan is not an execution grant, does not reserve resources, and does not provide a sandbox. The current UI offers a fixed analyse → summarise → translate graph preview; execution still uses the dedicated document pipeline. General graph execution requires typed input/output schemas, per-node permission checks, cancellation, resource accounting and provenance before it should be enabled.
+
+
+## Resource-aware local scheduling policy
+
+The Rust core now exposes a deterministic scheduler contract. A caller supplies a timestamped resource snapshot and a typed task request; the policy rejects stale or unknown telemetry, defers work under memory/CPU/concurrency or thermal pressure, requires explicit opt-in and idle/AC-power policy for background work, and selects GPU only when runtime compatibility and free VRAM are reported. CPU fallback is used only when the task explicitly permits it.
+
+This is policy logic only. It does not read OS sensors, reserve resources, start tasks, pre-empt foreground work, or connect to a device-wide scheduler. The desktop native layer must supply fresh platform telemetry and enforce decisions at the actual execution adapter before UJANI may claim resource-aware execution. A scheduling decision is never a permission grant.
