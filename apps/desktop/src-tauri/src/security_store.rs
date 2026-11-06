@@ -72,8 +72,10 @@ fn initialize(db: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_receipts_task ON execution_receipts(task_id);
          CREATE TABLE IF NOT EXISTS peer_replay_nonces(
-           nonce TEXT PRIMARY KEY,
-           expires_at INTEGER NOT NULL
+           peer_id TEXT NOT NULL,
+           nonce TEXT NOT NULL,
+           expires_at INTEGER NOT NULL,
+           PRIMARY KEY(peer_id, nonce)
          );
          CREATE INDEX IF NOT EXISTS idx_peer_nonce_expiry ON peer_replay_nonces(expires_at);
          CREATE TABLE IF NOT EXISTS cloud_budget(
@@ -143,7 +145,10 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
     Ok(ReceiptLedgerStatus { entries, valid, head_sha256: previous })
 }
 
-fn claim_nonce_db(db: &mut Connection, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
+fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Peer replay namespace requires a valid device fingerprint.".into());
+    }
     if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err("Peer nonce must be 32 lowercase hexadecimal characters.".into());
     }
@@ -159,8 +164,8 @@ fn claim_nonce_db(db: &mut Connection, nonce: &str, expires_at: u64, now: u64) -
         return Err("Persistent peer replay store is full; new peer tasks are fail-closed.".into());
     }
     tx.execute(
-        "INSERT INTO peer_replay_nonces(nonce,expires_at) VALUES(?1,?2)",
-        params![nonce, expires_at as i64]
+        "INSERT INTO peer_replay_nonces(peer_id,nonce,expires_at) VALUES(?1,?2,?3)",
+        params![peer_id.to_ascii_lowercase(), nonce, expires_at as i64]
     ).map_err(|e| {
         if e.to_string().contains("UNIQUE") { "Peer task replay detected; nonce was already used.".into() }
         else { format!("Could not persist peer replay nonce: {e}") }
@@ -198,7 +203,7 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
 }
 
 pub fn claim_peer_nonce(app: &AppHandle, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
-    claim_nonce_db(&mut open(app)?, nonce, expires_at, now)
+    claim_nonce_db(&mut open(app)?, &"0".repeat(64), nonce, expires_at, now)
 }
 
 pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetStatus, String> {
@@ -353,7 +358,7 @@ pub fn verify_and_claim_peer_envelope(
     let now = now_seconds()?;
     signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
         .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
-    claim_nonce_db(&mut db, &signed.envelope.nonce, signed.envelope.expires_at, now)
+    claim_nonce_db(&mut db, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)
 }
 
 #[cfg(test)]
@@ -396,9 +401,12 @@ mod tests {
     fn persistent_replay_nonce_rejects_duplicate_and_prunes_expired() {
         let mut db = db();
         let nonce = "0123456789abcdef0123456789abcdef";
-        assert!(claim_nonce_db(&mut db, nonce, 200, 100).is_ok());
-        assert!(claim_nonce_db(&mut db, nonce, 200, 100).is_err());
-        assert!(claim_nonce_db(&mut db, nonce, 400, 201).is_ok());
+        let peer_a = "a".repeat(64);
+        let peer_b = "b".repeat(64);
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_err());
+        assert!(claim_nonce_db(&mut db, &peer_b, nonce, 200, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 400, 201).is_ok());
     }
 
 
