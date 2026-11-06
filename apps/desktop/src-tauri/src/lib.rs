@@ -108,6 +108,11 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             state: CapabilityState::Unknown, source: "Not probed".into(),
             detail: "NPU hardware and runtime are not probed; remains Unknown until a supported OS/runtime API confirms a usable NPU".into(),
         },
+        CapabilityRecord {
+            id: "fortress.os_isolation".into(), category: "security".into(),
+            state: CapabilityState::Unavailable, source: "No OS sandbox adapter is currently installed".into(),
+            detail: "Fortress blocks UJANI cloud requests at the native command boundary, but OS-enforced process and network isolation is not active on this build".into(),
+        },
     ];
     Ok(CapabilitySnapshot {
         capabilities, operations: registered_operations(),
