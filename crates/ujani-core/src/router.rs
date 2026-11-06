@@ -148,7 +148,7 @@ mod tests {
             let request = RouteRequest {
                 task_id: "registry-test".into(), operation: operation.id.clone(),
                 mode: ExecutionMode::Fortress, required_capabilities: BTreeSet::new(),
-                available_capabilities: BTreeSet::new(), local_memory_required_mb: 0,
+                available_capabilities: operation.required_capabilities.iter().cloned().collect(), local_memory_required_mb: 0,
                 available_memory_mb: 1024, external_data_approved: false,
                 network_capability_available: false, requested_collaboration_rounds: 0,
             };
@@ -165,7 +165,7 @@ mod tests {
     fn req(mode: ExecutionMode) -> RouteRequest {
         RouteRequest { task_id: "task-1".into(), operation: "local.ai.generate".into(), mode,
             required_capabilities: BTreeSet::from(["cpu".into()]),
-            available_capabilities: BTreeSet::from(["cpu".into()]),
+            available_capabilities: BTreeSet::from(["cpu".into(), "ollama.local".into()]),
             local_memory_required_mb: 128, available_memory_mb: 1024,
             external_data_approved: false, network_capability_available: true,
             requested_collaboration_rounds: 8 }
