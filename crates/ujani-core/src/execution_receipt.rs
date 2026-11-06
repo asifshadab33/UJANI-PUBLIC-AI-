@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 pub enum ExecutionLocation {
     LocalCpu,
     LocalGpu,
+    LocalUnverified,
     ExternalProvider,
     DeterministicTool,
 }
@@ -90,7 +91,7 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
     {
         return Err(ReceiptError::InvalidTimeRange);
     }
-    if matches!(receipt.location, ExecutionLocation::LocalCpu | ExecutionLocation::LocalGpu)
+    if matches!(receipt.location, ExecutionLocation::LocalCpu | ExecutionLocation::LocalGpu | ExecutionLocation::LocalUnverified)
         && receipt.model_id.is_some() != receipt.model_version.is_some()
     {
         return Err(ReceiptError::MissingModelProvenance);
