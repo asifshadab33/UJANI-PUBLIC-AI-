@@ -248,6 +248,11 @@ async fn execute_cloud_ai_task(
   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
   return Err("Cloud transfer was not approved. No request was sent.".into());
  }
+ let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .map_err(|e| e.to_string())?.as_millis() as u64;
+ let input_digest = sha256_hex(prompt.as_bytes());
+ // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
+ let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
  let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
@@ -269,8 +274,29 @@ async fn execute_cloud_ai_task(
   }
  };
  if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+ if let Ok(output) = &result {
+  let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+   .map_err(|e| e.to_string())?.as_millis() as u64;
+  let receipt = ExecutionReceipt {
+   schema_version: 1,
+   task_id: task_id.clone(),
+   operation_id: "cloud.ai.generate".into(),
+   location: ReceiptExecutionLocation::ExternalProvider,
+   adapter_id: "byok.cloud-gateway".into(),
+   adapter_version: env!("CARGO_PKG_VERSION").into(),
+   model_id: Some(model.clone()),
+   model_version: None,
+   input_sha256: input_digest,
+   output_sha256: sha256_hex(output.as_bytes()),
+   started_at_unix_ms,
+   completed_at_unix_ms,
+   user_approval_id: Some(approval_id),
+  };
+  security_store::append_execution_receipt(app.clone(), receipt)
+   .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
+ }
  match &result {
-  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
+  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed and provenance recorded.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
   Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
