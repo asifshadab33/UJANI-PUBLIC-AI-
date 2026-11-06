@@ -21,7 +21,11 @@ pub fn analyze_text(file_name: &str, content: &str) -> Result<FileAnalysis, Stri
     if content.len() > MAX_TEXT_BYTES {
         return Err("Text file exceeds the 1 MiB processing limit.".into());
     }
-    let extension = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let extension = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if !matches!(extension.as_str(), "txt" | "md" | "csv" | "json" | "rs" | "py" | "js" | "ts" | "html" | "xml" | "log" | "pdf") {
         return Err("Unsupported text file type.".into());
     }
@@ -65,6 +69,11 @@ mod tests {
     }
 
     #[test]
+    fn extensionless_name_that_looks_like_an_extension_is_rejected() {
+        assert!(analyze_text("txt", "hello").is_err());
+        assert!(analyze_text("notes.txt", "hello").is_ok());
+    }
+
     fn rejects_unsupported_and_oversized_input() {
         assert!(analyze_text("photo.exe", "x").is_err());
         assert!(analyze_text("notes.txt", &"x".repeat(MAX_TEXT_BYTES + 1)).is_err());
