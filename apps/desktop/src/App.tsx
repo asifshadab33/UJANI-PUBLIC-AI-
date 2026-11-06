@@ -275,7 +275,7 @@ export default function App() {
     setModelPullBusy(true);
     setModelPullError("");
     try {
-      await invoke("pull_ollama_model", { taskId, model });
+      await invoke("pull_ollama_model", { taskId, model, mode: executionMode });
       await refreshOllamaStatus();
       setOllamaModel(model);
     } catch (error) {
