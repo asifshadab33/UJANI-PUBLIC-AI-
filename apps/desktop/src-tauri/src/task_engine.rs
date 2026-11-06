@@ -296,6 +296,16 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
         job
     };
 
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        // sandbox-exec is deprecated by Apple but remains the available
+        // per-process profile interface for this worker. Fail closed if absent.
+        const PDF_PROFILE: &str = "(version 1) (deny default) (allow file-read*) (allow sysctl-read) (allow process-info*) (allow mach-lookup) (allow file-write* (literal \"/dev/null\")) (deny network*)";
+        let mut sandboxed = tokio::process::Command::new("/usr/bin/sandbox-exec");
+        sandboxed.arg("-p").arg(PDF_PROFILE).arg(exe);
+        sandboxed
+    };
+    #[cfg(not(target_os = "macos"))]
     let mut command = tokio::process::Command::new(exe);
     command.arg("--pdf-extract-worker")
         .env_clear()
