@@ -165,7 +165,7 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  let plain: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap();
  assert_eq!(plain.choices.into_iter().next().unwrap().message.content.into_text(),"hello");
  let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}}]}"#).unwrap();
- assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"first\\nsecond");
+ assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"first\nsecond");
 }
 #[test]fn provider_content_ignores_non_text_parts_without_failing(){
  let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"image","image_url":"data:image/png;base64,AAAA"},{"type":"text","text":"answer"}]}}]}"#).unwrap();
