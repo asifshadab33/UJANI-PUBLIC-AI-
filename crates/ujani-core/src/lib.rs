@@ -196,3 +196,4 @@ pub use model_advisor::{recommend_local_model, InstalledModelSize, ModelFitEstim
 
 /// Signed and consent-scoped Worker/Partner task envelope primitives (no transport/enrollment).
 pub mod peer_protocol;
+\npub mod placement;\npub use placement::{plan_energy_aware_placement, DevicePowerState, PlacementDecision, PlacementInput, WorkerCandidate, WorkerEstimate};\npub mod safety_policy;\npub use safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadIntent};\n
