@@ -63,6 +63,11 @@ fn valid_model_identifier(value: &str) -> bool {
         && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-_/".contains(c))
 }
 
+/// Validate an Ollama/provider model identifier before dispatching inference.
+pub fn validate_model_identifier(value: &str) -> bool {
+    valid_model_identifier(value)
+}
+
 fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -174,6 +179,15 @@ mod tests {
         r.model_id = Some("hf.co/user/model_name:Q4_K_M".into());
         r.model_version = Some("unknown".into());
         assert_eq!(validate_receipt(&r), Ok(()));
+    }
+
+    #[test]
+    fn model_identifier_preflight_rejects_ambiguous_names() {
+        assert!(validate_model_identifier("qwen2.5:3b"));
+        assert!(validate_model_identifier("hf.co/user/model_name:Q4_K_M"));
+        assert!(!validate_model_identifier("../escape"));
+        assert!(!validate_model_identifier("model name"));
+        assert!(!validate_model_identifier("model\\nname"));
     }
 
     #[test]
