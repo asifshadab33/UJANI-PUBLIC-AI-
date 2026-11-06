@@ -3,13 +3,14 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager}; 
-use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 
 const KEYRING_SERVICE: &str = "org.ujani.publicai";
 const KEYRING_USER: &str = "local-history-v1";
 const ENCRYPTED_PREFIX: &str = "ujani:v1:";
+const ENC_V2: &str = "ujani:v2:";
 
 
 const RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
@@ -42,39 +43,45 @@ fn history_key() -> Result<[u8; 32], String> {
  }
 }
 
-fn encrypt_text(key: &[u8; 32], value: &str) -> Result<String, String> {
- let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid history encryption key.".to_string())?;
- let mut nonce = [0u8; 12];
- OsRng.fill_bytes(&mut nonce);
- let encrypted = cipher.encrypt(Nonce::from_slice(&nonce), value.as_bytes())
-  .map_err(|_| "Could not encrypt history value.".to_string())?;
- let mut payload = nonce.to_vec();
- payload.extend_from_slice(&encrypted);
- Ok(format!("{ENCRYPTED_PREFIX}{}", B64.encode(payload)))
+fn row_aad(id: i64, column: &str) -> Vec<u8> {
+ format!("ujani|{id}|{column}").into_bytes()
 }
 
-fn decrypt_text(key: &[u8; 32], value: &str) -> Result<String, String> {
- let encoded = value.strip_prefix(ENCRYPTED_PREFIX)
-  .ok_or_else(|| "History row is not encrypted; it must be migrated before use.".to_string())?;
+fn encrypt_text(key: &[u8; 32], value: &str, id: i64, column: &str) -> Result<String, String> {
+ let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid history encryption key.".to_string())?;
+ let mut nonce = [0u8; 12]; OsRng.fill_bytes(&mut nonce);
+ let encrypted = cipher.encrypt(Nonce::from_slice(&nonce), Payload { msg: value.as_bytes(), aad: &row_aad(id, column) })
+  .map_err(|_| "Could not encrypt history value.".to_string())?;
+ let mut payload = nonce.to_vec(); payload.extend_from_slice(&encrypted);
+ Ok(format!("{ENC_V2}{}", B64.encode(payload)))
+}
+
+fn decrypt_text(key: &[u8; 32], value: &str, id: i64, column: &str) -> Result<String, String> {
+ let (encoded, version_two) = if let Some(v) = value.strip_prefix(ENC_V2) { (v, true) }
+  else if let Some(v) = value.strip_prefix(ENCRYPTED_PREFIX) { (v, false) }
+  else { return Err("History row is not encrypted; it must be migrated before use.".into()); };
  let payload = B64.decode(encoded).map_err(|_| "Encrypted history value is corrupted.".to_string())?;
  if payload.len() < 28 { return Err("Encrypted history value is incomplete.".into()); }
  let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid history encryption key.".to_string())?;
  let (nonce, ciphertext) = payload.split_at(12);
- let plaintext = cipher.decrypt(Nonce::from_slice(nonce), ciphertext)
-  .map_err(|_| "History authentication failed; the OS key may have changed.".to_string())?;
+ let plaintext = if version_two {
+  cipher.decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad: &row_aad(id, column) })
+ } else {
+  cipher.decrypt(Nonce::from_slice(nonce), ciphertext)
+ }.map_err(|_| "History authentication failed; the OS key may have changed or data was moved.".to_string())?;
  String::from_utf8(plaintext).map_err(|_| "Decrypted history text is not valid UTF-8.".into())
 }
 
 fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String> {
- let mut statement = db.prepare("SELECT id,prompt,output FROM task_history")
-  .map_err(|e| format!("Could not inspect existing history: {e}"))?;
- let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
-  .map_err(|e| e.to_string())?;
+ let mut statement = db.prepare("SELECT id,prompt,output FROM task_history").map_err(|e| format!("Could not inspect existing history: {e}"))?;
+ let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
  let mut pending = Vec::new();
  for row in rows {
   let (id, prompt, output) = row.map_err(|e| e.to_string())?;
-  if !prompt.starts_with(ENCRYPTED_PREFIX) || !output.starts_with(ENCRYPTED_PREFIX) {
-   pending.push((id, encrypt_text(key, &prompt)?, encrypt_text(key, &output)?));
+  if !prompt.starts_with(ENC_V2) || !output.starts_with(ENC_V2) {
+   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) { decrypt_text(key, &prompt, id, "prompt")? } else { prompt };
+   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) { decrypt_text(key, &output, id, "output")? } else { output };
+   pending.push((id, encrypt_text(key, &plain_prompt, id, "prompt")?, encrypt_text(key, &plain_output, id, "output")?));
   }
  }
  drop(statement);
@@ -96,11 +103,12 @@ fn save_secure(db: &mut Connection, key: &[u8; 32], prompt: &str, output: &str, 
   let mut boundary=MAX_STORED_OUTPUT; while !output.is_char_boundary(boundary){boundary-=1;}
   format!("{}\n\n[History result truncated to 64 KiB.]",&output[..boundary])
  } else { output.to_string() };
- let encrypted_prompt=encrypt_text(key,prompt)?;
- let encrypted_output=encrypt_text(key,&stored_output)?;
  let tx=db.transaction().map_err(|e|e.to_string())?;
- tx.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![encrypted_prompt,encrypted_output,mode,model,kind,created_at]).map_err(|e|e.to_string())?;
+ tx.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('','',?1,?2,?3,?4)",params![mode,model,kind,created_at]).map_err(|e|e.to_string())?;
  let id=tx.last_insert_rowid();
+ let encrypted_prompt=encrypt_text(key,prompt,id,"prompt")?;
+ let encrypted_output=encrypt_text(key,&stored_output,id,"output")?;
+ tx.execute("UPDATE task_history SET prompt=?1,output=?2 WHERE id=?3",params![encrypted_prompt,encrypted_output,id]).map_err(|e|e.to_string())?;
  tx.execute("DELETE FROM task_history WHERE created_at < ?1",params![created_at.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?;
  tx.execute("DELETE FROM task_history WHERE id NOT IN (SELECT id FROM task_history ORDER BY created_at DESC,id DESC LIMIT ?1)",params![MAX_ENTRIES]).map_err(|e|e.to_string())?;
  tx.commit().map_err(|e|e.to_string())?;
@@ -113,7 +121,7 @@ fn list_secure(db: &Connection, key: &[u8; 32]) -> Result<Vec<HistoryEntry>, Str
  let mut entries=Vec::new();
  for row in rows {
   let (id,prompt,output,mode,model,kind,created_at)=row.map_err(|e|e.to_string())?;
-  entries.push(HistoryEntry{id,prompt:decrypt_text(key,&prompt)?,output:decrypt_text(key,&output)?,mode,model,kind,created_at});
+  entries.push(HistoryEntry{id,prompt:decrypt_text(key,&prompt,id,"prompt").unwrap_or_else(|_| "[unreadable entry: key changed or data corrupted]".into()),output:decrypt_text(key,&output,id,"output").unwrap_or_else(|_| "[unreadable entry: key changed or data corrupted]".into()),mode,model,kind,created_at});
  }
  Ok(entries)
 }
@@ -200,19 +208,19 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
  fn db()->Connection{let c=Connection::open_in_memory().unwrap();initialize(&c).unwrap();c}
  #[test] fn encrypted_history_round_trips_and_detects_tampering() {
   let key=[42u8;32];
-  let encrypted=encrypt_text(&key,"private prompt").unwrap();
-  assert!(encrypted.starts_with(ENCRYPTED_PREFIX));
-  assert_eq!(decrypt_text(&key,&encrypted).unwrap(),"private prompt");
+  let encrypted=encrypt_text(&key,"private prompt",1,"prompt").unwrap();
+  assert!(encrypted.starts_with(ENC_V2));
+  assert_eq!(decrypt_text(&key,&encrypted,1,"prompt").unwrap(),"private prompt");
   let tampered=format!("{}A",&encrypted);
-  assert!(decrypt_text(&key,&tampered).is_err());
+  assert!(decrypt_text(&key,&tampered,1,"prompt").is_err());
  }
  #[test] fn plaintext_history_rows_are_migrated() {
   let db=db();
   db.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('old prompt','old output','smart','m','chat',1)",[]).unwrap();
   migrate_plaintext_rows(&db,&[7u8;32]).unwrap();
   let (p,o):(String,String)=db.query_row("SELECT prompt,output FROM task_history WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
-  assert!(p.starts_with(ENCRYPTED_PREFIX)); assert!(o.starts_with(ENCRYPTED_PREFIX));
-  assert_eq!(decrypt_text(&[7u8;32],&p).unwrap(),"old prompt");
+  assert!(p.starts_with(ENC_V2)); assert!(o.starts_with(ENC_V2));
+  assert_eq!(decrypt_text(&[7u8;32],&p,1,"prompt").unwrap(),"old prompt");
  }
  #[test] fn disabled_by_default(){let mut c=db();assert!(!is_enabled(&c).unwrap());assert!(save(&mut c,"p","o","smart","m","chat",1).is_err());}
  #[test] fn disabled_history_does_not_require_a_credential_key(){let c=db();assert!(!is_enabled(&c).unwrap());assert!(list(&c).unwrap().is_empty());}
