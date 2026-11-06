@@ -41,7 +41,7 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
             let mut seed = Zeroizing::new([0_u8; 32]);
             OsRng.fill_bytes(&mut *seed);
             let key = SigningKey::from_bytes(&seed);
-            let encoded = Zeroizing::new(B64.encode(&*seed));
+            let encoded = Zeroizing::new(B64.encode(*seed));
             entry.set_password(encoded.as_str())
                 .map_err(|e| format!("Could not store device identity in OS credential vault: {e}"))?;
             Ok(key)
@@ -80,7 +80,7 @@ pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, St
     let mut seed = Zeroizing::new([0_u8; 32]);
     OsRng.fill_bytes(&mut *seed);
     let signing = SigningKey::from_bytes(&seed);
-    let encoded = Zeroizing::new(B64.encode(&*seed));
+    let encoded = Zeroizing::new(B64.encode(*seed));
     entry.set_password(encoded.as_str())
         .map_err(|e| format!("Could not rotate device identity in OS credential vault: {e}"))?;
     let public = signing.verifying_key().to_bytes();
