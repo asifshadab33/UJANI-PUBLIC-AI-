@@ -152,20 +152,6 @@ pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
 pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     chat(model, None, &[Turn { role: "user", content: prompt }]).await
 }
-          Err(error) if error.is_connect() => {
-                last_error = format!("Local Ollama request failed: {error}");
-            }
-            Err(error) => return Err(format!("Local Ollama request failed: {error}")),
-        }
-
-        if attempt + 1 < MAX_ATTEMPTS {
-            let delay_ms = 250_u64 * (1_u64 << attempt);
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-        }
-    }
-
-    Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
-}
 
 #[derive(Debug, PartialEq, Eq)]
 struct PullProgress {
