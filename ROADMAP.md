@@ -8,7 +8,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Define local-first product principles and explicit non-goals.
 - [x] Add an initial typed Rust task/capability model and routing tests.
 - [x] Document privacy, security and contribution expectations.
-- [x] Establish CI for locked Rust core/native tests and frontend type-check/build on Linux, Windows and macOS; formatting, linting and automated dependency review remain pending.
+- [x] Establish CI for Rust core/native tests and frontend type-check/build on Linux, Windows and macOS; formatting, linting and automated dependency review remain pending.
 - [ ] Agree a versioned task protocol shared with UJANI Enterprise AI.
 
 ## Phase 1 — desktop proof of concept
