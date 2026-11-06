@@ -59,7 +59,7 @@ The repository's CI, CodeQL, preview-installer and signed-release workflows now 
 
 The checked-in Tauri updater public key is intentionally empty. The signed release workflow requires the TAURI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY secrets and injects the public key into the build configuration only for the release build. Until the maintainer configures and verifies those secrets and completes a signed update/install test, updater distribution must not be represented as production-ready.
 
-The current default Tauri capability grants the default core, dialog and updater plugin permission sets. Before public distribution, replace broad plugin defaults with the minimum specific commands required by the UI, verify the generated Tauri permission schema against the exact installed plugin versions, and test that unneeded dialog/updater commands are denied. Keep the current restrictive content security policy unless a documented feature requires a narrowly scoped addition.
+The default Tauri capability no longer grants the broad dialog or updater default permission sets. It now exposes updater check and the combined download-and-install operation used by UpdateNotice, while omitting separate download and install commands and all frontend dialog commands. Native Rust dialog APIs remain used for explicit native confirmations/file selection. The capability still includes core:default; review its exact generated permission expansion against the pinned Tauri version before public distribution. Keep the current restrictive content security policy unless a documented feature requires a narrowly scoped addition, and test that unneeded commands are denied.
 
 ## F. Product-security boundaries not yet implemented
 
