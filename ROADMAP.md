@@ -12,7 +12,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 ## Phase 1 — desktop proof of concept
 - [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
 - [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
-- [ ] Storage and verified GPU/NPU/runtime compatibility inventory.
+- [ ] Verified GPU/NPU and model-runtime compatibility inventory across supported operating systems (presence alone is insufficient).
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
 - [x] Allow-listed local task-plan preview with capability and coarse available-memory preflight; planning does not execute or reserve resources.
 - [ ] Capability freshness/expiry, user permission metadata and runtime-specific accelerator compatibility.
@@ -22,7 +22,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Optional second local-model step to translate document/PDF summaries into a user-selected language.
 - [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
 - [ ] Image conversion and broader media metadata tools.
-- [ ] Sandboxed execution adapter with enforceable filesystem and resource limits.
+- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token and firewall policy; macOS sandbox/entitlements; Linux namespaces/seccomp/Landlock where supported. Fail closed if isolation cannot be enforced.
 
 ## Phase 2 — local models and planning
 - [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
@@ -41,7 +41,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Local-only mode tested with network disabled.
 - [ ] Clear provenance for local, remote and deterministic-tool work.
 
-## Phase 4 — hardening and community
+## Phase 4 — hardening and community\n- [x] Tauri updater plugin, startup update check, signed update verification and user-controlled install/restart UI.\n- [x] Tagged multi-platform installer workflow for Windows, macOS Intel/Apple Silicon and Linux, with merged updater manifest.\n- [ ] Configure owner-held updater key pair in GitHub Actions secrets and publish/verify the first signed release.
 - [x] Configure signed Tauri updater artifacts and a GitHub Releases update endpoint (requires owner-generated signing keys in GitHub Actions secrets before a signed release can be built).
 - [x] Add tagged-release installer pipeline for Windows, macOS and Linux, including signed update manifest generation.
 - [ ] Generate and pin the production updater key pair; publish the first signed release and verify update/install/rollback behavior on clean machines.
