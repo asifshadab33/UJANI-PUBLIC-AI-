@@ -244,39 +244,14 @@ async fn execute_cloud_ai_task(
  mode: String,
  external_data_approved: bool,
 ) -> Result<String, String> {
- if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-  return Err("Invalid task identifier.".into());
- }
  if mode != "smart" {
   return Err("The BYOK cloud gateway is available in Smart mode only. Worker/Partner peer execution is not implemented; Fortress is local-only.".into());
  }
  require_gateway_policy(&task_id, "cloud.ai.generate", external_data_approved, DataClass::Internal, 95)?;
- let token = CancellationToken::new();
- {
-  let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-  if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-  active.insert(task_id.clone(), token.clone());
- }
  emit_task_progress(&app, &task_id, "cloud_starting", "Preparing the user-approved cloud request.", 5);
- emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
+ emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved conversation to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, messages, mode, external_data_approved);
- let result = tokio::select! {
-  _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
-  outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
-   match outcome {
-    Ok(value) => value,
-    Err(_) => Err("Cloud task exceeded the 95-second time budget.".into()),
-   }
-  }
- };
- if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
- match &result {
-  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
-  Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
-  Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
-  Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
- }
- result
+ run_budgeted(&app, &control, &task_id, Duration::from_secs(95), request).await
 }
 /// Explicitly downloads a named model through the local Ollama service only.
 #[tauri::command]
@@ -437,35 +412,9 @@ async fn execute_local_ai_task(
     mode: String,
     model: String,
 ) -> Result<task_engine::AiTaskResult, String> {
-    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier.".into());
-    }
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
-    emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
     emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
     let execution = LocalTaskEngine::execute(prompt, mode, model);
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(140), execution) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err("Local task exceeded the 140-second overall time budget. Try a smaller prompt or faster model.".into()),
-            }
-        }
-    };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-    match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
-        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
-        Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
-        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
-    }
-    result
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(140), execution).await
 }
 
 #[tauri::command]
@@ -526,35 +475,9 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    if task_id.is_empty() || task_id.len() > 96
-        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier.".into());
-    }
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
     emit_task_progress(&app, &task_id, "pdf_starting", "Starting isolated PDF extraction.", 5);
     let execution = LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language);
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("PDF processing cancelled by user; isolated worker stopped.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(180), execution) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err("PDF processing exceeded the 180-second time budget.".into()),
-            }
-        }
-    };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-    match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "PDF processing completed locally.", 100),
-        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
-        Err(error) if error.contains("180-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
-        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
-    }
-    result
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(180), execution).await
 }
 
 /// Translates user-provided text through the selected local Ollama model.
