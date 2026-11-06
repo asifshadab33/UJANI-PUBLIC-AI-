@@ -2,7 +2,8 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
-use tauri::{AppHandle, Manager}; 
+use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind}; 
 use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rand::rngs::OsRng;
@@ -222,8 +223,15 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
 #[tauri::command] pub fn delete_task_history(app:AppHandle,entry_id:i64)->Result<(),String>{
  if entry_id<=0{return Err("Invalid history entry identifier.".into());} open(&app)?.execute("DELETE FROM task_history WHERE id=?1",params![entry_id]).map_err(|e|e.to_string())?; Ok(())
 }
-#[tauri::command] pub fn clear_task_history(app:AppHandle)->Result<(),String>{
- open(&app)?.execute("DELETE FROM task_history",[]).map_err(|e|e.to_string())?; Ok(())
+#[tauri::command] pub fn clear_task_history(app:AppHandle)->Result<bool,String>{
+ let confirmed = app.dialog().message("Delete all saved UJANI task history? This does not securely erase storage media.")
+  .title("Clear saved task history")
+  .kind(MessageDialogKind::Warning)
+  .buttons(MessageDialogButtons::OkCancel)
+  .blocking_show();
+ if !confirmed { return Ok(false); }
+ open(&app)?.execute("DELETE FROM task_history",[]).map_err(|e|e.to_string())?;
+ Ok(true)
 }
 
 #[cfg(test)] mod tests{
