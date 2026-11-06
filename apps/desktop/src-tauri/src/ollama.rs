@@ -275,6 +275,31 @@ where F: FnMut(String, u8) {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn local_client_does_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        let redirector = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect_addr = redirector.local_addr().unwrap();
+        let target_addr = target.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = redirector.accept().await.unwrap();
+            let mut request = vec![0u8; 4096];
+            let _ = socket.read(&mut request).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 302 Found\\r\\nLocation: http://{target_addr}/prompt-leak\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        let client = build_client(Some(Duration::from_secs(2))).unwrap();
+        let response = client.get(format!("http://{redirect_addr}/api/tags")).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        server.await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(150), target.accept()).await.is_err(),
+            "redirect target must never receive a follow-up request");
+    }
+
     #[test]
     fn accepts_only_bounded_local_model_identifiers() {
         assert!(valid_model("llama3.2"));
