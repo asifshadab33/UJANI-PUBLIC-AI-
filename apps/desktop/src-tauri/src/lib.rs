@@ -23,6 +23,12 @@ use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, Model
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
 
 
+fn valid_command_identifier(value: &str, max_len: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max_len
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+}
+
 /// Evaluates policy only; this command does not execute a task or make network calls.
 #[tauri::command]
 fn evaluate_task_route(
@@ -36,6 +42,16 @@ fn evaluate_task_route(
     external_data_approved: bool,
     requested_collaboration_rounds: u8,
 ) -> Result<ModeRoutingDecision, String> {
+    if !valid_command_identifier(&task_id, 96)
+        || !valid_command_identifier(&operation, 96)
+        || required_capabilities.is_empty()
+        || required_capabilities.len() > 32
+        || available_capabilities.len() > 64
+        || required_capabilities.iter().chain(available_capabilities.iter())
+            .any(|value| !valid_command_identifier(value, 64))
+    {
+        return Err("Task route contains an invalid identifier or exceeds capability limits.".into());
+    }
     let mode = match mode.as_str() {
         "fortress" => ExecutionMode::Fortress,
         "worker" => ExecutionMode::Worker,
@@ -140,6 +156,16 @@ async fn plan_local_operation(operation_id: String, mode: String) -> Result<Task
 /// Validates a bounded, versioned local workflow graph. This command never executes it.
 #[tauri::command]
 async fn plan_task_workflow(nodes: Vec<TaskNode>, mode: String) -> Result<TaskGraphPlan, String> {
+    if mode.len() > 16 || !matches!(mode.as_str(), "fortress" | "smart") {
+        return Err("Workflow mode must be Fortress or Smart.".into());
+    }
+    if nodes.iter().any(|node| {
+        !valid_command_identifier(&node.id, 64)
+            || !valid_command_identifier(&node.operation_id, 96)
+            || node.depends_on.iter().any(|id| !valid_command_identifier(id, 64))
+    }) {
+        return Err("Workflow contains an invalid or oversized node identifier.".into());
+    }
     if nodes.len() > 32 {
         return Err("Workflow is limited to 32 steps.".into());
     }
@@ -360,6 +386,9 @@ async fn execute_local_ai_task(
 
 #[tauri::command]
 fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
+    if !valid_command_identifier(&task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
     let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
     if let Some(token) = active.get(&task_id) { token.cancel(); Ok(true) } else { Ok(false) }
 }
