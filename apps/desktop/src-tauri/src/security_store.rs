@@ -18,6 +18,7 @@ const MAX_NONCE_TTL_SECONDS: u64 = 300;
 const DAILY_CLOUD_TOKEN_RESERVATION: i64 = 250_000;
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Verification summary for the local hash-chained execution receipt ledger.
 #[derive(Debug, Clone, Serialize)]
 pub struct ReceiptLedgerStatus {
     pub entries: i64,
@@ -25,6 +26,7 @@ pub struct ReceiptLedgerStatus {
     pub head_sha256: String,
 }
 
+/// Current per-installation BYOK token reservation for the UTC day.
 #[derive(Debug, Clone, Serialize)]
 pub struct CloudBudgetStatus {
     pub utc_day: i64,
@@ -225,6 +227,7 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
     })
 }
 
+/// Atomically reserve a conservative local token allowance before a BYOK request is sent.
 pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetStatus, String> {
     reserve_budget_db(&mut open(app)?, prompt_bytes, completion_tokens, now_seconds()?)
 }
@@ -299,15 +302,18 @@ pub fn reserve_execution_receipt_slot(
     Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
 }
 
+/// Append a validated execution receipt to the local SQLite hash chain.
 pub fn append_execution_receipt(app: AppHandle, receipt: ExecutionReceipt) -> Result<String, String> {
     append_receipt_db(&mut open(&app)?, &receipt)
 }
 
+/// Verify the local receipt hash chain and return its entry count and head hash.
 #[tauri::command]
 pub fn verify_execution_receipt_ledger(app: AppHandle) -> Result<ReceiptLedgerStatus, String> {
     verify_receipts_db(&open(&app)?)
 }
 
+/// Return the current UTC-day token reservation for this installation.
 #[tauri::command]
 pub fn get_cloud_budget_status(app: AppHandle) -> Result<CloudBudgetStatus, String> {
     let db = open(&app)?;
@@ -324,6 +330,7 @@ pub fn get_cloud_budget_status(app: AppHandle) -> Result<CloudBudgetStatus, Stri
 }
 
 
+/// Public identity and local trust state for an enrolled UJANI peer.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrustedPeer {
     pub peer_id: String,
@@ -345,6 +352,7 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
+/// Enrol an Ed25519 peer key only after native device-owner confirmation.
 #[tauri::command]
 pub async fn enroll_trusted_peer(
     app: AppHandle,
@@ -386,6 +394,7 @@ pub async fn enroll_trusted_peer(
 
 }
 
+/// Check whether a peer fingerprint is currently enrolled and not revoked.
 pub fn is_active_trusted_peer(app: &AppHandle, peer_id: &str) -> Result<bool, String> {
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer fingerprint.".into());
@@ -398,6 +407,7 @@ pub fn is_active_trusted_peer(app: &AppHandle, peer_id: &str) -> Result<bool, St
     Ok(count == 1)
 }
 
+/// Revoke an enrolled peer after native device-owner confirmation.
 #[tauri::command]
 pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, String> {
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -417,6 +427,7 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     Ok(changed == 1)
 }
 
+/// List enrolled peer public keys and their local revocation state.
 #[tauri::command]
 pub fn list_trusted_peers(app: AppHandle) -> Result<Vec<TrustedPeer>, String> {
     let db = open(&app)?;
@@ -433,7 +444,8 @@ pub fn list_trusted_peers(app: AppHandle) -> Result<Vec<TrustedPeer>, String> {
 
 /// Verify a signed task from an enrolled, non-revoked peer and persist its nonce
 /// before returning. This authenticates an envelope only; no peer transport or
-/// task execution is implemented by this command.
+/// Verify a recipient-bound signed peer envelope and atomically claim its replay nonce.
+/// This validates authorization only; encrypted transport and remote task execution are not implemented.
 #[tauri::command]
 pub fn verify_and_claim_peer_envelope(
     app: AppHandle,
