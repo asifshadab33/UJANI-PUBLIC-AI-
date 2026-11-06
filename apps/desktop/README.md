@@ -24,6 +24,14 @@ The browser preview displays the interface and a clearly labelled demo. It canno
 
 ## Native desktop app
 
+### Signed releases and automatic updates
+
+The app checks GitHub Releases for updates on startup in production builds. An available update is shown in-app; the user chooses when to download and install it, then the app restarts. Updates are signature-verified by Tauri before installation. The updater public key is a public trust anchor and must match the private signing key used by release automation.
+
+Release builds require repository Actions secrets `TAURI_UPDATER_PUBLIC_KEY`, `TAURI_SIGNING_PRIVATE_KEY`, and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Generate the key pair once with `npm run tauri signer generate -- -w ~/.tauri/ujani.key`; store the private key and its password only in GitHub Actions secrets, and store the full `.pub` file contents as `TAURI_UPDATER_PUBLIC_KEY`. Never rotate or lose the private key without a planned updater-key migration. Tag a release `vX.Y.Z` to build Windows, macOS and Linux installers and publish `latest.json`.
+
+If these secrets are absent, signed release builds intentionally fail rather than publishing unsigned or unverifiable updates. Local development and browser preview do not perform update checks.
+
 From this directory:
 
 ```sh
@@ -73,14 +81,14 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 
 ## Not implemented yet
 
-- Verified GPU/NPU and runtime compatibility detection; Ollama may use compatible acceleration, but UJANI does not currently verify or schedule it.
+- Verified GPU/NPU and runtime compatibility detection; Ollama may use compatible acceleration, but UJANI does not currently verify or schedule it. This remains a release gate.
 - Automatic Ollama installation/model downloads and model lifecycle management.
 - Task decomposition and model-based planning.
 - OCR for scanned PDFs and images (image-only PDFs return a clear unsupported message).
 - Visual image understanding (the current image tool reads basic metadata only).
 - Sandboxing and OS-enforced per-task resource quotas; CPU/RAM are currently reported, not reserved or capped.
 - Multi-step cloud subtask delegation, OS-backed saved credential vault, provider-specific cost metering, and production-grade cloud consent receipts.
-- OS-enforced Fortress network isolation (the policy preview cannot disable networking). The native cloud command now rejects Fortress-mode requests, but this is application-level policy, not an OS firewall or sandbox.
+- OS-enforced Fortress network isolation (the policy preview cannot disable networking). The native cloud command now rejects Fortress-mode requests, but this is application-level policy, not an OS firewall or sandbox. OS-specific AppContainer, sandbox/entitlements, and Linux namespace/seccomp/Landlock adapters remain unimplemented.
 - Automatic browser control or browser translation API integration. Browser translation is a manual, external copy/paste path; text is not pre-filled or submitted.
 - Native OS translation APIs or downloadable OS language packs; locale detection is informational only.
 - Encryption of non-sensitive history metadata and forensic secure erase. Prompt/output fields use AES-256-GCM with a key stored in the OS credential vault; availability depends on the OS vault being configured and accessible.
@@ -94,7 +102,7 @@ The word-count action is a deterministic plumbing test, not an AI feature. Do no
 - Ollama retries are limited to three attempts for transient connection, timeout, and server failures. Client errors and invalid/oversized responses are not retried.
 - The native device report includes total and currently available system memory. GPU/NPU detection is still explicitly unavailable; the app does not fabricate accelerator capability.
 - The current file and image tools process bytes selected by the user in memory. They do not accept arbitrary filesystem paths, so there is no path-based API for an AI prompt to traverse.
-- Optional SQLite task history is implemented with recording disabled by default, 30-day retention, a 100-entry cap, per-entry deletion and clear-all controls. It stores plaintext in the app-data directory; encryption and OS-backed key management are not implemented. The BYOK cloud gateway is a single-provider API integration, not a secure peer-to-peer Worker/Partner network. Smart, Worker and Partner can send the current prompt to this provider after explicit approval; this does not enroll or execute on other users’ devices.
+- Optional SQLite task history is implemented with recording disabled by default, 30-day retention, a 100-entry cap, per-entry deletion and clear-all controls. It stores plaintext in the app-data directory; encryption and OS-backed key management are not implemented. The BYOK cloud gateway is a single-provider API integration, not a secure peer-to-peer Worker/Partner network. Authenticated enrollment, signed task envelopes, replay protection, per-task scopes and consent receipts, revocation, quotas and audit receipts remain required. Smart, Worker and Partner can send the current prompt to this provider after explicit approval; this does not enroll or execute on other users’ devices.
 - Smart mode currently executes locally when the local Ollama route is available. It does not ask a model to estimate confidence and silently escalate. A future external fallback must wait for explicit approval for the exact data/subtask.
 
 ## Corrected implementation audit (2026-11-06)
