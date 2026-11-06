@@ -100,7 +100,7 @@ The core defines a versioned receipt with exact input/output SHA-256 fields, ope
 
 The desktop layer now acquires a process-local memory admission guard before local chat, document, PDF, translation and selected-folder AI work. It permits one UJANI local AI pipeline at a time and requires at least 1 GiB available RAM at the instant of admission. The guard releases on scope exit. This is not a kernel reservation and cannot prevent other processes or another UJANI process from consuming RAM.
 
-PDF parsing runs in a separate child process. Unix builds apply CPU, virtual-address-space, open-file, file-growth and core-dump limits; Linux also applies no_new_privs. Windows builds use a Job Object with process-memory and CPU-time limits and kill-on-close. These controls constrain the parser worker but do not provide a full application sandbox, network syscall filter or complete Fortress isolation.
+PDF parsing runs in a separate child process. Unix builds apply CPU, virtual-address-space, open-file, file-growth and core-dump limits; Linux also applies no_new_privs and a seccomp filter denying socket/network syscalls. Windows builds use a Job Object with process-memory and CPU-time limits and kill-on-close. These controls constrain the parser worker but do not provide a full application sandbox, network syscall filter or complete Fortress isolation.
 
 ## Durable provenance and peer trust
 
