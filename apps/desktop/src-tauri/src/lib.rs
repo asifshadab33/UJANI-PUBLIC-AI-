@@ -225,6 +225,48 @@ async fn execute_cloud_ai_task(
  }
  result
 }
+/// Explicitly downloads a named model through the local Ollama service only.
+#[tauri::command]
+async fn pull_ollama_model(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
+    model: String,
+) -> Result<(), String> {
+    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier.".into());
+    }
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+        active.insert(task_id.clone(), token.clone());
+    }
+    emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
+    let progress_app = app.clone();
+    let progress_task = task_id.clone();
+    let download = ollama::pull_model(&model, move |message, percent| {
+        emit_task_progress(&progress_app, &progress_task, "model_downloading", &message, percent);
+    });
+    let result = tokio::select! {
+        _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
+        outcome = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), download) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err("Model download exceeded the 30-minute task limit. Check your connection and Ollama status.".into()),
+            }
+        }
+    };
+    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+    match &result {
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
+        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
+        Err(error) if error.contains("30-minute") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
+        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+    }
+    result
+}
+
 /// Checks only the local Ollama service at 127.0.0.1:11434.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
@@ -442,6 +484,7 @@ pub fn run() {
             run_local_task,
             evaluate_task_route,
             get_ollama_status,
+            pull_ollama_model,
             get_model_recommendation,
             execute_document_workflow,
             execute_local_ai_task,

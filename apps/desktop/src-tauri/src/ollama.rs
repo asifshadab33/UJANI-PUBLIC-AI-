@@ -138,6 +138,72 @@ pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
 }
 
+#[derive(Serialize)]
+struct PullModelRequest<'a> { name: &'a str, stream: bool }
+
+/// Pulls one model from the local Ollama service. Progress is parsed from its NDJSON stream.
+pub async fn pull_model<F>(model: &str, mut on_progress: F) -> Result<(), String>
+where F: FnMut(String, u8) {
+    if !valid_model(model) {
+        return Err("Invalid Ollama model name. Use a library identifier such as llama3.2 or qwen2.5:3b.".into());
+    }
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30 * 60))
+        .build()
+        .map_err(|e| format!("Could not initialise local Ollama download client: {e}"))?;
+    let response = client.post(format!("{BASE_URL}/api/pull"))
+        .json(&PullModelRequest { name: model, stream: true })
+        .send().await
+        .map_err(|e| format!("Could not start local model download: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Local Ollama returned HTTP {} while starting model download.", response.status()));
+    }
+    let mut response = response;
+    let mut pending = Vec::<u8>::new();
+    let mut received = 0usize;
+    let mut completed = false;
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Model download stream failed: {e}"))? {
+        received = received.saturating_add(chunk.len());
+        if received > 8 * 1024 * 1024 {
+            return Err("Ollama progress stream exceeded the 8 MiB safety limit.".into());
+        }
+        for byte in chunk {
+            if byte == b'\n' {
+                if pending.is_empty() { continue; }
+                let event: serde_json::Value = serde_json::from_slice(&pending)
+                    .map_err(|_| "Ollama returned an invalid model-download progress event.".to_string())?;
+                pending.clear();
+                if let Some(error) = event.get("error").and_then(|v| v.as_str()) {
+                    return Err(format!("Ollama could not download this model: {error}"));
+                }
+                let status = event.get("status").and_then(|v| v.as_str()).unwrap_or("Downloading model");
+                let total = event.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let done = event.get("completed").and_then(|v| v.as_u64()).unwrap_or(0);
+                let percent = if total > 0 { ((done as u128 * 100 / total as u128).min(99)) as u8 } else { 0 };
+                on_progress(status.to_string(), percent);
+                if status.eq_ignore_ascii_case("success") { completed = true; }
+            } else {
+                pending.push(byte);
+                if pending.len() > 16 * 1024 {
+                    return Err("Ollama progress event exceeded the 16 KiB safety limit.".into());
+                }
+            }
+        }
+    }
+    if !pending.is_empty() {
+        let event: serde_json::Value = serde_json::from_slice(&pending)
+            .map_err(|_| "Ollama returned an incomplete model-download progress event.".to_string())?;
+        if let Some(error) = event.get("error").and_then(|v| v.as_str()) {
+            return Err(format!("Ollama could not download this model: {error}"));
+        }
+        if event.get("status").and_then(|v| v.as_str()) == Some("success") { completed = true; }
+    }
+    if !completed { return Err("Ollama download ended before reporting success. Check Ollama and retry.".into()); }
+    on_progress("Model installed and ready".into(), 100);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

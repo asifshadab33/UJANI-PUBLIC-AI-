@@ -35,6 +35,13 @@ function composeConversationPrompt(messages: ChatMessage[], current: string): st
 }
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
 type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number };
+const CLOUD_PROVIDER_PRESETS = [
+  { id: "openai", label: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" },
+  { id: "openrouter", label: "OpenRouter (check for free models)", endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "" },
+  { id: "groq", label: "Groq (check current free limits)", endpoint: "https://api.groq.com/openai/v1/chat/completions", model: "" },
+  { id: "together", label: "Together AI", endpoint: "https://api.together.xyz/v1/chat/completions", model: "" },
+  { id: "custom", label: "Custom OpenAI-compatible API", endpoint: "", model: "" }
+] as const;
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export default function App() {
@@ -66,6 +73,11 @@ export default function App() {
   const [ollamaError, setOllamaError] = useState("");
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaModel, setOllamaModel] = useState("");
+  const [modelPullName, setModelPullName] = useState("llama3.2");
+  const [modelPullBusy, setModelPullBusy] = useState(false);
+  const [activeModelPullTaskId, setActiveModelPullTaskId] = useState<string | null>(null);
+  const [modelPullError, setModelPullError] = useState("");
+  const [cloudProviderPreset, setCloudProviderPreset] = useState("openai");
   const [aiBusy, setAiBusy] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgressEvent | null>(null);
@@ -233,6 +245,39 @@ export default function App() {
       setWorkflowPlan(await invoke<WorkflowPlan>("plan_task_workflow", { nodes, mode: executionMode }));
     } catch (error) { setCapabilityError(String(error)); }
     finally { setWorkflowBusy(false); }
+  }
+
+  async function pullLocalModel() {
+    if (!isTauri() || !ollamaStatus?.available || modelPullBusy) {
+      if (!ollamaStatus?.available) setModelPullError("Start Ollama before downloading a model. Downloads run only through the local Ollama service.");
+      return;
+    }
+    const model = modelPullName.trim();
+    if (!model || model.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(model) || model.includes("..")) {
+      setModelPullError("Enter a valid Ollama model name, for example llama3.2 or qwen2.5:3b.");
+      return;
+    }
+    const taskId = "model-pull-" + Date.now().toString(36);
+    setActiveModelPullTaskId(taskId);
+    setTaskProgress({ task_id: taskId, stage: "pull_starting", message: "Preparing local model download…", progress_percent: 0 });
+    setModelPullBusy(true);
+    setModelPullError("");
+    try {
+      await invoke("pull_ollama_model", { taskId, model });
+      await refreshOllamaStatus();
+      setOllamaModel(model);
+    } catch (error) {
+      setModelPullError(String(error));
+    } finally {
+      setModelPullBusy(false);
+      setActiveModelPullTaskId(null);
+    }
+  }
+
+  async function cancelModelPull() {
+    if (!activeModelPullTaskId) return;
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeModelPullTaskId }); }
+    catch (error) { setModelPullError("Could not cancel model download: " + String(error)); }
   }
 
   async function refreshOllamaStatus() {
@@ -684,6 +729,15 @@ export default function App() {
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
             </div>
+            <div className="install-guide">
+              <b>Install a local model from UJANI</b>
+              <p>Enter an Ollama library model name. UJANI sends the name to your local Ollama service at 127.0.0.1 only; the model files are downloaded by Ollama from its configured registry. Large models can take substantial time, bandwidth and disk space.</p>
+              <label className="model-select">Model name<input value={modelPullName} onChange={(event) => setModelPullName(event.target.value)} maxLength={128} placeholder="e.g. llama3.2 or qwen2.5:3b" disabled={modelPullBusy}/></label>
+              <button className="model-run" onClick={pullLocalModel} disabled={!isTauri() || !ollamaStatus?.available || modelPullBusy || !modelPullName.trim()}>{modelPullBusy ? "Downloading model…" : "Download model through Ollama"}</button>
+              {modelPullBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeModelPullTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Ollama is downloading the model…"}</p><button className="model-run" onClick={cancelModelPull}>Cancel model download</button></>}
+              {modelPullError && <p className="error" role="alert">{modelPullError}</p>}
+              <small className="muted">Only download models from sources you trust. Review each model's license, size and hardware requirements before installing.</small>
+            </div>
             <label className="model-select">Installed Ollama model
               <select value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)} disabled={!ollamaStatus?.models.length}>
                 {!ollamaStatus?.models.length && <option value="">No local models detected</option>}
@@ -761,9 +815,15 @@ export default function App() {
           </div>
           <div className="model-box" id="online-ai-workspace">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Online AI chat — no local model required</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
-            <p className="muted">This sends your prompt to an AI model hosted by your chosen provider over the internet. You do not need to install or run a local model. Add your own provider API key or use a compatible service that offers a free tier. UJANI does not provide keys, credits, or guarantee free usage. Each request requires explicit approval. Smart mode only; Fortress is local-only.</p>
-            <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => setCloudEndpoint(event.target.value)} placeholder="https://api.example.com/v1/chat/completions"/></label>
-            <label className="model-select">Model name<input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} maxLength={128} placeholder="Provider model identifier"/></label>
+            <p className="muted">This sends your prompt to an AI model hosted by your chosen provider over the internet. You do not need to install or run a local model. Choose a preset or enter your own OpenAI-compatible HTTPS endpoint, model ID and API key. Some providers may offer free tiers or promotional credits; availability, limits, billing and data retention are controlled by that provider. UJANI never supplies keys or promises free usage. Each request requires fresh approval. Smart mode only; Fortress is local-only.</p>
+            <label className="model-select">Provider preset<select value={cloudProviderPreset} onChange={(event) => {
+              const preset = CLOUD_PROVIDER_PRESETS.find((item) => item.id === event.target.value);
+              setCloudProviderPreset(event.target.value);
+              if (preset) { setCloudEndpoint(preset.endpoint); setCloudModel(preset.model); }
+              setCloudConsent(false); setCloudConsentSnapshot("");
+            }}>{CLOUD_PROVIDER_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+            <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => { setCloudEndpoint(event.target.value); setCloudProviderPreset("custom"); }} placeholder="https://api.example.com/v1/chat/completions"/></label>
+            <label className="model-select">Model name<input value={cloudModel} onChange={(event) => { setCloudModel(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }} maxLength={128} placeholder="Provider model identifier"/></label>
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation and current message to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>

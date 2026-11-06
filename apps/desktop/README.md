@@ -80,18 +80,17 @@ npm run tauri build
 
 ## Using local Ollama
 
-1. Install Ollama separately from its official distribution.
-2. Start the Ollama service on the same device.
-3. Pull a model you have enough RAM/VRAM to run (for example, `ollama pull llama3.2`).
-4. Launch UJANI Desktop and select the detected model under Local Ollama AI.
-5. Choose Fortress or Smart and run a prompt. The app sends the prompt only to `127.0.0.1:11434`; it has no cloud fallback.
+1. Install Ollama separately from its official distribution and start the service on the same device.
+2. Open UJANI's Local AI workspace, refresh Ollama status, and use **Download model through Ollama** to enter a library identifier (for example, `llama3.2` or `qwen2.5:3b`). You can also use the Ollama CLI.
+3. Review the model's size, license and hardware requirements before downloading. Downloads use your network and disk space and are performed by Ollama from its configured model registry.
+4. Select the installed model and choose Fortress or Smart. Inference is sent only to `127.0.0.1:11434`; there is no cloud fallback.
 
 Ollama must remain bound to the local loopback interface. Do not expose its API to an untrusted network. Fortress here means no cloud AI transfer through UJANI; it does not currently apply an OS-level firewall rule, and the local Ollama HTTP service is still contacted over loopback.
 
 ## Not implemented yet
 
 - GPU-use evidence: when Ollama is available, UJANI reads its local `/api/ps` runtime telemetry. It reports GPU compute as Available only when a running model has positive `size_vram`; otherwise it remains Unknown. This is not a full GPU/driver compatibility inventory. NPU remains Unknown until a supported OS/runtime API is implemented.
-- Automatic Ollama installation/model downloads and model lifecycle management.
+- UJANI now offers an explicit, cancellable Ollama model pull from the local loopback service, with bounded progress parsing and a 30-minute task limit. Ollama model removal, updates and automatic runtime installation are not included.
 - Task decomposition and model-based planning.
 - OCR for scanned PDFs and images (image-only PDFs return a clear unsupported message).
 - Visual image understanding (the current image tool reads basic metadata only).
