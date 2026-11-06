@@ -251,6 +251,7 @@ async fn execute_cloud_ai_task(
  let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
   .map_err(|e| e.to_string())?.as_millis() as u64;
  let input_digest = sha256_hex(prompt.as_bytes());
+ let receipt_model_id = model.clone();
  // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
  let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
@@ -284,7 +285,7 @@ async fn execute_cloud_ai_task(
    location: ReceiptExecutionLocation::ExternalProvider,
    adapter_id: "byok.cloud-gateway".into(),
    adapter_version: env!("CARGO_PKG_VERSION").into(),
-   model_id: Some(model.clone()),
+   model_id: Some(receipt_model_id),
    model_version: None,
    input_sha256: input_digest,
    output_sha256: sha256_hex(output.as_bytes()),
@@ -428,11 +429,15 @@ async fn execute_local_ai_task(
             schema_version: 1,
             task_id: task_id.clone(),
             operation_id: "local.ai.generate".into(),
-            location: ReceiptExecutionLocation::LocalCpu,
+            location: match ollama::accelerator_observation().await.ok() {
+                Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
+                Some(observation) if observation.running_models > 0 => ReceiptExecutionLocation::LocalCpu,
+                _ => ReceiptExecutionLocation::LocalUnverified,
+            },
             adapter_id: "ollama.local".into(),
             adapter_version: env!("CARGO_PKG_VERSION").into(),
-            model_id: None,
-            model_version: None,
+            model_id: Some(receipt_model_id),
+            model_version: Some("unknown".into()),
             input_sha256: input_digest,
             output_sha256: sha256_hex(value.output.as_bytes()),
             started_at_unix_ms,
