@@ -41,8 +41,6 @@ fn require_gateway_policy(
         data_class,
         external_transfer: true,
         user_approved_transfer: approved,
-        admin_approved_worker: false,
-        owner_opted_in: false,
         operation_registered: registered_operations().iter().any(|op| op.id == operation_id),
         policy_version: 1,
         max_runtime_seconds: runtime_seconds,
