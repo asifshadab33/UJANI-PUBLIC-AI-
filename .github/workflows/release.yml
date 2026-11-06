@@ -101,4 +101,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
+          mkdir release-assets
+          gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
+          (cd release-assets && sha256sum * > SHA256SUMS)
+          gh release upload "$TAG" release-assets/SHA256SUMS --clobber --repo "$REPOSITORY"
