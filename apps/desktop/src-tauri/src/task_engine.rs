@@ -114,7 +114,7 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
 /// Exact model-name matching prevents a stale or user-edited selection from being
 /// mistaken for a model already installed on this device.
 fn is_installed_model(model: &str, installed_names: &[&str]) -> bool {
-    installed_names.iter().any(|name| *name == model)
+    installed_names.contains(&model)
 }
 
 
@@ -576,7 +576,7 @@ mod document_pipeline_tests {
         let chunks = super::split_document_chunks(&input);
         assert!(chunks.len() > 1);
         assert!(chunks.iter().all(|chunk| chunk.len() <= MAX_DOCUMENT_CHUNK_BYTES));
-        assert_eq!(chunks.join(" ").replace("  ", " ").trim().split_whitespace().count(), input.split_whitespace().count());
+        assert_eq!(chunks.join(" ").replace("  ", " ").split_whitespace().count(), input.split_whitespace().count());
     }
 
     #[test]
