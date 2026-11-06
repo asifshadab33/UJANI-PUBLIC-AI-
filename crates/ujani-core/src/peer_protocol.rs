@@ -1,12 +1,13 @@
 //! Signed, consent-scoped Worker/Partner task envelope contract.
 //! This module defines verification primitives only; it does not enroll peers,
 //! open network listeners, or dispatch remote tasks.
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
+const SIGNING_DOMAIN: &[u8] = b"UJANI-TASK-ENVELOPE-V2\\0";
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
@@ -15,6 +16,10 @@ const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"
 pub struct TaskEnvelope {
     pub protocol_version: u16,
     pub task_id: String,
+    /// Intended receiving device identity; a signed envelope is not transferable to another worker.
+    pub audience: String,
+    /// Identifier for the enrolled signing key used to sign this envelope.
+    pub key_id: String,
     pub issued_at: u64,
     pub expires_at: u64,
     /// 16 random bytes encoded as 32 lowercase hexadecimal characters.
@@ -40,6 +45,8 @@ pub struct SignedTaskEnvelope {
 pub enum EnvelopeError {
     InvalidVersion,
     InvalidTaskId,
+    InvalidAudience,
+    InvalidKeyId,
     InvalidTimeWindow,
     Expired,
     ExcessiveLifetime,
@@ -64,10 +71,30 @@ impl ReplayGuard {
     pub fn is_empty(&self) -> bool { self.seen.is_empty() }
 }
 
+fn append_field(bytes: &mut Vec<u8>, value: &[u8]) {
+    bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(value);
+}
+
+/// Stable, domain-separated binary encoding. Do not sign serde's incidental field order.
+fn signing_bytes(envelope: &TaskEnvelope) -> Vec<u8> {
+    let mut bytes = SIGNING_DOMAIN.to_vec();
+    bytes.extend_from_slice(&envelope.protocol_version.to_be_bytes());
+    for value in [&envelope.task_id, &envelope.audience, &envelope.key_id, &envelope.nonce, &envelope.operation, &envelope.input_sha256] {
+        append_field(&mut bytes, value.as_bytes());
+    }
+    bytes.extend_from_slice(&envelope.issued_at.to_be_bytes());
+    bytes.extend_from_slice(&envelope.expires_at.to_be_bytes());
+    bytes.extend_from_slice(&(envelope.requested_scopes.len() as u32).to_be_bytes());
+    for scope in &envelope.requested_scopes { append_field(&mut bytes, scope.as_bytes()); }
+    bytes.push(u8::from(envelope.user_consent));
+    bytes
+}
+
 impl SignedTaskEnvelope {
     pub fn sign(envelope: TaskEnvelope, key: &SigningKey) -> Result<Self, EnvelopeError> {
         validate_fields(&envelope, envelope.issued_at)?;
-        let bytes = serde_json::to_vec(&envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        let bytes = signing_bytes(&envelope);
         let signature = key.sign(&bytes).to_bytes().to_vec();
         Ok(Self { envelope, signature })
     }
@@ -89,13 +116,17 @@ impl SignedTaskEnvelope {
         &self,
         trusted_key: &VerifyingKey,
         now: u64,
+        expected_audience: &str,
+        expected_key_id: &str,
         replay: &mut ReplayGuard,
         registered_operations: &HashSet<String>,
     ) -> Result<(), EnvelopeError> {
         validate_fields(&self.envelope, now)?;
-        let bytes = serde_json::to_vec(&self.envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        if self.envelope.audience != expected_audience { return Err(EnvelopeError::InvalidAudience); }
+        if self.envelope.key_id != expected_key_id { return Err(EnvelopeError::InvalidKeyId); }
+        let bytes = signing_bytes(&self.envelope);
         let signature = Signature::from_slice(&self.signature).map_err(|_| EnvelopeError::InvalidSignature)?;
-        trusted_key.verify(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
+        trusted_key.verify_strict(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
         if !registered_operations.contains(&self.envelope.operation) {
             return Err(EnvelopeError::UnknownOperation);
         }
@@ -118,6 +149,8 @@ fn validate_fields(e: &TaskEnvelope, now: u64) -> Result<(), EnvelopeError> {
         || !e.task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err(EnvelopeError::InvalidTaskId);
     }
+    if e.audience.is_empty() || e.audience.len() > 128 || !e.audience.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c)) { return Err(EnvelopeError::InvalidAudience); }
+    if e.key_id.is_empty() || e.key_id.len() > 128 || !e.key_id.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c)) { return Err(EnvelopeError::InvalidKeyId); }
     if e.issued_at > now.saturating_add(30) || e.expires_at <= e.issued_at {
         return Err(EnvelopeError::InvalidTimeWindow);
     }
@@ -151,6 +184,8 @@ mod tests {
         TaskEnvelope {
             protocol_version: PROTOCOL_VERSION,
             task_id: "task-42".into(),
+            audience: "worker-01".into(),
+            key_id: "admin-key-1".into(),
             issued_at: 1_000,
             expires_at: 1_120,
             nonce: "0123456789abcdef0123456789abcdef".into(),
@@ -167,8 +202,21 @@ mod tests {
         let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
         let operations = HashSet::from(["document.summarize".to_string()]);
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Ok(()));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Ok(()));
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::ReplayDetected));
+    }
+
+    #[test]
+    fn signature_is_bound_to_audience_and_key_id() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
+        let operations = HashSet::from(["document.summarize".to_string()]);
+        let mut guard = ReplayGuard::default();
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-02", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::InvalidAudience));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "other-key", &mut guard, &operations), Err(EnvelopeError::InvalidKeyId));
+        let mut tampered = signed.clone();
+        tampered.envelope.audience = "worker-02".into();
+        assert_eq!(tampered.verify(&key.verifying_key(), 1_001, "worker-02", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
     }
 
     #[test]
@@ -187,7 +235,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &HashSet::new()), Err(EnvelopeError::UnknownOperation));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &HashSet::new()), Err(EnvelopeError::UnknownOperation));
     }
 
     #[test]
@@ -224,7 +272,7 @@ mod tests {
         next.issued_at = 1_121;
         next.expires_at = 1_241;
         let second = SignedTaskEnvelope::sign(next, &key).unwrap();
-        assert_eq!(second.verify(&key.verifying_key(), 1_122, &mut guard, &operations), Ok(()));
+        assert_eq!(second.verify(&key.verifying_key(), 1_122, "worker-01", "admin-key-1", &mut guard, &operations), Ok(()));
         assert_eq!(guard.len(), 1);
     }
 
@@ -234,7 +282,7 @@ mod tests {
         let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
         let operations = HashSet::from(["document.summarize".to_string()]);
-        assert_eq!(signed.verify(&key.verifying_key(), 1_120, &mut guard, &operations), Err(EnvelopeError::Expired));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_120, "worker-01", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::Expired));
         let other = SigningKey::from_bytes(&[8u8; 32]);
         assert_eq!(signed.verify(&other.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
     }
