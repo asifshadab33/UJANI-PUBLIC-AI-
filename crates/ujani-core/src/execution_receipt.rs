@@ -96,7 +96,7 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
         return Err(ReceiptError::MissingModelProvenance);
     }
     if receipt.location == ExecutionLocation::ExternalProvider
-        && receipt.user_approval_id.as_deref().is_none_or(str::is_empty)
+        && receipt.user_approval_id.as_deref().map_or(true, str::is_empty)
     {
         return Err(ReceiptError::MissingExternalApproval);
     }
