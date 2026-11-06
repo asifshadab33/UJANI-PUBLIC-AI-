@@ -666,6 +666,7 @@ pub fn run() {
             history::delete_task_history,
             history::clear_task_history,
             security_store::verify_execution_receipt_ledger,
+            security_store::list_execution_receipts,
             security_store::get_cloud_budget_status,
             security_store::enroll_trusted_peer,
             security_store::revoke_trusted_peer,
