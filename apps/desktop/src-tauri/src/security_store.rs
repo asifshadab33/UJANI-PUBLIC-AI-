@@ -379,7 +379,7 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
         return Err("Peer public key must be 32 bytes encoded as 64 hexadecimal characters.".into());
     }
     let mut bytes = [0_u8; 32];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let pair = std::str::from_utf8(chunk).map_err(|_| "Invalid public key encoding.")?;
         bytes[index] = u8::from_str_radix(pair, 16).map_err(|_| "Invalid public key encoding.")?;
     }
