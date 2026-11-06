@@ -273,7 +273,7 @@ pub fn enroll_trusted_peer(
     }
     let label = label.trim().to_string();
     let approved = app.dialog()
-        .message(format!("Trust this device for UJANI peer tasks?\\n\\nDevice: {label}\\nFingerprint: {expected_id}"))
+        .message(format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}"))
         .title("Approve trusted device enrollment")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
