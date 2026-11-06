@@ -201,9 +201,7 @@ impl LocalTaskEngine {
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
         }
-        let extracted = tokio::task::spawn_blocking(move || {
-            pdf_extract::extract_text_from_mem(&data).map_err(|e| format!("PDF text extraction failed: {e}"))
-        }).await.map_err(|e| format!("PDF extraction worker failed: {e}"))??;
+        let extracted = extract_pdf_isolated(data).await?;
         if extracted.trim().is_empty() {
             return Err("No selectable text was found. This may be a scanned PDF; OCR is not yet supported.".into());
         }
@@ -245,6 +243,34 @@ impl LocalTaskEngine {
     pub fn inspect_image(file_name: &str, data: &[u8], file_size_bytes: u64) -> Result<ImageInfo, String> {
         core_inspect_image(file_name, data, file_size_bytes)
     }
+}
+
+async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
+    use std::process::Stdio;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    if data.len() > 10 * 1024 * 1024 { return Err("PDF input exceeds the 10 MiB limit.".into()); }
+    let exe = std::env::current_exe().map_err(|e| format!("Could not locate PDF worker executable: {e}"))?;
+    let mut child = tokio::process::Command::new(exe)
+        .arg("--pdf-extract-worker")
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .kill_on_drop(true).spawn()
+        .map_err(|e| format!("Could not start isolated PDF extraction worker: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("PDF worker stdin unavailable")?;
+    let mut stdout = child.stdout.take().ok_or("PDF worker stdout unavailable")?;
+    let work = async move {
+        let writer = tokio::spawn(async move { stdin.write_all(&data).await });
+        let mut output = Vec::new();
+        (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
+            .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
+        writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
+            .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
+        let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
+        if !status.success() { return Err("PDF text extraction failed or exceeded its output limit.".into()); }
+        if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
+        String::from_utf8(output).map_err(|_| "PDF worker returned invalid UTF-8.".into())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(45), work).await
+        .map_err(|_| "PDF extraction exceeded 45 seconds and was stopped.".to_string())?
 }
 
 /// Split at UTF-8 boundaries, preferring whitespace so multi-stage summarisation
