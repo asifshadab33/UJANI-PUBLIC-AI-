@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Provenance classification for where inference was performed.
 pub enum ExecutionLocation {
     LocalCpu,
     LocalGpu,
@@ -18,6 +19,7 @@ pub enum ExecutionLocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Metadata-only record of an inference operation and exact input/output digests.
 pub struct ExecutionReceipt {
     pub schema_version: u16,
     pub task_id: String,
@@ -35,6 +37,7 @@ pub struct ExecutionReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Structural validation failures for execution provenance receipts.
 pub enum ReceiptError {
     UnsupportedSchema,
     MissingIdentity,
