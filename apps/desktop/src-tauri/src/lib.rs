@@ -403,6 +403,7 @@ async fn execute_local_ai_task(
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
+    let receipt_model_id = model.clone();
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
