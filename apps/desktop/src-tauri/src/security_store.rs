@@ -259,8 +259,21 @@ pub fn enroll_trusted_peer(
     public_key_hex: String,
     label: String,
 ) -> Result<TrustedPeer, String> {
+    if label.trim().is_empty() || label.len() > 64 || label.chars().any(char::is_control) {
+        return Err("Peer label must be 1–64 printable characters.".into());
+    }
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer fingerprint.".into());
+    }
+    let public = decode_public_key(&public_key_hex)?;
+    VerifyingKey::from_bytes(&public).map_err(|_| "Peer Ed25519 public key is invalid.".to_string())?;
+    let expected_id = sha256_hex(&public);
+    if peer_id.to_ascii_lowercase() != expected_id {
+        return Err("Peer identifier does not match the supplied public key.".into());
+    }
+    let label = label.trim().to_string();
     let approved = app.dialog()
-        .message(format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {peer_id}"))
+        .message(format!("Trust this device for UJANI peer tasks?\\n\\nDevice: {label}\\nFingerprint: {expected_id}"))
         .title("Approve trusted device enrollment")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
@@ -268,24 +281,16 @@ pub fn enroll_trusted_peer(
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
-    if label.trim().is_empty() || label.len() > 64 || label.chars().any(char::is_control) {
-        return Err("Peer label must be 1–64 printable characters.".into());
-    }
-    let public = decode_public_key(&public_key_hex)?;
-    VerifyingKey::from_bytes(&public).map_err(|_| "Peer Ed25519 public key is invalid.".to_string())?;
-    let expected_id = sha256_hex(&public);
-    if peer_id != expected_id {
-        return Err("Peer identifier does not match the supplied public key.".into());
-    }
     let now = now_seconds()? as i64;
     let db = open(&app)?;
     db.execute(
         "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
          VALUES(?1,?2,?3,?4,NULL)
          ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
-        params![peer_id, public_key_hex.to_ascii_lowercase(), label.trim(), now]
+        params![expected_id, public_key_hex.to_ascii_lowercase(), label, now]
     ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
-    Ok(TrustedPeer { peer_id, public_key_hex: public_key_hex.to_ascii_lowercase(), label: label.trim().into(), enrolled_at: now, revoked_at: None })
+    Ok(TrustedPeer { peer_id: expected_id, public_key_hex: public_key_hex.to_ascii_lowercase(), label, enrolled_at: now, revoked_at: None })
+
 }
 
 #[tauri::command]
