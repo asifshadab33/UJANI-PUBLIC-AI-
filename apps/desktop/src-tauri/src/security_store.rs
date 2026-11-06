@@ -205,7 +205,6 @@ pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tok
     reserve_budget_db(&mut open(app)?, prompt_bytes, completion_tokens, now_seconds()?)
 }
 
-#[tauri::command]
 pub fn append_execution_receipt(app: AppHandle, receipt: ExecutionReceipt) -> Result<String, String> {
     append_receipt_db(&mut open(&app)?, &receipt)
 }
@@ -293,6 +292,13 @@ pub fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, Stri
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer identifier.".into());
     }
+    let approved = app.dialog()
+        .message(format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"))
+        .title("Confirm device revocation")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved { return Err("Peer revocation was cancelled.".into()); }
     let changed = open(&app)?.execute(
         "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
         params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
