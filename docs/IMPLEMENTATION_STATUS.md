@@ -112,3 +112,8 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - **Cloud budget:** BYOK requests reserve a conservative maximum of 8,192 completion tokens plus an input estimate of one token per UTF-8 byte against a 250,000-token UTC-day local budget before network send. Failed/cancelled requests are not refunded. This can over-reserve and is not a provider-side billing limit; deleting local app data can reset the local counter.
 - **GPU/NPU:** GPU use is classified only when Ollama reports positive VRAM allocation for a running model. Zero VRAM is not proof of CPU execution (integrated GPUs and incomplete telemetry exist); only positive Ollama VRAM telemetry is recorded as LocalGpu. All other placements are local_unverified. Driver compatibility, accelerator performance and NPU support remain unknown.
 - **Installer size:** a cross-platform installer-size workflow now builds Windows MSI/NSIS, macOS DMG and Linux DEB/AppImage packages and records exact bytes/MiB in GitHub Actions summaries. Exact package sizes are not yet available until that workflow completes on the current code.
+
+
+## Privacy receipt UI update
+
+The desktop UI can now verify the local receipt hash chain and display up to 10 of the latest 50 metadata-only records. The listing command refuses to return entries if full ledger verification fails. It displays adapter/model/location, timestamps, input/output SHA-256 digests and ledger record hashes; it does not expose prompts or outputs. The chain is not digitally signed or externally anchored, so it must not be described as a tamper-proof independent audit log.
