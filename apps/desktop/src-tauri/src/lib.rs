@@ -444,7 +444,6 @@ async fn execute_local_ai_task(
             operation_id: "local.ai.generate".into(),
             location: match ollama::accelerator_observation().await.ok() {
                 Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
-                Some(observation) if observation.running_models > 0 => ReceiptExecutionLocation::LocalCpu,
                 _ => ReceiptExecutionLocation::LocalUnverified,
             },
             adapter_id: "ollama.local".into(),
