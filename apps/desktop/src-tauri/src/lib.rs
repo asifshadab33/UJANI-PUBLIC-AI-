@@ -3,6 +3,7 @@ mod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
+mod security_store;
 pub mod pdf_worker;
 mod task_engine;
 
@@ -21,6 +22,8 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
+use ujani_core::{sha256_hex, ExecutionLocation, ExecutionReceipt};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 
 fn valid_command_identifier(value: &str, max_len: usize) -> bool {
@@ -239,7 +242,20 @@ async fn execute_cloud_ai_task(
   if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
   active.insert(task_id.clone(), token.clone());
  }
- emit_task_progress(&app, &task_id, "cloud_starting", "Preparing the user-approved cloud request.", 5);
+ if !external_data_approved {
+  if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+  return Err("Cloud transfer was not approved. No request was sent.".into());
+ }
+ // Reserve conservatively before sending: UTF-8 bytes / 2 plus the maximum completion budget.
+ // Failed/cancelled requests are not refunded, preventing quota bypass through repeated retries.
+ let budget = match security_store::reserve_cloud_tokens(&app, prompt.len().saturating_mul(2), 8_192) {
+  Ok(value) => value,
+  Err(error) => {
+   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+   return Err(error);
+  }
+ };
+ emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
  let result = tokio::select! {
@@ -287,6 +303,8 @@ async fn pull_ollama_model(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
+    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
+    let input_digest = sha256_hex(prompt.as_bytes());
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -375,8 +393,29 @@ async fn execute_local_ai_task(
         }
     };
     if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+    if let Ok(value) = &result {
+        let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?.as_millis() as u64;
+        let receipt = ExecutionReceipt {
+            schema_version: 1,
+            task_id: task_id.clone(),
+            operation_id: "local.ai.generate".into(),
+            location: ExecutionLocation::LocalCpu,
+            adapter_id: "ollama.local".into(),
+            adapter_version: env!("CARGO_PKG_VERSION").into(),
+            model_id: None,
+            model_version: None,
+            input_sha256: input_digest.clone(),
+            output_sha256: sha256_hex(value.output.as_bytes()),
+            started_at_unix_ms,
+            completed_at_unix_ms,
+            user_approval_id: None,
+        };
+        security_store::append_execution_receipt(app.clone(), receipt)
+            .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
+    }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed and provenance recorded.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
         Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
@@ -564,7 +603,10 @@ pub fn run() {
             history::save_task_history,
             history::list_task_history,
             history::delete_task_history,
-            history::clear_task_history
+            history::clear_task_history,
+            security_store::append_execution_receipt,
+            security_store::verify_execution_receipt_ledger,
+            security_store::get_cloud_budget_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
