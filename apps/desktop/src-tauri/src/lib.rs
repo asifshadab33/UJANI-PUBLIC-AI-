@@ -503,6 +503,17 @@ async fn process_selected_document(
     run_budgeted(&app, &control, &task_id, Duration::from_secs(600), future).await
 }
 
+
+/// Native folder processing with a shared cancellation token and 15-minute batch deadline.
+#[tauri::command]
+async fn process_selected_folder(
+    app: AppHandle, control: State<'_, TaskControlState>, task_id: String,
+    mode: String, model: String,
+) -> Result<folder_import::FolderImportResult, String> {
+    let future = folder_import::process_selected_folder(app.clone(), mode, model);
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(900), future).await
+}
+
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
 #[tauri::command]
 async fn process_selected_pdf(
@@ -658,7 +669,7 @@ pub fn run() {
             process_selected_pdf,
             translate_text_local,
             inspect_image_file,
-            folder_import::process_selected_folder,
+            process_selected_folder,
             history::get_task_history_settings,
             history::set_task_history_enabled,
             history::save_task_history,
