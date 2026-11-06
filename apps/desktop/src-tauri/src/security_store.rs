@@ -330,7 +330,7 @@ pub fn verify_and_claim_peer_envelope(
     if payload.len() > 10 * 1024 * 1024 {
         return Err("Peer payload exceeds the 10 MiB verification limit.".into());
     }
-    let db = open(&app)?;
+    let mut db = open(&app)?;
     let public_key_hex: String = db.query_row(
         "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
         params![peer_id.to_ascii_lowercase()], |row| row.get(0)
@@ -339,12 +339,15 @@ pub fn verify_and_claim_peer_envelope(
     let public = decode_public_key(&public_key_hex)?;
     let key = VerifyingKey::from_bytes(&public)
         .map_err(|_| "Stored peer public key is invalid.".to_string())?;
+    if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
+        return Err("Stored peer identity fingerprint does not match its public key.".into());
+    }
     signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
     let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
     let now = now_seconds()?;
     signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
         .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
-    claim_nonce_db(&mut open(&app)?, &signed.envelope.nonce, signed.envelope.expires_at, now)
+    claim_nonce_db(&mut db, &signed.envelope.nonce, signed.envelope.expires_at, now)
 }
 
 #[cfg(test)]
