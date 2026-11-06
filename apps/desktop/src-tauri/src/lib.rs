@@ -300,6 +300,8 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
 struct TaskControlState {
     active: Mutex<HashMap<String, CancellationToken>>,
 }
+const MAX_ACTIVE_NATIVE_TASKS: usize = 3;
+
 
 #[derive(Clone, Serialize)]
 struct TaskProgressEvent {
@@ -341,6 +343,9 @@ where F: Future<Output = Result<T, String>> {
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
         if active.contains_key(task_id) { return Err("Task identifier is already active.".into()); }
+        if active.len() >= MAX_ACTIVE_NATIVE_TASKS {
+            return Err("UJANI already has the maximum number of active native tasks. Wait for a task to finish or cancel it.".into());
+        }
         active.insert(task_id.to_string(), token.clone());
     }
     let _guard = TaskGuard { control, task_id: task_id.to_string() };
