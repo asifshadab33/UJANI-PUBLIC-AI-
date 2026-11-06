@@ -169,8 +169,8 @@ fn claim_nonce_tx(
     if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err("Peer nonce must be 32 lowercase hexadecimal characters.".into());
     }
-    if expires_at <= now || expires_at.saturating_sub(now) > MAX_NONCE_TTL_SECONDS {
-        return Err("Peer nonce expiry is invalid or exceeds the five-minute protocol limit.".into());
+    if expires_at <= now || expires_at.saturating_sub(now) > MAX_NONCE_TTL_SECONDS + 30 {
+        return Err("Peer nonce expiry is invalid or exceeds the five-minute protocol limit plus allowed 30-second clock skew.".into());
     }
     tx.execute("DELETE FROM peer_replay_nonces WHERE expires_at <= ?1", params![now as i64])
         .map_err(|e| e.to_string())?;
@@ -510,6 +510,8 @@ mod tests {
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_ok());
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_err());
         assert!(claim_nonce_db(&mut db, &peer_b, nonce, 200, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 430, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 431, 100).is_err());
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 400, 201).is_ok());
     }
 
