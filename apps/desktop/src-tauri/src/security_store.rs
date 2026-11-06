@@ -202,10 +202,6 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
     })
 }
 
-pub fn claim_peer_nonce(app: &AppHandle, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
-    claim_nonce_db(&mut open(app)?, &"0".repeat(64), nonce, expires_at, now)
-}
-
 pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetStatus, String> {
     reserve_budget_db(&mut open(app)?, prompt_bytes, completion_tokens, now_seconds()?)
 }
