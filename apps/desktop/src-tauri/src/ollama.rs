@@ -205,10 +205,14 @@ fn parse_pull_progress_line(line: &[u8]) -> Result<PullProgress, String> {
         .unwrap_or("Downloading model").to_string();
     let total = event.get("total").and_then(|value| value.as_u64()).unwrap_or(0);
     let completed = event.get("completed").and_then(|value| value.as_u64()).unwrap_or(0);
-    let percent = if total > 0 {
-        ((completed as u128 * 100 / total as u128).min(99)) as u8
-    } else { 0 };
     let success = status.eq_ignore_ascii_case("success");
+    let percent = if success {
+        100
+    } else if total > 0 {
+        ((completed as u128 * 100 / total as u128).min(99)) as u8
+    } else {
+        0
+    };
     Ok(PullProgress { status, percent, success })
 }
 
@@ -393,7 +397,7 @@ mod tests {
         assert_eq!(progress.percent, 42);
         assert!(!progress.success);
         let done = parse_pull_progress_line(br#"{"status":"success"}"#).unwrap();
-        assert_eq!(done.percent, 0);
+        assert_eq!(done.percent, 100);
         assert!(done.success);
     }
 
