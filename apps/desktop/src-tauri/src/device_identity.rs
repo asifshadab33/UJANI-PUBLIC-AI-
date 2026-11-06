@@ -80,6 +80,9 @@ pub fn sign_peer_task_envelope(
     if recipient_device_id.len() != 64 || !recipient_device_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err("Recipient must be a 64-character lowercase device fingerprint.".into());
     }
+    if !crate::security_store::is_active_trusted_peer(&app, &recipient_device_id)? {
+        return Err("Recipient is not enrolled as an active trusted peer on this device.".into());
+    }
     if !registered_operations().iter().any(|registered| registered.id == operation) {
         return Err("Peer operation is not in UJANI's registered operation catalogue.".into());
     }
