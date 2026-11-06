@@ -314,16 +314,33 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
 
     #[cfg(target_os = "linux")]
     let network_syscall_filter = {
-        // BPF program returns EPERM for socket/network syscalls and allows the
-        // remaining parser/runtime syscalls. Construct it before fork/exec.
+        // Fail closed on unknown syscall ABIs. x32 shares AUDIT_ARCH_X86_64,
+        // so its syscall-number bit must be rejected separately.
+        let expected_arch: u32 = if cfg!(target_arch = "x86_64") {
+            0xC000_003E // AUDIT_ARCH_X86_64
+        } else if cfg!(target_arch = "aarch64") {
+            0xC000_00B7 // AUDIT_ARCH_AARCH64
+        } else {
+            0
+        };
         let denied = [
             libc::SYS_socket, libc::SYS_socketpair, libc::SYS_connect, libc::SYS_bind,
             libc::SYS_listen, libc::SYS_accept, libc::SYS_accept4, libc::SYS_sendto,
             libc::SYS_recvfrom, libc::SYS_sendmsg, libc::SYS_recvmsg, libc::SYS_sendmmsg,
             libc::SYS_recvmmsg, libc::SYS_getsockopt, libc::SYS_setsockopt, libc::SYS_shutdown,
         ];
-        let mut filter = Vec::<libc::sock_filter>::with_capacity(denied.len() * 2 + 2);
+        let mut filter = Vec::<libc::sock_filter>::with_capacity(denied.len() * 2 + 7);
+        // seccomp_data.arch is at byte offset 4.
+        filter.push(libc::sock_filter { code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16, jt: 0, jf: 0, k: 4 });
+        filter.push(libc::sock_filter { code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16, jt: 1, jf: 0, k: expected_arch });
+        filter.push(libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16, jt: 0, jf: 0, k: 0x8000_0000 }); // KILL_PROCESS
+        // seccomp_data.nr is at byte offset 0.
         filter.push(libc::sock_filter { code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16, jt: 0, jf: 0, k: 0 });
+        #[cfg(target_arch = "x86_64")]
+        {
+            filter.push(libc::sock_filter { code: (libc::BPF_JMP | 0x40 | libc::BPF_K) as u16, jt: 0, jf: 1, k: 0x4000_0000 }); // reject x32 ABI
+            filter.push(libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16, jt: 0, jf: 0, k: 0x8000_0000 }); // KILL_PROCESS
+        }
         for syscall in denied {
             filter.push(libc::sock_filter { code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16, jt: 0, jf: 1, k: syscall as u32 });
             filter.push(libc::sock_filter { code: (libc::BPF_RET | libc::BPF_K) as u16, jt: 0, jf: 0, k: libc::SECCOMP_RET_ERRNO | libc::EPERM as u32 });
