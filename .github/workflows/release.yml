@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ujani-release-${{ github.ref }}
@@ -27,13 +27,18 @@ jobs:
         platform: [windows-latest, macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-      - uses: actions/setup-node@v7
+          fetch-depth: 0
+      - name: Require release commit to be reachable from main
+        run: |
+          git fetch origin main --depth=1
+          git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - name: Install Linux native build prerequisites
         if: runner.os == 'Linux'
         run: |
@@ -53,6 +58,9 @@ jobs:
   build-and-upload:
     needs: verify
     name: Build ${{ matrix.platform }} (${{ matrix.args || 'native' }})
+    environment: release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       # tauri-action merges each platform into latest.json; serialize to avoid manifest races.
@@ -69,10 +77,11 @@ jobs:
             args: "--target aarch64-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-      - uses: actions/setup-node@v7
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
@@ -91,15 +100,17 @@ jobs:
           TAG_VERSION="${RELEASE_TAG#v}"
           test "$TAG_VERSION" = "$APP_VERSION" || { echo "::error::Release tag $RELEASE_TAG does not match app version $APP_VERSION"; exit 1; }
           node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
+      - name: Refuse release build with an empty updater public key
+        run: node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if(!c.plugins.updater.pubkey) { console.error('Empty updater public key'); process.exit(1); }"
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev patchelf xdg-utils
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           targets: ${{ startsWith(matrix.args, '--target ') && contains(matrix.args, 'apple-darwin') && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: apps/desktop/src-tauri -> target
       - name: Install frontend dependencies
@@ -136,6 +147,8 @@ jobs:
     name: Publish completed multi-platform release
     needs: build-and-upload
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Generate size report and checksums before publishing
         env:
