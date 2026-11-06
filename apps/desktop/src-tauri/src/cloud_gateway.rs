@@ -53,7 +53,7 @@ fn validate_endpoint(endpoint:&str)->Result<Url,String>{
  if url.scheme()!="https"||url.host_str().is_none()||url.username()!=""||url.password().is_some()||url.query().is_some()||url.fragment().is_some(){return Err("Endpoint must use HTTPS and cannot contain credentials, query, or fragment.".into());}
  let host=url.host_str().unwrap_or_default();
  if host.eq_ignore_ascii_case("localhost")||host.ends_with(".localhost"){return Err("Localhost endpoints are not accepted.".into());}
- if let Ok(ip)=host.parse::<IpAddr>(){let bad=match ip{IpAddr::V4(v)=>v.is_private()||v.is_loopback()||v.is_link_local()||v.is_unspecified(),IpAddr::V6(v)=>v.is_loopback()||v.is_unique_local()||v.is_unicast_link_local()||v.is_unspecified()};if bad{return Err("Private, loopback, and link-local IP endpoints are not allowed.".into());}}
+ if let Ok(ip)=host.parse::<IpAddr>(){if !is_public_ip(ip){return Err("Literal IP endpoints must be globally routable public addresses; private, loopback, link-local, multicast, broadcast, and reserved ranges are blocked.".into());}}
  Ok(url)
 }
 fn validate_mode(mode:&str)->Result<(),String>{
