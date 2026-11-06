@@ -15,11 +15,14 @@ export default function UpdateNotice() {
     if (!isTauri() || isDevBuild || installing) return;
     setMessage("Checking for a signed update…");
     try {
-      const update = await check();
+      const update = await Promise.race([
+        check(),
+        new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Update check exceeded 8 seconds. You can keep using UJANI and retry later.")), 8000))
+      ]);
       setAvailable(update);
       setMessage(update ? "" : "UJANI is up to date. No signed update is currently available.");
     } catch (error) {
-      setMessage("Update check failed: " + String(error));
+      setMessage("Update check: " + String(error));
     }
   }
 
@@ -28,7 +31,10 @@ export default function UpdateNotice() {
     let active = true;
     const runInitialCheck = async () => {
       try {
-        const update = await check();
+        const update = await Promise.race([
+          check(),
+          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Automatic update check exceeded 8 seconds. The workspace remains available; retry from Updates & releases.")), 8000))
+        ]);
         if (active) {
           setAvailable(update);
           setMessage(update ? "" : "No update available. UJANI is up to date.");

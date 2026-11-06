@@ -114,16 +114,22 @@ export default function App() {
       setModels([{ id: "ujani.mock.echo.v1", name: "UJANI Mock Echo (test adapter)", provider: "Built-in deterministic mock", available: true, is_mock: true, required_capabilities: ["cpu"], status: "Browser preview only — mock" }]);
       return;
     }
+    // Keep startup independent: one slow native service must never block the workspace.
     invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
-    invoke<CapabilitySnapshot>("get_capability_snapshot").then(setCapabilitySnapshot).catch((error) => setCapabilityError(String(error)));
+    invoke<CapabilitySnapshot>("get_capability_snapshot").then(setCapabilitySnapshot).catch((error) => setCapabilityError("Device capability check timed out or failed: " + String(error)));
     invoke<ModelInfo[]>("list_local_models").then(setModels).catch((error) => setModelError(String(error)));
     invoke<OllamaStatus>("get_ollama_status").then((status) => {
       setOllamaStatus(status);
       if (status.models.length) setOllamaModel(status.models[0].name);
-    }).catch((error) => setOllamaError(String(error)));
-    invoke<ModelRecommendation>("get_model_recommendation").then(setModelRecommendation).catch((error) => setRecommendationError(String(error)));
-    invoke<HistorySettings>("get_task_history_settings").then(setHistorySettings).catch((error) => setHistoryError(String(error)));
-    invoke<HistoryEntry[]>("list_task_history").then(setPersistentHistory).catch((error) => setHistoryError(String(error)));
+      else setOllamaError(status.available ? "Ollama is running, but no model is installed yet. Install a model in the Local AI setup section." : "Ollama is not running. You can still use online AI or file tools.");
+    }).catch((error) => setOllamaError("Local model check failed: " + String(error)));
+    // Model recommendations are loaded on demand; they are not required to open the app.
+    invoke<HistorySettings>("get_task_history_settings").then(async (settings) => {
+      setHistorySettings(settings);
+      if (!settings.enabled) { setPersistentHistory([]); return; }
+      try { setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history")); }
+      catch (error) { setHistoryError("Encrypted history could not be opened: " + String(error)); }
+    }).catch((error) => setHistoryError("History settings unavailable: " + String(error)));
   }, []);
 
   useEffect(() => {

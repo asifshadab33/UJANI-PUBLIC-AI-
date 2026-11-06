@@ -92,8 +92,9 @@ pub async fn is_available() -> bool {
     }
 }
 pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
-    let response = client()?.get(format!("{BASE_URL}/api/tags")).send().await
-        .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434: {e}"))?;
+    // Model discovery is a startup-adjacent health operation; cap it separately from inference.
+    let response = client()?.get(format!("{BASE_URL}/api/tags")).timeout(Duration::from_secs(6)).send().await
+        .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
     let list: ModelList = parse_limited(response).await?;
     Ok(list.models)
 }

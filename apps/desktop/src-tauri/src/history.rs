@@ -176,10 +176,17 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
  settings(&db)
 }
 #[tauri::command] pub fn save_task_history(app:AppHandle,prompt:String,output:String,mode:String,model:String,kind:String)->Result<i64,String>{
- let mut db=open(&app)?; let key=history_key()?; migrate_plaintext_rows(&db,&key)?; save_secure(&mut db,&key,&prompt,&output,&mode,&model,&kind,now()?)
+ let mut db=open(&app)?;
+ if !is_enabled(&db)? { return Err("Task history is disabled.".into()); }
+ let key=history_key()?; migrate_plaintext_rows(&db,&key)?; save_secure(&mut db,&key,&prompt,&output,&mode,&model,&kind,now()?)
 }
 #[tauri::command] pub fn list_task_history(app:AppHandle)->Result<Vec<HistoryEntry>,String>{
- let db=open(&app)?; let key=history_key()?; migrate_plaintext_rows(&db,&key)?; db.execute("DELETE FROM task_history WHERE created_at < ?1",params![now()?.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?; list_secure(&db,&key)
+ let db=open(&app)?;
+ // Fresh installs must not prompt for or initialize an OS keyring when history is off.
+ if !is_enabled(&db)? { return Ok(Vec::new()); }
+ let key=history_key()?; migrate_plaintext_rows(&db,&key)?;
+ db.execute("DELETE FROM task_history WHERE created_at < ?1",params![now()?.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?;
+ list_secure(&db,&key)
 }
 #[tauri::command] pub fn delete_task_history(app:AppHandle,entry_id:i64)->Result<(),String>{
  if entry_id<=0{return Err("Invalid history entry identifier.".into());} open(&app)?.execute("DELETE FROM task_history WHERE id=?1",params![entry_id]).map_err(|e|e.to_string())?; Ok(())
@@ -208,6 +215,7 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   assert_eq!(decrypt_text(&[7u8;32],&p).unwrap(),"old prompt");
  }
  #[test] fn disabled_by_default(){let mut c=db();assert!(!is_enabled(&c).unwrap());assert!(save(&mut c,"p","o","smart","m","chat",1).is_err());}
+ #[test] fn disabled_history_does_not_require_a_credential_key(){let c=db();assert!(!is_enabled(&c).unwrap());assert!(list(&c).unwrap().is_empty());}
  #[test] fn saves_lists_and_deletes(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let id=save(&mut c,"p","o","smart","m","chat",100).unwrap();assert_eq!(list(&c).unwrap().len(),1);c.execute("DELETE FROM task_history WHERE id=?1",params![id]).unwrap();assert!(list(&c).unwrap().is_empty());}
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
  #[test] fn stored_results_are_bounded(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let large="x".repeat(MAX_STORED_OUTPUT+100);save(&mut c,"p",&large,"smart","m","chat",1).unwrap();let row=list(&c).unwrap().remove(0);assert!(row.output.len()<=MAX_STORED_OUTPUT+64);assert!(row.output.contains("truncated to 64 KiB"));}
