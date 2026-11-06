@@ -189,6 +189,11 @@ impl LocalTaskEngine {
 
     /// One-step pipeline: analyse user-selected text, then summarise it with local Ollama.
     /// No filesystem paths or remote endpoints are accepted.
+    /// Verify the local model once before a batch of selected files is processed.
+    pub async fn prepare_local_model(operation_id: &str, model: &str) -> Result<(), String> {
+        ensure_local_model_ready(operation_id, model).await
+    }
+
     pub async fn process_document(
         file_name: String,
         content: String,
@@ -198,9 +203,18 @@ impl LocalTaskEngine {
     ) -> Result<DocumentPipelineResult, String> {
         validate_document_request(&file_name, &content, &mode)?;
         ensure_local_model_ready("document.summarize", &model).await?;
-        if translation_language.is_some() {
-            ensure_local_model_ready("translate.text", &model).await?;
-        }
+        Self::process_document_preflighted(file_name, content, mode, model, translation_language).await
+    }
+
+    /// Internal batch path: caller must have completed prepare_local_model first.
+    pub async fn process_document_preflighted(
+        file_name: String,
+        content: String,
+        mode: String,
+        model: String,
+        translation_language: Option<String>,
+    ) -> Result<DocumentPipelineResult, String> {
+        validate_document_request(&file_name, &content, &mode)?;
         let analysis = core_analyze_text(&file_name, &content)?;
         let (summary, chunks_processed, total_chunks) =
             summarise_document_content(&file_name, &content, &model).await?;
