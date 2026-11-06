@@ -27,13 +27,6 @@ type ImageInfo = { file_name: string; format: string; size_bytes: number; dimens
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
 type ChatMessage = { role: "user" | "assistant"; content: string };
-function composeLocalConversationPrompt(messages: ChatMessage[], current: string): string {
-  const currentText = current.trim();
-  const context = messages.slice(-8).map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content.slice(0, 2400)}`).join("\n\n");
-  const contextBudget = Math.max(0, 14000 - currentText.length - 40);
-  const clippedContext = contextBudget > 0 ? context.slice(-contextBudget) : "";
-  return clippedContext ? `Conversation context (recent messages):\n${clippedContext}\n\nUser: ${currentText}\nAssistant:` : currentText;
-}
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
 type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number };
 const CLOUD_PROVIDER_PRESETS = [
@@ -383,14 +376,20 @@ export default function App() {
       return;
     }
     if (!ollamaModel) { setOllamaError("Install and start Ollama, then pull a model before running local AI."); return; }
-    const chatPrompt = composeLocalConversationPrompt(localChatMessages, request);
     const userMessage = request.trim();
+    const turns = [
+      ...localChatMessages.slice(-8).map((message) => ({
+        role: message.role,
+        content: message.content.slice(0, 2400)
+      })),
+      { role: "user" as const, content: userMessage.slice(0, 8000) }
+    ];
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null);
     try {
-      const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: chatPrompt, mode: executionMode, model: ollamaModel });
+      const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, turns, mode: executionMode, model: ollamaModel });
       setAiResult(result);
       setLocalChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: result.output }]);
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
