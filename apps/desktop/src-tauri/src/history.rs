@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager}; 
 use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use rand::{rngs::OsRng, RngCore};
+use rand::rngs::OsRng;
 
 const KEYRING_SERVICE: &str = "org.ujani.publicai";
 const KEYRING_USER: &str = "local-history-v1";
@@ -34,8 +34,7 @@ fn history_key() -> Result<[u8; 32], String> {
    decoded.try_into().map_err(|_| "Stored history key has an invalid length.".to_string())
   }
   Err(keyring::Error::NoEntry) => {
-   let mut key = [0u8; 32];
-   OsRng.fill_bytes(&mut key);
+   let key: [u8; 32] = Aes256Gcm::generate_key(&mut OsRng).into();
    entry.set_password(&B64.encode(key)).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
    Ok(key)
   }
@@ -208,7 +207,7 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
 #[cfg(test)] mod tests{
  use super::*;
  fn db()->Connection{let c=Connection::open_in_memory().unwrap();initialize(&c).unwrap();c}
- fn test_key()->[u8;32]{let mut key=[0u8;32];OsRng.fill_bytes(&mut key);key}
+ fn test_key()->[u8;32]{Aes256Gcm::generate_key(&mut OsRng).into()}
  #[test] fn encrypted_history_round_trips_and_detects_tampering() {
   let key=test_key();
   let encrypted=encrypt_text(&key,"private prompt",1,"prompt").unwrap();
