@@ -72,7 +72,7 @@ pub async fn accelerator_observation() -> Result<AcceleratorObservation, String>
         .timeout(Duration::from_secs(3)).send().await
         .map_err(|e| format!("Could not inspect local Ollama runtime: {e}"))?;
     let list: RunningModels = parse_limited(response).await?;
-    let gpu_vram_allocated_bytes = list.models.iter().map(|model| model.size_vram).sum();
+    let gpu_vram_allocated_bytes = list.models.iter().fold(0_u64, |total, model| total.saturating_add(model.size_vram));
     let running_models = list.models.len();
     let evidence = if gpu_vram_allocated_bytes > 0 {
         format!("Ollama reports {gpu_vram_allocated_bytes} bytes of model VRAM allocation across {running_models} running model(s)")
@@ -167,8 +167,8 @@ mod tests {
     #[test]
     fn accelerator_observation_requires_positive_runtime_vram_evidence() {
         let gpu = RunningModels { models: vec![RunningModel { size_vram: 1024 }] };
-        assert_eq!(gpu.models.iter().map(|m| m.size_vram).sum::<u64>(), 1024);
+        assert_eq!(gpu.models.iter().fold(0_u64, |total, m| total.saturating_add(m.size_vram)), 1024);
         let cpu = RunningModels { models: vec![RunningModel { size_vram: 0 }] };
-        assert_eq!(cpu.models.iter().map(|m| m.size_vram).sum::<u64>(), 0);
+        assert_eq!(cpu.models.iter().fold(0_u64, |total, m| total.saturating_add(m.size_vram)), 0);
     }
 }
