@@ -201,3 +201,8 @@ pub mod placement;
 pub use placement::{plan_energy_aware_placement, DevicePowerState, PlacementDecision, PlacementInput, WorkerCandidate, WorkerEstimate};
 pub mod safety_policy;
 pub use safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadIntent};
+
+pub mod policy_gate;
+pub use policy_gate::{evaluate_execution, DataClass, ExecutionRequest, ExecutionTarget, GateDecision, GateResult};
+pub mod energy_telemetry;
+pub use energy_telemetry::{aggregate_observations, validate_observation, DashboardTotals, EnergyObservation, MeasurementKind, ObservationError};
