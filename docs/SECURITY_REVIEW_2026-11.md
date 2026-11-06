@@ -10,7 +10,7 @@ It is not a penetration-test report or a production-security certification.
 - Added length and character validation for task-route identifiers and capability lists, workflow node/dependency identifiers and cancellation task IDs.
 - Local history encryption key bytes, the decoded key buffer and the encoded key string are now held in zeroizing wrappers. This reduces residual key material in application memory; it cannot guarantee removal of compiler/runtime copies or OS credential-vault copies.
 - Added optional cargo-fuzz targets for the image-header inspector and PDF parser. They are harnesses only; no fuzz campaign is claimed as completed.
-- Added a cloud request compatibility selector: known GPT-5/o1/o3/o4 model prefixes on the exact `api.openai.com` host use `max_completion_tokens`; other OpenAI-compatible endpoints use `max_tokens`. Providers can change behaviour, so this heuristic needs integration tests against real provider contracts.
+- Added a cloud request compatibility selector: automatic mode uses `max_completion_tokens` and a larger 8,192-token budget for recognised GPT-5/o1/o3/o4 model prefixes on any configured HTTPS endpoint; standard model families retain `max_tokens` and a 2,048-token budget. A user-visible explicit override supports custom provider/Azure deployment aliases. The selected field is included in the per-task approval snapshot. Provider support still varies, so live integration tests are required.
 
 ## Tauri IPC review
 
@@ -28,8 +28,23 @@ The Tauri v2 capability file still includes `core:default`, `updater:default` an
 - Persistent peer replay protection, peer key enrollment and authenticated transport.
 - A real distributed scheduler, durable execution receipts, and atomic cross-process resource reservations.
 - A completed fuzz campaign, third-party penetration test, SBOM review and signed reproducible-build process.
-- Cross-provider live tests for cloud token parameter compatibility and granular consent UX review.
+- Cross-provider live tests for cloud token parameter compatibility, Azure/custom deployment aliases, billing/usage reporting and granular consent UX review.
 
 ## Release posture
 
 Fortress currently means that UJANI blocks its own external/cloud routes at the application policy boundary. It must not be marketed as OS-enforced isolation until a supported sandbox adapter is installed, verified at runtime, and tested against escape and network-egress cases.
+
+
+## Cloud provider token parameter follow-up
+
+The native gateway accepts only three preference values: `auto`, `max_tokens` and
+`max_completion_tokens`. Automatic selection is based on a recognised model
+family prefix rather than the provider hostname, so compatible reasoning-model
+aliases on Azure or other custom endpoints are not forced onto the standard
+field. The UI exposes the explicit override for deployment aliases that do not
+include a recognisable model family. Unknown preference values fail closed.
+Recognised reasoning families receive an 8,192-token budget; standard models
+receive 2,048 tokens. These are application request limits, not guarantees of
+provider output length or support. The preference is bound to the exact
+per-request consent snapshot. Integration tests against real provider contracts
+remain a release gate.
