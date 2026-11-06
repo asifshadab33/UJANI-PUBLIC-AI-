@@ -36,8 +36,11 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Verification and reproducible benchmark harness.
 
 ## Phase 3 — optional external assistance
-- [ ] Per-subtask cloud assistance interface.
-- [ ] Data minimisation and explicit approval policies.
+- [x] User-configured OpenAI-compatible cloud gateway with per-task approval.
+- [x] Native Fortress-mode rejection for cloud requests (application-level policy only).
+- [x] Signed Worker/Partner task-envelope primitives with Ed25519 identity signatures, expiry, consent, allow-listed scopes, payload digest binding and in-memory replay checks (protocol foundation only).
+- [ ] Authenticated peer enrollment, trusted-key lifecycle, encrypted peer transport, actual worker dispatch/execution and durable audit receipts.
+- [ ] Per-subtask data minimisation and explicit approval receipts.
 - [ ] Local-only mode tested with network disabled.
 - [ ] Clear provenance for local, remote and deterministic-tool work.
 
