@@ -343,7 +343,7 @@ async fn pull_ollama_model(
     }
     let (approval_tx, approval_rx) = tokio::sync::oneshot::channel();
     app.dialog()
-        .message(format!("Download {model} from the internet via the local Ollama service?\\n\\nOllama will contact its model registry."))
+        .message(format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry."))
         .title("Approve model download")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
@@ -628,7 +628,7 @@ mod ipc_input_tests {
         assert!(valid_command_identifier("task-01", 96));
         assert!(!valid_command_identifier("", 96));
         assert!(!valid_command_identifier("../task", 96));
-        assert!(!valid_command_identifier("task\\nadmin", 96));
+        assert!(!valid_command_identifier("task\nadmin", 96));
         assert!(!valid_command_identifier(&"x".repeat(97), 96));
     }
 }
