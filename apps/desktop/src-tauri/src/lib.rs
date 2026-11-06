@@ -134,7 +134,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         CapabilityRecord {
             id: "pdf.worker.resource_limits".into(), category: "security".into(),
             state: CapabilityState::Available, source: "OS process limits (Unix rlimits / Windows Job Object)".into(),
-            detail: "The untrusted PDF parser child is capped at 768 MiB memory, 45 seconds CPU, 16 file descriptors and no file growth; Linux also enables no_new_privs. This is worker hardening, not a complete application sandbox.".into(),
+            detail: "Unix: 768 MiB address-space, 45-second CPU, 16-file-descriptor, zero file-growth and zero core-dump limits; Linux also enables no_new_privs. Windows: 768 MiB process-memory and 45-second CPU Job Object limits with kill-on-close. This is worker hardening, not a complete application sandbox.".into(),
         },
         CapabilityRecord {
             id: "fortress.os_isolation".into(), category: "security".into(),
