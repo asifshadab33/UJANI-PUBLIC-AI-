@@ -406,8 +406,12 @@ mod tests {
     #[test]
     fn receipt_ledger_refuses_to_prune_chain_history() {
         let mut db = db();
-        db.execute("INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES('old','{}',?1,?2)", params![GENESIS_HASH, "0".repeat(64)]).unwrap();
-        db.execute("UPDATE execution_receipts SET id=?1", params![MAX_RECEIPTS]).unwrap();
+        for index in 0..MAX_RECEIPTS {
+            db.execute(
+                "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,'{}',?2,?3)",
+                params![format!("old-{index}"), GENESIS_HASH, "0".repeat(64)]
+            ).unwrap();
+        }
         assert!(append_receipt_db(&mut db, &receipt("task-new")).is_err());
         assert_eq!(db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get::<_, i64>(0)).unwrap(), MAX_RECEIPTS);
     }
