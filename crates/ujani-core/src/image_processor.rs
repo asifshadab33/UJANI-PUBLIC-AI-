@@ -19,7 +19,7 @@ pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> 
     let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let (format, dimensions) = match ext.as_str() {
         "png" => {
-            if data.len() < 24 || &data[..8] != b"\x89PNG\r\n\x1a\n" { return Err("Invalid PNG header.".into()); }
+            if data.len() < 24 || &data[..8] != b"\x89PNG\r\n\x1a\n" || &data[12..16] != b"IHDR" { return Err("Invalid PNG header or missing IHDR chunk.".into()); }
             let w = u32::from_be_bytes(data[16..20].try_into().map_err(|_| "Invalid PNG width.")?);
             let h = u32::from_be_bytes(data[20..24].try_into().map_err(|_| "Invalid PNG height.")?);
             if w == 0 || h == 0 { return Err("Invalid PNG dimensions.".into()); }
@@ -41,7 +41,9 @@ pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> 
             ("WebP", None)
         }
         "bmp" => {
-            if data.len() < 26 || &data[..2] != b"BM" { return Err("Invalid BMP header.".into()); }
+            if data.len() < 54 || &data[..2] != b"BM" { return Err("Invalid BMP header.".into()); }
+            let dib_header_size = u32::from_le_bytes(data[14..18].try_into().map_err(|_| "Invalid BMP DIB header size.")?);
+            if dib_header_size < 40 { return Err("Unsupported BMP DIB header; only 40-byte or larger Windows DIB headers are accepted.".into()); }
             let w = i32::from_le_bytes(data[18..22].try_into().map_err(|_| "Invalid BMP width.")?).unsigned_abs();
             let h = i32::from_le_bytes(data[22..26].try_into().map_err(|_| "Invalid BMP height.")?).unsigned_abs();
             if w == 0 || h == 0 { return Err("Invalid BMP dimensions.".into()); }
@@ -107,8 +109,9 @@ mod additional_format_tests {
         let webp = inspect_image("picture.webp", b"RIFF\x04\x00\x00\x00WEBP", 12).unwrap();
         assert_eq!(webp.format, "WebP");
 
-        let mut bmp = vec![0_u8; 26];
+        let mut bmp = vec![0_u8; 54];
         bmp[..2].copy_from_slice(b"BM");
+        bmp[14..18].copy_from_slice(&40_u32.to_le_bytes());
         bmp[18..22].copy_from_slice(&32_i32.to_le_bytes());
         bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
         let bmp_info = inspect_image("bitmap.bmp", &bmp, 26).unwrap();
@@ -116,6 +119,21 @@ mod additional_format_tests {
     }
 
     #[test]
+    fn rejects_png_without_ihdr_and_legacy_os2_bmp_header() {
+        let mut png = b"\\x89PNG\\r\\n\\x1a\\n".to_vec();
+        png.extend_from_slice(&[0, 0, 0, 13, b'B', b'A', b'D', b'!']);
+        png.extend_from_slice(&1_u32.to_be_bytes());
+        png.extend_from_slice(&1_u32.to_be_bytes());
+        assert!(inspect_image("bad.png", &png, png.len() as u64).is_err());
+
+        let mut bmp = vec![0_u8; 54];
+        bmp[..2].copy_from_slice(b"BM");
+        bmp[14..18].copy_from_slice(&12_u32.to_le_bytes());
+        bmp[18..22].copy_from_slice(&32_i32.to_le_bytes());
+        bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
+        assert!(inspect_image("legacy-os2.bmp", &bmp, bmp.len() as u64).is_err());
+    }
+
     fn rejects_extension_and_header_mismatch_for_other_formats() {
         assert!(inspect_image("photo.jpg", b"GIF89a\x01\x00\x01\x00", 10).is_err());
         assert!(inspect_image("picture.webp", b"RIFF\x00\x00\x00\x00NOPE", 12).is_err());
