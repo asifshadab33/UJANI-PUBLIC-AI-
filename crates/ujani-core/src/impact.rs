@@ -25,7 +25,7 @@ pub struct EnergyAccountingInput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnergyImpactEstimate {
-    pub estimated_datacenter_energy_avoided_wh: u64,
+    pub central_baseline_energy_wh: u64,
     pub estimated_distributed_system_energy_wh: u64,
     /// Positive means the distributed scenario used less energy; negative
     /// means it used more. This is deliberately not clamped to zero.
@@ -61,7 +61,7 @@ pub fn compare_energy_scenarios(
         - i128::from(distributed_total);
 
     Ok(EnergyImpactEstimate {
-        estimated_datacenter_energy_avoided_wh: input.central_datacenter_total_wh,
+        central_baseline_energy_wh: input.central_datacenter_total_wh,
         estimated_distributed_system_energy_wh: distributed_total,
         estimated_net_energy_savings_wh: net_savings,
         distributed_scenario_is_lower_energy: net_savings > 0,
