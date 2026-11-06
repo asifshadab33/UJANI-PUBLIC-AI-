@@ -5,6 +5,8 @@ use std::{sync::OnceLock, time::Duration};
 const BASE_URL: &str = "http://127.0.0.1:11434";
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_PULL_STREAM_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PULL_DURATION: Duration = Duration::from_secs(30 * 60);
 const MAX_ATTEMPTS: u8 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,17 +232,34 @@ where F: FnMut(String, u8) {
         return Err(format!("Local Ollama returned HTTP {} while starting model download.", response.status()));
     }
     let mut response = response;
+    if response.content_length().is_some_and(|length| length > MAX_PULL_STREAM_BYTES as u64) {
+        return Err("Ollama model-download progress stream exceeds the 8 MiB limit.".into());
+    }
+    let deadline = tokio::time::Instant::now() + MAX_PULL_DURATION;
+    let mut stream_bytes = 0usize;
     let mut pending = Vec::<u8>::new();
     let mut last_percent: i32 = -1;
     let mut last_status = String::new();
     let mut completed = false;
     loop {
-        let chunk = match tokio::time::timeout(Duration::from_secs(120), response.chunk()).await {
-            Err(_) => return Err("Model download stalled for 2 minutes. Check your connection and retry.".into()),
-            Ok(Err(e)) => return Err(format!("Model download stream failed: {e}")),
-            Ok(Ok(None)) => break,
-            Ok(Ok(Some(chunk))) => chunk,
+        let chunk = tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err("Model download exceeded the 30-minute time budget.".into());
+            }
+            outcome = tokio::time::timeout(Duration::from_secs(120), response.chunk()) => {
+                match outcome {
+                    Err(_) => return Err("Model download stalled for 2 minutes. Check your connection and retry.".into()),
+                    Ok(Err(e)) => return Err(format!("Model download stream failed: {e}")),
+                    Ok(Ok(None)) => break,
+                    Ok(Ok(Some(chunk))) => chunk,
+                }
+            }
         };
+        stream_bytes = stream_bytes.checked_add(chunk.len())
+            .ok_or_else(|| "Model download progress byte count overflow.".to_string())?;
+        if stream_bytes > MAX_PULL_STREAM_BYTES {
+            return Err("Ollama model-download progress stream exceeds the 8 MiB limit.".into());
+        }
         for byte in chunk {
             if byte == b'\n' {
                 if pending.is_empty() { continue; }
