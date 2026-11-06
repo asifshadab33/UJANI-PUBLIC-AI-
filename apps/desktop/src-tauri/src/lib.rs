@@ -390,12 +390,12 @@ async fn execute_local_ai_task(
     app: AppHandle,
     control: State<'_, TaskControlState>,
     task_id: String,
-    prompt: String,
+    turns: Vec<task_engine::ChatTurn>,
     mode: String,
     model: String,
 ) -> Result<task_engine::AiTaskResult, String> {
     emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
-    let execution = LocalTaskEngine::execute(prompt, mode, model);
+    let execution = LocalTaskEngine::execute_chat(turns, mode, model);
     run_budgeted(&app, &control, &task_id, Duration::from_secs(140), execution).await
 }
 
