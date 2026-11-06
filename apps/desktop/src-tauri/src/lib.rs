@@ -297,7 +297,7 @@ async fn execute_cloud_ai_task(
    adapter_id: "byok.cloud-gateway".into(),
    adapter_version: env!("CARGO_PKG_VERSION").into(),
    model_id: Some(receipt_model_id),
-   model_version: None,
+    model_version: Some("provider-reported-unverified".into()),
    input_sha256: input_digest,
    output_sha256: sha256_hex(output.as_bytes()),
    started_at_unix_ms,
