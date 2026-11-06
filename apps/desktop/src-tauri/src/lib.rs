@@ -21,6 +21,42 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
+use ujani_core::policy_gate::{evaluate_execution, DataClass, ExecutionRequest, ExecutionTarget, GateDecision};
+use ujani_core::safety_policy::WorkloadIntent;
+
+
+/// Enforce the shared safety gate at the native boundary before any approved
+/// network operation. The gate is policy logic, not an OS firewall.
+fn require_gateway_policy(
+    task_id: &str,
+    operation_id: &str,
+    approved: bool,
+    data_class: DataClass,
+    runtime_seconds: u32,
+) -> Result<(), String> {
+    let decision = evaluate_execution(&ExecutionRequest {
+        task_id: task_id.to_string(),
+        operation_id: operation_id.to_string(),
+        target: ExecutionTarget::CloudProvider,
+        intent: WorkloadIntent::OrdinaryProductivity,
+        authorization_verified: false,
+        data_class,
+        external_transfer: true,
+        user_approved_transfer: approved,
+        admin_approved_worker: false,
+        owner_opted_in: false,
+        operation_registered: registered_operations().iter().any(|op| op.id == operation_id),
+        policy_version: 1,
+        max_runtime_seconds: runtime_seconds,
+        requested_runtime_seconds: runtime_seconds,
+        max_memory_mb: 512,
+        requested_memory_mb: 128,
+    });
+    if decision.decision != GateDecision::Allow {
+        return Err(format!("Native safety policy blocked the network operation: {}", decision.reason));
+    }
+    Ok(())
+}
 
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
@@ -207,6 +243,7 @@ async fn execute_cloud_ai_task(
  if mode != "smart" {
   return Err("The BYOK cloud gateway is available in Smart mode only. Worker/Partner peer execution is not implemented; Fortress is local-only.".into());
  }
+ require_gateway_policy(&task_id, "cloud.ai.generate", external_data_approved, DataClass::Internal, 95)?;
  let token = CancellationToken::new();
  {
   let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -258,6 +295,7 @@ async fn pull_ollama_model(
     if !approved {
         return Err("Model download was not approved. No download was started.".into());
     }
+    require_gateway_policy(&task_id, "model.download", true, DataClass::Public, 600)?;
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
