@@ -94,3 +94,18 @@ The Rust core exposes a deterministic scheduler contract. A caller supplies a ti
 ## Execution provenance receipt contract
 
 The core defines a versioned receipt with exact input/output SHA-256 fields, operation, adapter/model identity, execution location, timestamps and an external-approval reference. Structural validation and hashing are implemented and tested. The receipt does not prove model correctness or execution by itself; native adapters must hash the exact bytes, bind approval evidence, persist receipts durably and sign them where remote verification is required.
+
+
+## Native resource admission and PDF worker limits
+
+The desktop layer now acquires a process-local memory admission guard before local chat, document, PDF, translation and selected-folder AI work. It permits one UJANI local AI pipeline at a time and requires at least 1 GiB available RAM at the instant of admission. The guard releases on scope exit. This is not a kernel reservation and cannot prevent other processes or another UJANI process from consuming RAM.
+
+PDF parsing runs in a separate child process. Unix builds apply CPU, virtual-address-space, open-file, file-growth and core-dump limits; Linux also applies no_new_privs. Windows builds use a Job Object with process-memory and CPU-time limits and kill-on-close. These controls constrain the parser worker but do not provide a full application sandbox, network syscall filter or complete Fortress isolation.
+
+## Durable provenance and peer trust
+
+Successful local chat and approved BYOK chat requests append metadata-only execution receipts with exact input/output SHA-256 hashes to a SQLite hash chain. The chain has a 10,000-entry hard limit and a local verification command; it is not signed or externally anchored. The current adapter may record model version as unknown. The renderer cannot append arbitrary receipts; only native execution paths can.
+
+An Ed25519 device key is stored in the OS credential vault. Peer enrollment and revocation require native confirmation; signed task envelopes bind the task, registered operation, payload digest, short expiry, consent and allowed data scopes. The receiving side checks an enrolled non-revoked public key and persists the nonce before accepting an envelope. No encrypted transport or remote execution is implemented.
+
+BYOK requests reserve a conservative per-installation 250,000-token UTC-day allowance before sending. Reservations are atomic in SQLite and are not refunded after failures or cancellations. This is not a provider billing limit and can be reset by deleting local application data.
