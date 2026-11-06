@@ -42,6 +42,13 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Clear provenance for local, remote and deterministic-tool work.
 
 ## Phase 4 — hardening and community
+- [x] Configure signed Tauri updater artifacts and a GitHub Releases update endpoint (requires owner-generated signing keys in GitHub Actions secrets before a signed release can be built).
+- [x] Add tagged-release installer pipeline for Windows, macOS and Linux, including signed update manifest generation.
+- [ ] Generate and pin the production updater key pair; publish the first signed release and verify update/install/rollback behavior on clean machines.
+- [ ] Verified GPU/NPU detection and model-runtime compatibility across Windows, macOS and Linux; report driver/runtime versions and confidence, never infer compatibility from device presence alone.
+- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token + firewall policy; macOS sandbox profile/entitlements; Linux namespaces/seccomp/landlock as supported. Deny-by-default, test escape boundaries and fail closed when enforcement is unavailable.
+- [ ] Secure Worker/Partner peer gateway: authenticated device enrollment, mutual TLS or signed identities, short-lived signed task envelopes, explicit per-task data scopes and consent, replay protection, encrypted transport, resource quotas, audit receipts, revocation and abuse controls.
+- [ ] Threat-model review and platform-specific security testing for each of the three capabilities before claiming production support.
 - [ ] Threat model and independent security review.
 - [ ] Signed releases and software bill of materials.
 - [ ] Accessibility, internationalisation and installer testing.
