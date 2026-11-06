@@ -76,13 +76,15 @@ pub async fn process_selected_folder(
     };
 
     let total_bytes = files.iter().map(|file| file.size_bytes).sum();
-    let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
+    let ollama_ready = if !model.trim().is_empty() && crate::ollama::is_available().await {
+        crate::task_engine::LocalTaskEngine::prepare_local_model("document.summarize", &model).await.is_ok()
+    } else { false };
     let mut results = Vec::with_capacity(files.len());
 
     for file in files {
         let analysis = crate::task_engine::LocalTaskEngine::analyze_text(&file.name, &file.content)?;
-        let (summary, note) = if ollama_available {
-            match crate::task_engine::LocalTaskEngine::process_document(
+        let (summary, note) = if ollama_ready {
+            match crate::task_engine::LocalTaskEngine::process_document_preflighted(
                 file.name.clone(),
                 file.content,
                 mode.clone(),
