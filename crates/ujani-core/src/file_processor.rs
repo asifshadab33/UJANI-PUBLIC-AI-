@@ -21,7 +21,7 @@ pub fn analyze_text(file_name: &str, content: &str) -> Result<FileAnalysis, Stri
     if content.len() > MAX_TEXT_BYTES {
         return Err("Text file exceeds the 1 MiB processing limit.".into());
     }
-    let extension = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let extension = std::path::Path::new(file_name).extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
     if !matches!(extension.as_str(), "txt" | "md" | "csv" | "json" | "rs" | "py" | "js" | "ts" | "html" | "xml" | "log" | "pdf") {
         return Err("Unsupported text file type.".into());
     }
@@ -39,17 +39,46 @@ pub fn analyze_text(file_name: &str, content: &str) -> Result<FileAnalysis, Stri
 }
 
 pub fn extract_keywords(content: &str, top_n: usize) -> Vec<String> {
-    let stop_words = ["the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was", "one", "our", "out", "this", "that", "with", "have", "from", "they", "been", "said"];
+    // Keep English stop words scoped to ASCII tokens. Do not split CJK text on
+    // whitespace and pretend the resulting sentence is a useful keyword.
+    const ENGLISH_STOP_WORDS: &[&str] = &[
+        "the", "and", "for", "are", "but", "not", "you", "all", "can", "her",
+        "was", "one", "our", "out", "this", "that", "with", "have", "from",
+        "they", "been", "said",
+    ];
     let mut frequencies = std::collections::BTreeMap::<String, usize>::new();
     for token in content.split_whitespace() {
-        let word: String = token.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
-        if word.chars().count() > 3 && !stop_words.contains(&word.as_str()) {
+        let word: String = token
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        if word.is_empty() || word.chars().any(is_cjk) {
+            continue;
+        }
+        let char_count = word.chars().count();
+        let useful = if word.is_ascii() {
+            char_count > 3 && !ENGLISH_STOP_WORDS.contains(&word.as_str())
+        } else {
+            // Arabic and other alphabetic scripts often have meaningful short words.
+            char_count >= 2
+        };
+        if useful {
             *frequencies.entry(word).or_default() += 1;
         }
     }
     let mut sorted: Vec<_> = frequencies.into_iter().collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     sorted.into_iter().take(top_n).map(|(word, _)| word).collect()
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x2E80..=0x2EFF | 0x2F00..=0x2FDF | 0x3040..=0x30FF |
+        0x3100..=0x312F | 0x3130..=0x318F | 0x31A0..=0x31BF |
+        0x31F0..=0x31FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF |
+        0xF900..=0xFAFF | 0x20000..=0x2FA1F
+    )
 }
 
 #[cfg(test)]
@@ -71,9 +100,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_names_without_a_real_extension() {
+        assert!(analyze_text("txt", "content").is_err());
+        assert!(analyze_text("notes.", "content").is_err());
+        assert!(analyze_text(".txt", "content").is_err());
+    }
+
+    #[test]
     fn rejects_empty_and_overlong_file_names() {
         assert!(analyze_text("  ", "content").is_err());
         assert!(analyze_text(&"n".repeat(256), "content").is_err());
+    }
+
+    #[test]
+    fn multilingual_keywords_do_not_apply_english_length_or_stop_words() {
+        let arabic = extract_keywords("ملخص وثيقة محلي ملخص", 10);
+        assert!(arabic.contains(&"ملخص".to_string()));
+        assert!(arabic.contains(&"وثيقة".to_string()));
+        let cjk = extract_keywords("文書処理 文書処理", 10);
+        assert!(cjk.is_empty());
     }
 
     #[test]
