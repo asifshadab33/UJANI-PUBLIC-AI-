@@ -113,11 +113,12 @@ mod additional_format_tests {
         let webp = inspect_image("picture.webp", b"RIFF\x04\x00\x00\x00WEBP", 12).unwrap();
         assert_eq!(webp.format, "WebP");
 
-        let mut bmp = vec![0_u8; 26];
+        let mut bmp = vec![0_u8; 54];
         bmp[..2].copy_from_slice(b"BM");
+        bmp[14..18].copy_from_slice(&40_u32.to_le_bytes());
         bmp[18..22].copy_from_slice(&32_i32.to_le_bytes());
         bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
-        let bmp_info = inspect_image("bitmap.bmp", &bmp, 26).unwrap();
+        let bmp_info = inspect_image("bitmap.bmp", &bmp, 54).unwrap();
         assert_eq!(bmp_info.dimensions, Some((32, 16)));
     }
 
