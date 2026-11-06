@@ -56,7 +56,7 @@ jobs:
           node-version: 22
       - name: Install frontend dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
       - name: Type-check and build frontend
         working-directory: apps/desktop
         run: npm run build
