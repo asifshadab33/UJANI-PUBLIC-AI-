@@ -160,7 +160,7 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
         return Err("Cloud token reservation request is outside the supported bounds.".into());
     }
     let day = (now / 86_400) as i64;
-    let prompt_tokens = ((prompt_bytes as u64).saturating_add(3) / 4) as i64;
+    let prompt_tokens = ((prompt_bytes as u64).saturating_add(1) / 2) as i64;
     let reservation = prompt_tokens.saturating_add(completion_tokens as i64);
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR IGNORE INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,0)", params![day])
