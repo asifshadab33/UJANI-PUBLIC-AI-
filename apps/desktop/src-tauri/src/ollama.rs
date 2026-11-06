@@ -53,6 +53,37 @@ async fn parse_limited<T: for<'de> Deserialize<'de>>(mut response: reqwest::Resp
     serde_json::from_slice(&bytes).map_err(|e| format!("Could not parse local Ollama response: {e}"))
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceleratorObservation {
+    pub gpu_vram_allocated_bytes: u64,
+    pub running_models: usize,
+    pub evidence: String,
+}
+#[derive(Deserialize)]
+struct RunningModels { models: Vec<RunningModel> }
+#[derive(Deserialize)]
+struct RunningModel { #[serde(default)] size_vram: u64 }
+
+/// Positive VRAM allocation reported by Ollama is runtime evidence of GPU use.
+/// This is not a complete inventory of GPUs, drivers, or NPU capabilities.
+pub async fn accelerator_observation() -> Result<AcceleratorObservation, String> {
+    let response = client()?.get(format!("{BASE_URL}/api/ps"))
+        .timeout(Duration::from_secs(3)).send().await
+        .map_err(|e| format!("Could not inspect local Ollama runtime: {e}"))?;
+    let list: RunningModels = parse_limited(response).await?;
+    let gpu_vram_allocated_bytes = list.models.iter().map(|model| model.size_vram).sum();
+    let running_models = list.models.len();
+    let evidence = if gpu_vram_allocated_bytes > 0 {
+        format!("Ollama reports {gpu_vram_allocated_bytes} bytes of model VRAM allocation across {running_models} running model(s)")
+    } else if running_models > 0 {
+        format!("Ollama reports {running_models} running model(s) but no VRAM allocation; GPU use is not confirmed")
+    } else {
+        "No running Ollama model; accelerator use cannot be verified".into()
+    };
+    Ok(AcceleratorObservation { gpu_vram_allocated_bytes, running_models, evidence })
+}
+
 pub async fn is_available() -> bool {
     match client() {
         Ok(c) => c.get(format!("{BASE_URL}/api/tags")).timeout(Duration::from_secs(3)).send().await
@@ -131,5 +162,13 @@ mod tests {
         assert!(!retryable_status(reqwest::StatusCode::NOT_FOUND));
         assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));
         assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
+    }
+
+    #[test]
+    fn accelerator_observation_requires_positive_runtime_vram_evidence() {
+        let gpu = RunningModels { models: vec![RunningModel { size_vram: 1024 }] };
+        assert_eq!(gpu.models.iter().map(|m| m.size_vram).sum::<u64>(), 1024);
+        let cpu = RunningModels { models: vec![RunningModel { size_vram: 0 }] };
+        assert_eq!(cpu.models.iter().map(|m| m.size_vram).sum::<u64>(), 0);
     }
 }
