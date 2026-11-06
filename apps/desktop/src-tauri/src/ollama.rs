@@ -300,6 +300,52 @@ mod tests {
             "redirect target must never receive a follow-up request");
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_client_ignores_proxy_environment_variables() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        struct Restore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (key, value) in self.0.drain(..) {
+                    if let Some(value) = value { std::env::set_var(key, value); }
+                    else { std::env::remove_var(key); }
+                }
+            }
+        }
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"];
+        let restore = Restore(keys.iter().map(|key| (*key, std::env::var_os(key))).collect());
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_addr = target.local_addr().unwrap();
+        let proxy_addr = proxy.local_addr().unwrap();
+        std::env::set_var("HTTP_PROXY", format!("http://{proxy_addr}"));
+        std::env::set_var("http_proxy", format!("http://{proxy_addr}"));
+        std::env::set_var("ALL_PROXY", format!("http://{proxy_addr}"));
+        std::env::set_var("all_proxy", format!("http://{proxy_addr}"));
+        std::env::set_var("NO_PROXY", "");
+        std::env::set_var("no_proxy", "");
+
+        let target_task = tokio::spawn(async move {
+            let (mut socket, _) = target.accept().await.unwrap();
+            let mut request = vec![0u8; 4096];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok").await.unwrap();
+        });
+        let proxy_task = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(250), proxy.accept()).await
+        });
+        let client = build_client(Some(Duration::from_secs(2))).unwrap();
+        let result = client.get(format!("http://{target_addr}/api/tags")).send().await;
+        drop(restore);
+        assert_eq!(result.unwrap().status(), reqwest::StatusCode::OK);
+        target_task.await.unwrap();
+        assert!(proxy_task.await.unwrap().is_err(), "the proxy listener must not receive the local request");
+    }
+
     #[test]
     fn accepts_only_bounded_local_model_identifiers() {
         assert!(valid_model("llama3.2"));
