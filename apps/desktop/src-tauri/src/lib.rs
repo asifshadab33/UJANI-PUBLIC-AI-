@@ -225,6 +225,7 @@ async fn execute_cloud_ai_task(
  prompt: String,
  mode: String,
  external_data_approved: bool,
+ token_parameter: String,
 ) -> Result<String, String> {
  if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
   return Err("Invalid task identifier.".into());
