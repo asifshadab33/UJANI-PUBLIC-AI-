@@ -3,6 +3,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const isDevBuild = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
 export default function UpdateNotice() {
   const [available, setAvailable] = useState<Update | null>(null);
@@ -11,7 +12,7 @@ export default function UpdateNotice() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (!isTauri() || import.meta.env.DEV) return;
+    if (!isTauri() || isDevBuild) return;
     let active = true;
     check()
       .then((update) => { if (active && update) setAvailable(update); })
