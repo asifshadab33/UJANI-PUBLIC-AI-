@@ -64,6 +64,7 @@ pub fn sign_peer_task_envelope(
     app: AppHandle,
     task_id: String,
     operation: String,
+    recipient_device_id: String,
     payload: Vec<u8>,
     requested_scopes: Vec<String>,
 ) -> Result<SignedTaskEnvelope, String> {
@@ -76,6 +77,9 @@ pub fn sign_peer_task_envelope(
     if payload.len() > 10 * 1024 * 1024 {
         return Err("Peer payload exceeds the 10 MiB signing limit.".into());
     }
+    if recipient_device_id.len() != 64 || !recipient_device_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err("Recipient must be a 64-character lowercase device fingerprint.".into());
+    }
     if !registered_operations().iter().any(|registered| registered.id == operation) {
         return Err("Peer operation is not in UJANI's registered operation catalogue.".into());
     }
@@ -86,7 +90,7 @@ pub fn sign_peer_task_envelope(
     let scopes = requested_scopes.join(", ");
     let digest = ujani_core::sha256_hex(&payload);
     let approved = app.dialog()
-        .message(format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len()))
+        .message(format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nRecipient: {recipient_device_id}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len()))
         .title("Approve peer task consent")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
@@ -102,6 +106,7 @@ pub fn sign_peer_task_envelope(
     let envelope = TaskEnvelope {
         protocol_version: PROTOCOL_VERSION,
         task_id,
+        recipient_device_id,
         issued_at: now,
         expires_at: now.saturating_add(ujani_core::peer_protocol::MAX_TASK_TTL_SECONDS),
         nonce,
