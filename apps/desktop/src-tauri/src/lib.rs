@@ -67,6 +67,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     system.refresh_memory();
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
+    let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
     let capabilities = vec![
         CapabilityRecord {
             id: "cpu".into(), category: "compute".into(),
@@ -98,13 +99,14 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         },
         CapabilityRecord {
             id: "gpu.compute".into(), category: "accelerator".into(),
-            state: CapabilityState::Unknown, source: "Not probed".into(),
-            detail: "GPU presence and usable runtime/driver compatibility are not verified".into(),
+            state: if accelerator.as_ref().is_some_and(|a| a.gpu_vram_allocated_bytes > 0) { CapabilityState::Available } else { CapabilityState::Unknown },
+            source: if accelerator.is_some() { "Ollama /api/ps runtime telemetry".into() } else { "Ollama runtime telemetry unavailable".into() },
+            detail: accelerator.as_ref().map(|a| a.evidence.clone()).unwrap_or_else(|| "GPU presence and usable runtime/driver compatibility are not verified; start Ollama and run a model to obtain runtime telemetry".into()),
         },
         CapabilityRecord {
             id: "npu.compute".into(), category: "accelerator".into(),
             state: CapabilityState::Unknown, source: "Not probed".into(),
-            detail: "NPU presence and supported runtime are not verified".into(),
+            detail: "NPU hardware and runtime are not probed; remains Unknown until a supported OS/runtime API confirms a usable NPU".into(),
         },
     ];
     Ok(CapabilitySnapshot {
