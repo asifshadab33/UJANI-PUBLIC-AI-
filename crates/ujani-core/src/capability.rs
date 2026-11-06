@@ -44,6 +44,8 @@ pub struct TaskPlan {
 /// Trusted built-in operation catalogue. No arbitrary commands or model-authored tools.
 pub fn registered_operations() -> Vec<OperationDescriptor> {
     vec![
+        OperationDescriptor { id: "cloud.ai.generate".into(), description: "Send an explicitly approved prompt to a user-configured cloud AI provider".into(), required_capabilities: vec!["network.cloud_gateway".into()], minimum_available_memory_mb: 128 },
+        OperationDescriptor { id: "model.download".into(), description: "Download a model through the local Ollama registry after explicit user approval".into(), required_capabilities: vec!["network.model_registry".into()], minimum_available_memory_mb: 64 },
         OperationDescriptor { id: "local.ai.generate".into(), description: "Generate a response with an installed local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
         OperationDescriptor { id: "document.summarize".into(), description: "Summarise user-selected text with a local model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
         OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
