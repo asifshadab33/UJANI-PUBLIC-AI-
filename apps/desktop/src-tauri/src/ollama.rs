@@ -14,6 +14,14 @@ pub struct OllamaModel {
 }
 #[derive(Deserialize)]
 struct ModelList { models: Vec<OllamaModel> }
+
+const NUM_CTX: u32 = 8192;
+#[derive(Serialize)] struct ChatMsg<'a> { role: &'a str, content: &'a str }
+#[derive(Serialize)] struct ChatOptions { num_ctx: u32, temperature: f32 }
+#[derive(Serialize)] struct ChatBody<'a> { model: &'a str, messages: Vec<ChatMsg<'a>>, stream: bool, options: ChatOptions, keep_alive: &'a str }
+#[derive(Deserialize)] struct ChatReply { message: ChatReplyMsg }
+#[derive(Deserialize)] struct ChatReplyMsg { content: String }
+pub struct Turn<'a> { pub role: &'a str, pub content: &'a str }
 #[derive(Serialize)]
 struct GenerateRequest<'a> { model: &'a str, prompt: &'a str, stream: bool }
 #[derive(Deserialize)]
@@ -109,38 +117,46 @@ pub async fn is_available() -> bool {
     }
 }
 pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
-    // Model discovery is a startup-adjacent health operation; cap it separately from inference.
-    let response = client()?.get(format!("{BASE_URL}/api/tags")).timeout(Duration::from_secs(6)).send().await
-        .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
-    let list: ModelList = parse_limited(response).await?;
-    Ok(list.models)
-}
-
-/// Retry only transient connection/time-out and server failures. Validation errors,
-/// oversized responses, malformed JSON and other client errors are never retried.
-pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
+    // Model discovery is a startup-adjapub async fn chat(model: &str, system: Option<&str>, turns: &[Turn<'_>]) -> Result<String, String> {
     if !valid_model(model) { return Err("Invalid local model identifier.".into()); }
-    if prompt.trim().is_empty() { return Err("Prompt cannot be empty.".into()); }
-    if prompt.len() > MAX_PROMPT_BYTES { return Err("Prompt exceeds the 32 KiB local limit.".into()); }
-
+    let total = turns.iter().try_fold(system.map_or(0usize, str::len), |n, t| n.checked_add(t.content.len()))
+        .ok_or_else(|| "Prompt size overflow.".to_string())?;
+    if turns.is_empty() || total == 0 { return Err("Prompt cannot be empty.".into()); }
+    if total > MAX_PROMPT_BYTES { return Err("Prompt exceeds the 32 KiB local limit.".into()); }
+    let mut messages = Vec::with_capacity(turns.len() + usize::from(system.is_some()));
+    if let Some(content) = system { messages.push(ChatMsg { role: "system", content }); }
+    for turn in turns {
+        if turn.role != "user" && turn.role != "assistant" { return Err("Invalid chat role.".into()); }
+        messages.push(ChatMsg { role: turn.role, content: turn.content });
+    }
+    let body = ChatBody { model, messages, stream: false,
+        options: ChatOptions { num_ctx: NUM_CTX, temperature: 0.3 }, keep_alive: "5m" };
     let c = client()?;
-    let request = GenerateRequest { model, prompt, stream: false };
     let mut last_error = String::new();
-
     for attempt in 0..MAX_ATTEMPTS {
-        let response = c.post(format!("{BASE_URL}/api/generate")).json(&request).send().await;
-        match response {
+        match c.post(format!("{BASE_URL}/api/chat")).json(&body).send().await {
             Ok(response) if retryable_status(response.status()) => {
                 last_error = format!("Local Ollama returned HTTP {}.", response.status());
             }
             Ok(response) => {
-                let result: GenerateResponse = parse_limited(response).await?;
-                if result.response.trim().is_empty() {
-                    return Err("Local Ollama returned an empty response.".into());
-                }
-                return Ok(result.response);
+                let parsed: ChatReply = parse_limited(response).await?;
+                if parsed.message.content.trim().is_empty() { return Err("Local Ollama returned an empty response.".into()); }
+                return Ok(parsed.message.content);
             }
-            Err(error) if error.is_connect() => {
+            Err(error) if error.is_connect() => { last_error = format!("Local Ollama request failed: {error}"); }
+            Err(error) => return Err(format!("Local Ollama request failed: {error}")),
+        }
+        if attempt + 1 < MAX_ATTEMPTS {
+            tokio::time::sleep(Duration::from_millis(250 * (1u64 << attempt))).await;
+        }
+    }
+    Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
+}
+
+pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
+    chat(model, None, &[Turn { role: "user", content: prompt }]).await
+}
+          Err(error) if error.is_connect() => {
                 last_error = format!("Local Ollama request failed: {error}");
             }
             Err(error) => return Err(format!("Local Ollama request failed: {error}")),
