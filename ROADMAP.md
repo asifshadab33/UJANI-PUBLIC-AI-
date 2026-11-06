@@ -25,7 +25,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Optional second local-model step to translate document/PDF summaries into a user-selected language.
 - [x] Registered PDF text extraction for user-selected PDFs (10 MiB input limit; scanned-PDF OCR not included).
 - [ ] Image conversion and broader media metadata tools.
-- [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token and firewall policy; macOS sandbox/entitlements; Linux namespaces/seccomp/Landlock where supported. Current app-level cloud blocking is not OS isolation.
+- [ ] Full application-level OS-enforced Fortress isolation: Windows AppContainer/restricted token and firewall policy; macOS sandbox/entitlements; Linux namespaces/seccomp/Landlock where supported. Current app-level cloud blocking and PDF-worker limits are not a complete app sandbox.
 
 ## Phase 2 — local models and planning
 - [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
@@ -42,7 +42,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] User-configured OpenAI-compatible cloud gateway in Smart mode with approval bound to the exact endpoint, model, prompt and mode; API-key strings are zeroized in the native gateway where possible. Worker/Partner peer execution remains unavailable.
 - [x] Native Fortress-mode rejection for cloud requests (application-level policy only).
 - [x] Signed Worker/Partner task-envelope primitives with Ed25519 identity signatures, expiry, consent, allow-listed scopes, payload digest binding and in-memory replay checks (protocol foundation only).
-- [ ] Authenticated peer enrollment, trusted-key lifecycle, encrypted peer transport, actual worker dispatch/execution and durable audit receipts. Until these exist, Worker/Partner are intentionally blocked from the BYOK cloud gateway.
+- [x] Local Ed25519 device identity in the OS credential vault, native-confirmed trusted-peer enrollment/revocation, signed-envelope verification and persistent nonce replay checks. Encrypted peer transport and actual worker dispatch/execution remain unimplemented; Worker/Partner stay blocked from BYOK cloud execution.
 - [ ] Per-subtask data minimisation and explicit approval receipts.
 - [ ] Local-only mode tested with network disabled.
 - [ ] Clear provenance for local, remote and deterministic-tool work.
@@ -56,7 +56,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Verified GPU/NPU detection and model-runtime compatibility across Windows, macOS and Linux. Current GPU status becomes Available only when Ollama reports positive VRAM allocation for a running model; this is runtime evidence, not a full hardware/driver inventory. NPU remains Unknown.
 - [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token + firewall policy; macOS sandbox profile/entitlements; Linux namespaces/seccomp/Landlock as supported. Current native Fortress policy blocks UJANI cloud requests but does not isolate the application process or its loopback Ollama traffic.
 - [x] Signed Worker/Partner task-envelope protocol foundation: Ed25519 signatures, short-lived envelopes, exact task consent, allow-listed data scopes, payload digest binding and in-memory replay protection.
-- [ ] Secure Worker/Partner peer gateway: authenticated device enrollment, trusted-key lifecycle, mutual TLS or equivalent secure transport, task dispatch/execution, durable replay protection, revocation, quotas, audit receipts and abuse controls.
+- [ ] Secure Worker/Partner peer gateway: encrypted mutual-authenticated transport, task dispatch/execution, remote quotas, durable signed audit receipts and abuse controls. Identity, enrollment/revocation and persistent replay primitives exist but are not a transport or execution gateway.
 - [ ] Threat-model review and platform-specific security testing for each capability before production claims.
 - [ ] Independent security review, software bill of materials, accessibility and installer testing.
 
@@ -76,3 +76,16 @@ No release should be described as secure, private-by-design in implementation, o
 - [x] Add typed execution receipt contract with SHA-256 input/output digests, adapter/model identity, execution location, timestamps and external approval reference. Native adapter integration and durable persistence remain pending.
 - [x] Add core unit/integration tests for scheduler decisions and receipt validation.
 - [x] Add reproducible benchmark protocol documentation. Benchmark harness execution and retained measured results remain pending.
+
+
+## Native enforcement and audit foundations — 2026-11-07
+
+- [x] Interactive local AI commands now acquire an atomic process-local reservation, admit only one UJANI inference pipeline at a time, and require at least 1 GiB of currently available RAM. This is admission control, not an OS-enforced reservation; other processes can still consume memory.
+- [x] PDF extraction runs in a child process with OS resource limits: Unix rlimits for CPU/address space/file descriptors/file growth/core dumps, Linux no_new_privs, and Windows Job Object memory/CPU limits with kill-on-close. This does not sandbox the entire application or deny all worker network/filesystem syscalls.
+- [x] Successful local chat and approved BYOK chat calls write exact-input/output SHA-256 execution receipts into a local SQLite hash chain. The ledger is locally verifiable and capped at 10,000 entries; it is not signed or externally anchored, and model version may be unknown.
+- [x] Ed25519 device identity is stored in the OS credential vault. Trusted peers require native confirmation and can be listed/revoked. Signed envelope verification checks the trusted key and payload digest and persists replay nonces before accepting an envelope.
+- [x] BYOK cloud calls reserve a conservative local daily token budget of 250,000 tokens before sending. Failed/cancelled calls are not refunded. This is a per-installation safety ceiling, not a provider billing cap or a configurable monetary budget.
+- [ ] Full Windows AppContainer/firewall, macOS sandbox profile/entitlements, and Linux namespace/seccomp/Landlock isolation for the complete application.
+- [ ] Encrypted peer transport, device-to-device connection lifecycle, remote execution/dispatch and signed remote receipt exchange.
+- [ ] Full GPU/driver/runtime compatibility inventory and NPU support. Positive Ollama VRAM telemetry is evidence of GPU use only; absence of telemetry remains Unknown.
+- [ ] Hardware-backed device identity, external trust-anchor for the receipt ledger, user-configurable provider spend ceilings and independent platform security review.
