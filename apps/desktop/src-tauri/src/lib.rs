@@ -132,6 +132,11 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             detail: "NPU hardware and runtime are not probed; remains Unknown until a supported OS/runtime API confirms a usable NPU".into(),
         },
         CapabilityRecord {
+            id: "local.ai.memory_reservation".into(), category: "resource_management".into(),
+            state: CapabilityState::Available, source: "UJANI native process-local reservation manager".into(),
+            detail: "Interactive local AI pipelines are serialized and require at least 1 GiB available RAM at admission; this is not an OS-level reservation.".into(),
+        },
+        CapabilityRecord {
             id: "pdf.worker.resource_limits".into(), category: "security".into(),
             state: CapabilityState::Available, source: "OS process limits (Unix rlimits / Windows Job Object)".into(),
             detail: "Unix: 768 MiB address-space, 45-second CPU, 16-file-descriptor, zero file-growth and zero core-dump limits; Linux also enables no_new_privs. Windows: 768 MiB process-memory and 45-second CPU Job Object limits with kill-on-close. This is worker hardening, not a complete application sandbox.".into(),
@@ -574,6 +579,7 @@ fn list_local_models() -> Vec<ModelInfo> {
 /// Runs an explicitly selected local adapter. No network or cloud fallback exists.
 #[tauri::command]
 fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
     let mut system = System::new();
     system.refresh_cpu();
     run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
