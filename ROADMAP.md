@@ -8,11 +8,11 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Define local-first product principles and explicit non-goals.
 - [x] Add an initial typed Rust task/capability model and routing tests.
 - [x] Document privacy, security and contribution expectations.
-- [ ] Establish CI for formatting, linting, tests and dependency review.
+- [x] Establish CI for locked Rust core/native tests and frontend type-check/build on Linux, Windows and macOS; formatting, linting and automated dependency review remain pending.
 - [ ] Agree a versioned task protocol shared with UJANI Enterprise AI.
 
 ## Phase 1 — desktop proof of concept
-- [ ] Windows desktop shell (Tauri 2 + React/TypeScript).
+- [x] Initial cross-platform desktop shell (Tauri 2 + React/TypeScript); pre-alpha UX, accessibility and installer validation remain pending.
 - [x] Read-only initial inventory: OS, architecture, logical CPUs, total/available RAM and OS locale.
 - [x] Initial GPU-use evidence from Ollama running-model VRAM telemetry; this does not replace full hardware/driver/runtime compatibility inventory.\n- [ ] Verified cross-platform GPU/NPU and model-runtime compatibility inventory (presence alone is insufficient).
 - [x] Initial read-only capability registry with source, state and explanatory detail; GPU/NPU remain unknown until verified.
