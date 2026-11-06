@@ -13,6 +13,7 @@ use zeroize::Zeroizing;
 const SERVICE: &str = "org.ujani.publicai";
 const USER: &str = "device-identity-ed25519-v1";
 
+/// Public Ed25519 identity fingerprint returned to the UJANI frontend.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceIdentity {
     pub device_id: String,
@@ -49,6 +50,7 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
     }
 }
 
+/// Load or create the local Ed25519 signing key in the operating-system credential vault.
 #[tauri::command]
 pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, String> {
     let signing = load_or_create_signing_key()?;
@@ -60,6 +62,7 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
 
 
 
+/// Rotate the local signing key after native confirmation; peers must re-enrol the new fingerprint.
 #[tauri::command]
 pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
     let current = get_or_create_device_identity(app.clone())?;
@@ -86,6 +89,7 @@ pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, St
     Ok(DeviceIdentity { device_id, public_key_hex, algorithm: "Ed25519" })
 }
 
+/// Create a recipient-bound signed consent envelope after native approval; this does not transmit the payload.
 #[tauri::command]
 pub async fn sign_peer_task_envelope(
     app: AppHandle,
