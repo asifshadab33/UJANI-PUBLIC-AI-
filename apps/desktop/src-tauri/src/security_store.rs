@@ -256,23 +256,7 @@ impl Drop for ReceiptSlotReservation {
     }
 }
 
-fn release_receipt_slot(app: &AppHandle, task_id: &str) -> Result<(), String> {
-    open(app)?.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![task_id])
-        .map(|_| ()).map_err(|e| format!("Could not release execution receipt reservation: {e}"))
-}
-
-/// Reserve a durable receipt slot before inference. The reservation is released on drop
-/// if the request fails, is cancelled, or never reaches successful receipt persistence.
-pub fn reserve_execution_receipt_slot(
-    app: &AppHandle,
-    task_id: &str,
-) -> Result<ReceiptSlotReservation, String> {
-    if task_id.is_empty() || task_id.len() > 96
-        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier for execution receipt reservation.".into());
-    }
-    let now = now_seconds()?;
-    let mut db = open(app)?;
+fn reserve_receipt_slot_db(db: &mut Connection, task_id: &str, now: u64) -> Result<(), String> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM receipt_slots WHERE reserved_at <= ?1", params![now.saturating_sub(RECEIPT_SLOT_TTL_SECONDS) as i64])
         .map_err(|e| e.to_string())?;
@@ -287,7 +271,31 @@ pub fn reserve_execution_receipt_slot(
         "INSERT INTO receipt_slots(task_id,reserved_at) VALUES(?1,?2)",
         params![task_id, now as i64]
     ).map_err(|e| format!("Could not reserve execution receipt capacity: {e}"))?;
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn release_receipt_slot_db(db: &Connection, task_id: &str) -> Result<(), String> {
+    db.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![task_id])
+        .map(|_| ()).map_err(|e| format!("Could not release execution receipt reservation: {e}"))
+}
+
+fn release_receipt_slot(app: &AppHandle, task_id: &str) -> Result<(), String> {
+    release_receipt_slot_db(&open(app)?, task_id)
+}
+
+/// Reserve a durable receipt slot before inference. The reservation is released on drop
+/// if the request fails, is cancelled, or never reaches successful receipt persistence.
+pub fn reserve_execution_receipt_slot(
+    app: &AppHandle,
+    task_id: &str,
+) -> Result<ReceiptSlotReservation, String> {
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier for execution receipt reservation.".into());
+    }
+    let now = now_seconds()?;
+    let mut db = open(app)?;
+    reserve_receipt_slot_db(&mut db, task_id, now)?;
     Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
 }
 
@@ -523,6 +531,18 @@ mod tests {
         assert!(decode_public_key(&"a".repeat(64)).is_ok());
         assert!(decode_public_key("abc").is_err());
         assert!(decode_public_key(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn receipt_slot_reservations_are_atomic_and_expire_after_crashes() {
+        let mut db = db();
+        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_000).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_001).is_err());
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(release_receipt_slot_db(&db, "task-one").is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-two", 2_000).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-three", 2_901).is_ok());
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
     }
 
     #[test]
