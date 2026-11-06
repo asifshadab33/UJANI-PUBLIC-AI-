@@ -43,7 +43,7 @@ The Tauri 2 desktop prototype is in [`apps/desktop`](apps/desktop/README.md). It
 
 ## Prototype core
 
-The Rust crate in `crates/ujani-core` defines basic task, capability and execution-policy types plus a conservative routing decision. It deliberately does **not** execute commands, access files, discover hardware, or contact a cloud provider.
+The Rust crate in `crates/ujani-core` defines task/capability and execution-policy types, a deterministic resource-aware scheduling policy, typed SHA-256 execution-provenance receipts, and conservative routing/placement decisions. These new scheduler and receipt modules are policy/contracts only: they do **not** collect OS telemetry, reserve resources, dispatch tasks, prove output correctness, or contact a cloud provider. Native adapter integration and durable receipt storage remain future work.
 
 Run the tests:
 
