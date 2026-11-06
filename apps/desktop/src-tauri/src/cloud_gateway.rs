@@ -4,8 +4,12 @@ use serde::{Deserialize, Serialize};
 use std::{net::{IpAddr, SocketAddr}, time::Duration};
 use zeroize::{Zeroize, Zeroizing};
 const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize=64*1024;
-#[derive(Serialize)] struct ChatRequest<'a>{model:&'a str,messages:[ChatMessage<'a>;1],max_tokens:u16,stream:bool}
-#[derive(Serialize)] struct ChatMessage<'a>{role:&'static str,content:&'a str}
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConversationTurn { pub role: String, pub content: String }
+#[derive(Serialize)]
+struct ChatRequest<'a> { model: &'a str, messages: Vec<ChatMessage<'a>>, max_tokens: u16, stream: bool }
+#[derive(Serialize)]
+struct ChatMessage<'a> { role: &'a str, content: &'a str }
 #[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>}
 #[derive(Deserialize)] struct Choice{message:Message}
 #[derive(Deserialize)] struct Message{content:String}
@@ -21,6 +25,20 @@ fn validate_endpoint(endpoint:&str)->Result<Url,String>{
 fn validate_mode(mode:&str)->Result<(),String>{
  if mode == "fortress" { return Err("Fortress mode is local-only; external transfer is blocked.".into()); }
  if mode != "smart" { return Err("The BYOK cloud gateway is available in Smart mode only; Worker/Partner peer execution is not implemented and Fortress is local-only.".into()); }
+ Ok(())
+}
+fn validate_messages(messages: &[ConversationTurn]) -> Result<(), String> {
+ if messages.is_empty() || messages.len() > 17 { return Err("Cloud conversation must contain 1 to 17 messages.".into()); }
+ if messages.last().map(|m| m.role.as_str()) != Some("user") { return Err("The last cloud conversation message must be from the user.".into()); }
+ let total = messages.iter().try_fold(0usize, |sum, message| sum.checked_add(message.content.len()))
+  .ok_or_else(|| "Cloud conversation size overflow.".to_string())?;
+ if total == 0 || total > MAX_PROMPT { return Err("Cloud conversation must be non-empty and no larger than 32 KiB.".into()); }
+ if messages.iter().any(|message| message.role != "user" && message.role != "assistant") {
+  return Err("Cloud conversation contains an invalid message role.".into());
+ }
+ if messages.iter().any(|message| message.content.trim().is_empty()) {
+  return Err("Cloud conversation messages cannot be empty.".into());
+ }
  Ok(())
 }
 fn validate(endpoint:&str,model:&str,key:&str,prompt:&str,approved:bool)->Result<Url,String>{
@@ -73,10 +91,14 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
  Ok(resolved)
 }
 
-pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool)->Result<String,String>{
+pub async fn execute(endpoint:String,model:String,api_key:String,messages:Vec<ConversationTurn>,mode:String,approved:bool)->Result<String,String>{
  let api_key = Zeroizing::new(api_key);
  validate_mode(&mode)?;
- let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
+ if !approved { return Err("Cloud transfer was not approved for this task. No request was sent.".into()); }
+ let url=validate_endpoint(&endpoint)?;
+ if model.trim().is_empty()||model.len()>128||model.chars().any(char::is_control){return Err("Model name must be non-empty and at most 128 characters.".into());}
+ if api_key.trim().is_empty()||api_key.len()>MAX_KEY||api_key.chars().any(char::is_control){return Err("Enter a valid API key (maximum 4 KiB).".into());}
+ validate_messages(&messages)?;
  let host = url.host_str().ok_or_else(|| "Cloud endpoint has no host.".to_string())?.trim_start_matches('[').trim_end_matches(']').to_string();
  let addresses = resolve_public_addresses(&url).await?;
  let mut headers=header::HeaderMap::new();
@@ -85,7 +107,7 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  auth_text.zeroize();
  auth.set_sensitive(true); headers.insert(header::AUTHORIZATION,auth); headers.insert(header::CONTENT_TYPE,header::HeaderValue::from_static("application/json"));
  let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).redirect(Policy::none()).no_proxy().resolve_to_addrs(&host, &addresses).default_headers(headers).build().map_err(|e|format!("Could not initialise cloud client: {e}"))?;
- let body=ChatRequest{model:&model,messages:[ChatMessage{role:"user",content:&prompt}],max_tokens:2048,stream:false};
+ let body=ChatRequest{model:&model,messages:messages.iter().map(|message|ChatMessage{role:&message.role,content:&message.content}).collect(),max_tokens:2048,stream:false};
  let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
