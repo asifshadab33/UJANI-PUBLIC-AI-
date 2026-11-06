@@ -186,7 +186,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
         }
     }
 
-    files.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    files.sort_by_cached_key(|file| file.name.to_lowercase());
     Ok(files)
 }
 
