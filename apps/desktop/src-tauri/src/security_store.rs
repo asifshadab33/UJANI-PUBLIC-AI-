@@ -338,7 +338,7 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
 }
 
 #[tauri::command]
-pub fn enroll_trusted_peer(
+pub async fn enroll_trusted_peer(
     app: AppHandle,
     peer_id: String,
     public_key_hex: String,
@@ -391,7 +391,7 @@ pub fn is_active_trusted_peer(app: &AppHandle, peer_id: &str) -> Result<bool, St
 }
 
 #[tauri::command]
-pub fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, String> {
+pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, String> {
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer identifier.".into());
     }
