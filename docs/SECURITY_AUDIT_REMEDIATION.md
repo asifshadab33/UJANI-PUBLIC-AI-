@@ -17,7 +17,7 @@ The Ollama endpoint remains fixed to `http://127.0.0.1:11434`; user-supplied end
 
 ## B. History ciphertext swapping
 
-Current history encryption uses AES-256-GCM with a fresh nonce and associated authenticated data derived from the row ID and field name (`prompt` or `output`). Normal reads accept only the current `ujani:v2:` format and verify the same row/column AAD used at encryption. Swapping a ciphertext between rows or between prompt/output fields therefore fails authentication.
+Current history encryption uses AES-256-GCM with a fresh nonce and associated authenticated data derived from the row ID and field name (`prompt` or `output`). The 256-bit history key is generated from the operating system cryptographic random source and stored only in the OS credential vault; tests generate independent random keys rather than using fixed key material. Normal reads accept only the current `ujani:v2:` format and verify the same row/column AAD used at encryption. Swapping a ciphertext between rows or between prompt/output fields therefore fails authentication.
 
 A one-time migration path handles plaintext rows and legacy `ujani:v1:` ciphertexts. The database records encryption version 2 in `history_settings`; after that marker is committed, legacy v1 values are no longer automatically decrypted or migrated on every read. A v1 value injected after migration is treated as unreadable.
 
