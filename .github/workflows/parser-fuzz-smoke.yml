@@ -27,7 +27,7 @@ jobs:
             max_len: 10485760
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: llvm-tools-preview
       - name: Install cargo-fuzz
