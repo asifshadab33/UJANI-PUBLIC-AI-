@@ -11,6 +11,7 @@ const KEYRING_SERVICE: &str = "org.ujani.publicai";
 const KEYRING_USER: &str = "local-history-v1";
 const ENCRYPTED_PREFIX: &str = "ujani:v1:";
 const ENC_V2: &str = "ujani:v2:";
+const ENCRYPTION_VERSION_KEY: &str = "encryption_version";
 
 
 const RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
@@ -57,30 +58,45 @@ fn encrypt_text(key: &[u8; 32], value: &str, id: i64, column: &str) -> Result<St
 }
 
 fn decrypt_text(key: &[u8; 32], value: &str, id: i64, column: &str) -> Result<String, String> {
- let (encoded, version_two) = if let Some(v) = value.strip_prefix(ENC_V2) { (v, true) }
-  else if let Some(v) = value.strip_prefix(ENCRYPTED_PREFIX) { (v, false) }
-  else { return Err("History row is not encrypted; it must be migrated before use.".into()); };
+ let encoded = value.strip_prefix(ENC_V2)
+  .ok_or_else(|| "History row is not protected by the current authenticated format.".to_string())?;
  let payload = B64.decode(encoded).map_err(|_| "Encrypted history value is corrupted.".to_string())?;
  if payload.len() < 28 { return Err("Encrypted history value is incomplete.".into()); }
  let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid history encryption key.".to_string())?;
  let (nonce, ciphertext) = payload.split_at(12);
- let plaintext = if version_two {
-  cipher.decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad: &row_aad(id, column) })
- } else {
-  cipher.decrypt(Nonce::from_slice(nonce), ciphertext)
- }.map_err(|_| "History authentication failed; the OS key may have changed or data was moved.".to_string())?;
+ let plaintext = cipher.decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad: &row_aad(id, column) })
+  .map_err(|_| "History authentication failed; the OS key may have changed or data was moved.".to_string())?;
  String::from_utf8(plaintext).map_err(|_| "Decrypted history text is not valid UTF-8.".into())
 }
 
+/// Legacy v1 had no row/column AAD. This decoder is used only by the one-time
+/// migration path; v1 values are never accepted by normal history reads.
+fn decrypt_legacy_text(key: &[u8; 32], value: &str) -> Result<String, String> {
+ let encoded = value.strip_prefix(ENCRYPTED_PREFIX)
+  .ok_or_else(|| "Not a legacy encrypted history value.".to_string())?;
+ let payload = B64.decode(encoded).map_err(|_| "Legacy history value is corrupted.".to_string())?;
+ if payload.len() < 28 { return Err("Legacy history value is incomplete.".into()); }
+ let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid history encryption key.".to_string())?;
+ let (nonce, ciphertext) = payload.split_at(12);
+ let plaintext = cipher.decrypt(Nonce::from_slice(nonce), ciphertext)
+  .map_err(|_| "Legacy history authentication failed; data may be corrupted.".to_string())?;
+ String::from_utf8(plaintext).map_err(|_| "Legacy history text is not valid UTF-8.".into())
+}
+
 fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String> {
+ let version: Option<String> = db.query_row(
+  "SELECT value FROM history_settings WHERE key=?1",
+  params![ENCRYPTION_VERSION_KEY], |row| row.get(0)
+ ).optional().map_err(|e| e.to_string())?;
+ if version.as_deref() == Some("2") { return Ok(()); }
  let mut statement = db.prepare("SELECT id,prompt,output FROM task_history").map_err(|e| format!("Could not inspect existing history: {e}"))?;
  let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
  let mut pending = Vec::new();
  for row in rows {
   let (id, prompt, output) = row.map_err(|e| e.to_string())?;
   if !prompt.starts_with(ENC_V2) || !output.starts_with(ENC_V2) {
-   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) { decrypt_text(key, &prompt, id, "prompt")? } else { prompt };
-   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) { decrypt_text(key, &output, id, "output")? } else { output };
+   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) { decrypt_legacy_text(key, &prompt)? } else { prompt };
+   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) { decrypt_legacy_text(key, &output)? } else { output };
    pending.push((id, encrypt_text(key, &plain_prompt, id, "prompt")?, encrypt_text(key, &plain_output, id, "output")?));
   }
  }
@@ -89,6 +105,10 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
  for (id, prompt, output) in pending {
   tx.execute("UPDATE task_history SET prompt=?1,output=?2 WHERE id=?3", params![prompt, output, id]).map_err(|e| e.to_string())?;
  }
+ tx.execute(
+  "INSERT INTO history_settings(key,value) VALUES(?1,'2') ON CONFLICT(key) DO UPDATE SET value='2'",
+  params![ENCRYPTION_VERSION_KEY]
+ ).map_err(|e| e.to_string())?;
  tx.commit().map_err(|e| e.to_string())
 }
 
