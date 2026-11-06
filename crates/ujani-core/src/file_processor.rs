@@ -53,9 +53,7 @@ pub fn extract_keywords(content: &str, top_n: usize) -> Vec<String> {
             .filter(|c| c.is_alphanumeric())
             .flat_map(char::to_lowercase)
             .collect();
-        if word.is_empty() || word.chars().any(is_cjk) {
-            continue;
-        }
+        if word.is_empty() || word.chars().any(is_cjk) { continue; }
         let char_count = word.chars().count();
         let useful = if word.is_ascii() {
             char_count > 3 && !ENGLISH_STOP_WORDS.contains(&word.as_str())
@@ -63,10 +61,24 @@ pub fn extract_keywords(content: &str, top_n: usize) -> Vec<String> {
             // Arabic and other alphabetic scripts often have meaningful short words.
             char_count >= 2
         };
-        if useful {
-            *frequencies.entry(word).or_default() += 1;
-        }
+        if useful { *frequencies.entry(word).or_default() += 1; }
     }
+
+    // CJK text is commonly written without whitespace. Extract overlapping
+    // bigrams from contiguous CJK runs instead of treating whole sentences as words.
+    let mut run = Vec::<char>::new();
+    let mut add_run = |run: &mut Vec<char>, frequencies: &mut std::collections::BTreeMap<String, usize>| {
+        for pair in run.windows(2) {
+            let token: String = pair.iter().collect();
+            *frequencies.entry(token).or_default() += 1;
+        }
+        run.clear();
+    };
+    for ch in content.chars() {
+        if is_cjk(ch) { run.push(ch); } else { add_run(&mut run, &mut frequencies); }
+    }
+    add_run(&mut run, &mut frequencies);
+
     let mut sorted: Vec<_> = frequencies.into_iter().collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     sorted.into_iter().take(top_n).map(|(word, _)| word).collect()
@@ -118,7 +130,8 @@ mod tests {
         assert!(arabic.contains(&"ملخص".to_string()));
         assert!(arabic.contains(&"وثيقة".to_string()));
         let cjk = extract_keywords("文書処理 文書処理", 10);
-        assert!(cjk.is_empty());
+        assert!(cjk.contains(&"文書".to_string()));
+        assert!(cjk.contains(&"処理".to_string()));
     }
 
     #[test]
