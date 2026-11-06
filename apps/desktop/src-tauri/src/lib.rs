@@ -654,7 +654,8 @@ pub fn run() {
             security_store::revoke_trusted_peer,
             security_store::list_trusted_peers,
             security_store::verify_and_claim_peer_envelope,
-            device_identity::get_or_create_device_identity
+            device_identity::get_or_create_device_identity,
+            device_identity::sign_peer_task_envelope
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
