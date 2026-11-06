@@ -89,7 +89,14 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
- let bytes=response.bytes().await.map_err(|e|format!("Could not read cloud response: {e}"))?; if bytes.len()>MAX_OUTPUT{return Err("Cloud response exceeds the 64 KiB output limit.".into());}
+ let mut response = response;
+ let mut bytes = Vec::new();
+ while let Some(chunk) = response.chunk().await.map_err(|e| format!("Could not read cloud response: {e}"))? {
+  if bytes.len().saturating_add(chunk.len()) > MAX_OUTPUT {
+   return Err("Cloud response exceeds the 64 KiB output limit.".into());
+  }
+  bytes.extend_from_slice(&chunk);
+ }
  let parsed:ChatResponse=serde_json::from_slice(&bytes).map_err(|e|format!("Provider response was not valid OpenAI-compatible Chat Completions JSON: {e}"))?;
  parsed.choices.into_iter().next().map(|c|c.message.content).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
 }
