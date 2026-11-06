@@ -64,7 +64,12 @@ fn plan_with_runtime_capabilities(
     if plan.accepted {
         Ok(())
     } else {
-        Err(format!("Local task preflight rejected execution: {}", plan.reason))
+        let missing = if plan.missing_capabilities.is_empty() {
+            String::new()
+        } else {
+            format!(" Missing capabilities: {}.", plan.missing_capabilities.join(", "))
+        };
+        Err(format!("Local task preflight rejected execution: {}{}", plan.reason, missing))
     }
 }
 
