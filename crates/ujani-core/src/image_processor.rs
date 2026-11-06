@@ -114,7 +114,7 @@ mod additional_format_tests {
         bmp[14..18].copy_from_slice(&40_u32.to_le_bytes());
         bmp[18..22].copy_from_slice(&32_i32.to_le_bytes());
         bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
-        let bmp_info = inspect_image("bitmap.bmp", &bmp, 26).unwrap();
+        let bmp_info = inspect_image("bitmap.bmp", &bmp, bmp.len() as u64).unwrap();
         assert_eq!(bmp_info.dimensions, Some((32, 16)));
     }
 
