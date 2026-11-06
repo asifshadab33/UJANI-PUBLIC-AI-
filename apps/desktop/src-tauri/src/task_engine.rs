@@ -392,7 +392,6 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     #[cfg(windows)]
     {
         use std::os::windows::io::AsRawHandle;
-        use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
         let process_handle = child.raw_handle().ok_or_else(|| "PDF worker exited before Job Object assignment.".to_string())?;
         if unsafe { AssignProcessToJobObject(worker_job.as_raw_handle() as _, process_handle as _) } == 0 {
