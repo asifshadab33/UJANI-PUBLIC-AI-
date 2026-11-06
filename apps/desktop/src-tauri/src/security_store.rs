@@ -2,6 +2,7 @@
 //! This module stores metadata only; it never stores prompts, outputs, API keys or peer private keys.
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
+use ed25519_dalek::VerifyingKey;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
 use ujani_core::{sha256_hex, validate_receipt, ExecutionReceipt};
@@ -74,6 +75,13 @@ fn initialize(db: &Connection) -> Result<(), String> {
          CREATE TABLE IF NOT EXISTS cloud_budget(
            utc_day INTEGER PRIMARY KEY,
            reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens >= 0)
+         );
+         CREATE TABLE IF NOT EXISTS trusted_peers(
+           peer_id TEXT PRIMARY KEY,
+           public_key_hex TEXT NOT NULL,
+           label TEXT NOT NULL,
+           enrolled_at INTEGER NOT NULL,
+           revoked_at INTEGER
          );"
     ).map_err(|e| format!("Could not initialise UJANI security store: {e}"))
 }
@@ -215,6 +223,84 @@ pub fn get_cloud_budget_status(app: AppHandle) -> Result<CloudBudgetStatus, Stri
         daily_limit_tokens: DAILY_CLOUD_TOKEN_RESERVATION,
         remaining_tokens: DAILY_CLOUD_TOKEN_RESERVATION - used,
     })
+}
+
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TrustedPeer {
+    pub peer_id: String,
+    pub public_key_hex: String,
+    pub label: String,
+    pub enrolled_at: i64,
+    pub revoked_at: Option<i64>,
+}
+
+fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
+    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Peer public key must be 32 bytes encoded as 64 hexadecimal characters.".into());
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let pair = std::str::from_utf8(chunk).map_err(|_| "Invalid public key encoding.")?;
+        bytes[index] = u8::from_str_radix(pair, 16).map_err(|_| "Invalid public key encoding.")?;
+    }
+    Ok(bytes)
+}
+
+#[tauri::command]
+pub fn enroll_trusted_peer(
+    app: AppHandle,
+    peer_id: String,
+    public_key_hex: String,
+    label: String,
+    owner_approved: bool,
+) -> Result<TrustedPeer, String> {
+    if !owner_approved {
+        return Err("Peer enrollment requires explicit device-owner approval.".into());
+    }
+    if label.trim().is_empty() || label.len() > 64 || label.chars().any(char::is_control) {
+        return Err("Peer label must be 1–64 printable characters.".into());
+    }
+    let public = decode_public_key(&public_key_hex)?;
+    VerifyingKey::from_bytes(&public).map_err(|_| "Peer Ed25519 public key is invalid.".to_string())?;
+    let expected_id = sha256_hex(&public);
+    if peer_id != expected_id {
+        return Err("Peer identifier does not match the supplied public key.".into());
+    }
+    let now = now_seconds()? as i64;
+    let db = open(&app)?;
+    db.execute(
+        "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
+         VALUES(?1,?2,?3,?4,NULL)
+         ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
+        params![peer_id, public_key_hex.to_ascii_lowercase(), label.trim(), now]
+    ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
+    Ok(TrustedPeer { peer_id, public_key_hex: public_key_hex.to_ascii_lowercase(), label: label.trim().into(), enrolled_at: now, revoked_at: None })
+}
+
+#[tauri::command]
+pub fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer identifier.".into());
+    }
+    let changed = open(&app)?.execute(
+        "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
+        params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
+    ).map_err(|e| format!("Could not revoke trusted peer: {e}"))?;
+    Ok(changed == 1)
+}
+
+#[tauri::command]
+pub fn list_trusted_peers(app: AppHandle) -> Result<Vec<TrustedPeer>, String> {
+    let db = open(&app)?;
+    let mut statement = db.prepare(
+        "SELECT peer_id,public_key_hex,label,enrolled_at,revoked_at FROM trusted_peers ORDER BY enrolled_at DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok(TrustedPeer {
+        peer_id: row.get(0)?, public_key_hex: row.get(1)?, label: row.get(2)?,
+        enrolled_at: row.get(3)?, revoked_at: row.get(4)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
