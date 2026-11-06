@@ -48,3 +48,26 @@ This is process isolation and bounded execution, not a full OS sandbox. The work
 ## Release gates still required
 
 Run the complete Rust workspace tests, Tauri native test matrix on Windows/macOS/Linux, React/TypeScript build, and CodeQL on the final PR head. Review test output rather than treating queued/in-progress checks as passed. Perform a packaged-app test for PDF cancellation on each supported OS. Do not describe UJANI as independently audited, formally sandboxed, or absolutely private on the basis of this patch alone.
+
+## D. CI supply-chain and workflow permissions
+
+The repository's CI, CodeQL, preview-installer and signed-release workflows now pin third-party GitHub Actions to full commit SHAs resolved from their upstream repositories during this remediation. Workflow token permissions are read-only by default; release write permissions are scoped to the jobs that upload and publish release assets. This reduces tag-movement risk and limits the blast radius of a compromised workflow step.
+
+**Dependency reproducibility remains open:** this repository currently has no committed npm package-lock.json and no committed desktop Cargo.lock. CI and release workflows still resolve semver-compatible dependencies at install time. Generate and review lockfiles using the supported npm and Cargo toolchains, commit them, and switch frontend CI/release installs to npm ci before treating dependency resolution as reproducible. Do not hand-author lockfiles.
+
+## E. Tauri updater and desktop permission release gates
+
+The checked-in Tauri updater public key is intentionally empty. The signed release workflow requires the TAURI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY secrets and injects the public key into the build configuration only for the release build. Until the maintainer configures and verifies those secrets and completes a signed update/install test, updater distribution must not be represented as production-ready.
+
+The current default Tauri capability grants the default core, dialog and updater plugin permission sets. Before public distribution, replace broad plugin defaults with the minimum specific commands required by the UI, verify the generated Tauri permission schema against the exact installed plugin versions, and test that unneeded dialog/updater commands are denied. Keep the current restrictive content security policy unless a documented feature requires a narrowly scoped addition.
+
+## F. Product-security boundaries not yet implemented
+
+- The resource scheduler is a deterministic policy contract; it is not yet the authoritative scheduler for every task adapter and does not reserve or release live hardware resources.
+- The execution receipt type is a provenance contract; durable receipt storage and independent output verification are not implemented.
+- The built-in model adapter is a clearly labelled deterministic mock, not an AI model. Actual local inference in the desktop app is performed through the explicitly selected Ollama service.
+- PDF extraction uses a child process but is not an OS sandbox and has no platform-specific memory/CPU quotas yet.
+- Folder import and every native long-running task still need a common cancellable task runner and per-operation budgets.
+- Worker/Partner peer networking, enrollment, trust/reputation and remote execution are not implemented.
+
+These are product and release gates, not claims that the current patch closes them.
