@@ -38,8 +38,6 @@ impl MemoryReservation {
         active.insert(task_id.to_string(), MIN_FREE_MEMORY_MB);
         Ok(Self { task_id: task_id.to_string() })
     }
-
-    pub fn reserved_memory_mb(&self) -> u64 { MIN_FREE_MEMORY_MB }
 }
 
 impl Drop for MemoryReservation {
