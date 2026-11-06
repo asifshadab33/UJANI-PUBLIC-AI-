@@ -61,7 +61,7 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
 
 
 #[tauri::command]
-pub fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
+pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
     let current = get_or_create_device_identity(app.clone())?;
     let approved = app.dialog()
         .message(format!("Rotate this device's Ed25519 identity?\n\nCurrent fingerprint: {}\n\nOther devices will need to re-enrol this device before peer tasks can be verified.", current.device_id))
@@ -87,7 +87,7 @@ pub fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> 
 }
 
 #[tauri::command]
-pub fn sign_peer_task_envelope(
+pub async fn sign_peer_task_envelope(
     app: AppHandle,
     task_id: String,
     operation: String,
