@@ -24,7 +24,7 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
-use ujani_core::{sha256_hex, ReceiptExecutionLocation, ExecutionReceipt};
+use ujani_core::{sha256_hex, validate_model_identifier, ReceiptExecutionLocation, ExecutionReceipt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
@@ -247,8 +247,12 @@ async fn execute_cloud_ai_task(
  if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
   return Err("Invalid task identifier.".into());
  }
- if mode != "smart" {
-  return Err("The BYOK cloud gateway is available in Smart mode only. Worker/Partner peer execution is not implemented; Fortress is local-only.".into());
+ if !external_data_approved {
+  return Err("Cloud transfer was not approved. No request was sent.".into());
+ }
+ cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
+ if !validate_model_identifier(&model) {
+  return Err("Model identifier cannot be recorded safely in execution provenance.".into());
  }
  let token = CancellationToken::new();
  {
@@ -256,10 +260,13 @@ async fn execute_cloud_ai_task(
   if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
   active.insert(task_id.clone(), token.clone());
  }
- if !external_data_approved {
-  if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-  return Err("Cloud transfer was not approved. No request was sent.".into());
- }
+ let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
+  Ok(slot) => slot,
+  Err(error) => {
+   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+   return Err(error);
+  }
+ };
  let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
   .map_err(|e| e.to_string())?.as_millis() as u64;
  let input_digest = sha256_hex(prompt.as_bytes());
@@ -305,7 +312,7 @@ async fn execute_cloud_ai_task(
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
   };
-  security_store::append_execution_receipt(app.clone(), receipt)
+  receipt_slot.persist(receipt)
    .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
  }
  match &result {
@@ -412,7 +419,11 @@ async fn execute_local_ai_task(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
+    if !validate_model_identifier(&model) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
     let receipt_model_id = model.clone();
@@ -456,7 +467,7 @@ async fn execute_local_ai_task(
             completed_at_unix_ms,
             user_approval_id: None,
         };
-        security_store::append_execution_receipt(app.clone(), receipt)
+        receipt_slot.persist(receipt)
             .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
     }
     match &result {
