@@ -278,32 +278,13 @@ async fn pull_ollama_model(
         return Err("Model download was not approved. No download was started.".into());
     }
     require_gateway_policy(&task_id, "model.download", true, DataClass::Public, 600)?;
-    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier.".into());
-    }
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
     let download = ollama::pull_model(&model, move |message, percent| {
         emit_task_progress(&progress_app, &progress_task, "model_downloading", &message, percent);
     });
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
-        outcome = download => outcome,
-    };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-    match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
-        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
-        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
-    }
-    result
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(12 * 60 * 60), download).await
 }
 
 /// Checks only the local Ollama service at 127.0.0.1:11434.
