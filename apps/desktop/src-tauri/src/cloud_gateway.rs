@@ -7,7 +7,23 @@ const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConversationTurn { pub role: String, pub content: String }
 #[derive(Serialize)]
-struct ChatRequest<'a> { model: &'a str, messages: Vec<ChatMessage<'a>>, max_tokens: u16, stream: bool }
+struct ChatRequest<'a> {
+ model: &'a str,
+ messages: Vec<ChatMessage<'a>>,
+ #[serde(skip_serializing_if = "Option::is_none")]
+ max_tokens: Option<u16>,
+ #[serde(skip_serializing_if = "Option::is_none")]
+ max_completion_tokens: Option<u16>,
+ stream: bool,
+}
+fn token_limit_fields(endpoint: &Url, model: &str) -> (Option<u16>, Option<u16>) {
+ // OpenAI's newer reasoning/model families use max_completion_tokens. Keep
+ // max_tokens for other OpenAI-compatible providers to preserve compatibility.
+ let newer_openai_model = endpoint.host_str() == Some("api.openai.com")
+  && (model.starts_with("o1") || model.starts_with("o3") || model.starts_with("o4")
+      || model.starts_with("gpt-5"));
+ if newer_openai_model { (None, Some(2048)) } else { (Some(2048), None) }
+}
 #[derive(Serialize)]
 struct ChatMessage<'a> { role: &'a str, content: &'a str }
 #[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>}
@@ -107,7 +123,14 @@ pub async fn execute(endpoint:String,model:String,api_key:String,messages:Vec<Co
  auth_text.zeroize();
  auth.set_sensitive(true); headers.insert(header::AUTHORIZATION,auth); headers.insert(header::CONTENT_TYPE,header::HeaderValue::from_static("application/json"));
  let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(90)).redirect(Policy::none()).no_proxy().resolve_to_addrs(&host, &addresses).default_headers(headers).build().map_err(|e|format!("Could not initialise cloud client: {e}"))?;
- let body=ChatRequest{model:&model,messages:messages.iter().map(|message|ChatMessage{role:&message.role,content:&message.content}).collect(),max_tokens:2048,stream:false};
+ let (max_tokens, max_completion_tokens) = token_limit_fields(&url, &model);
+ let body=ChatRequest {
+  model: &model,
+  messages: messages.iter().map(|message| ChatMessage { role: &message.role, content: &message.content }).collect(),
+  max_tokens,
+  max_completion_tokens,
+  stream: false,
+ };
  let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
@@ -125,6 +148,15 @@ pub async fn execute(endpoint:String,model:String,api_key:String,messages:Vec<Co
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
+#[test]
+fn selects_provider_compatible_output_token_parameter() {
+ let openai = validate_endpoint("https://api.openai.com/v1/chat/completions").unwrap();
+ let compatible = validate_endpoint("https://api.example.com/v1/chat/completions").unwrap();
+ assert_eq!(token_limit_fields(&openai, "gpt-5"), (None, Some(2048)));
+ assert_eq!(token_limit_fields(&openai, "o3-mini"), (None, Some(2048)));
+ assert_eq!(token_limit_fields(&openai, "gpt-4o"), (Some(2048), None));
+ assert_eq!(token_limit_fields(&compatible, "gpt-5"), (Some(2048), None));
+}
 #[test]
 fn validates_role_preserving_conversation_shape() {
  let turns = vec![
