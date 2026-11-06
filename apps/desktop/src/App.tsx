@@ -27,13 +27,6 @@ type ImageInfo = { file_name: string; format: string; size_bytes: number; dimens
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
 type ChatMessage = { role: "user" | "assistant"; content: string };
-function composeConversationPrompt(messages: ChatMessage[], current: string): string {
-  const currentText = current.trim();
-  const context = messages.slice(-8).map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content.slice(0, 2400)}`).join("\n\n");
-  const contextBudget = Math.max(0, 14000 - currentText.length - 40);
-  const clippedContext = contextBudget > 0 ? context.slice(-contextBudget) : "";
-  return clippedContext ? `Conversation context (recent messages):\n${clippedContext}\n\nUser: ${currentText}\nAssistant:` : currentText;
-}
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
 type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number };
 const CLOUD_PROVIDER_PRESETS = [
@@ -122,8 +115,8 @@ export default function App() {
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
-  const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
-  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudConversationPrompt, executionMode]);
+  const cloudConversationTurns: ChatMessage[] = [...cloudChatMessages.slice(-8), { role: "user", content: request.trim() }];
+  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudConversationTurns, executionMode]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
@@ -587,7 +580,7 @@ export default function App() {
     setTaskProgress({ task_id: taskId, stage: "cloud_starting", message: "Preparing approved cloud request…", progress_percent: 5 });
     setCloudBusy(true); setCloudError(""); setCloudResult("");
     try {
-      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: cloudConversationPrompt, mode: executionMode, externalDataApproved: cloudConsent });
+      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, messages: cloudConversationTurns, mode: executionMode, externalDataApproved: cloudConsent });
       setCloudResult(response);
       setCloudChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: response }]);
       setRequest("");
