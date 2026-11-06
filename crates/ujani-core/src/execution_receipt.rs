@@ -48,7 +48,19 @@ pub enum ReceiptError {
 fn valid_identifier(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
-        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-".contains(c))
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-_".contains(c))
+}
+
+fn valid_model_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.chars().any(char::is_control)
+        && !value.chars().any(char::is_whitespace)
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains("//")
+        && !value.split('/').any(|part| part == "." || part == "..")
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-_/".contains(c))
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -77,7 +89,7 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
         || !valid_identifier(&receipt.operation_id, 128)
         || !valid_identifier(&receipt.adapter_id, 96)
         || !valid_identifier(&receipt.adapter_version, 64)
-        || receipt.model_id.as_ref().is_some_and(|v| !valid_identifier(v, 128))
+        || receipt.model_id.as_ref().is_some_and(|v| !valid_model_identifier(v))
         || receipt.model_version.as_ref().is_some_and(|v| !valid_identifier(v, 64))
         || receipt.user_approval_id.as_ref().is_some_and(|v| !valid_identifier(v, 128))
     {
@@ -154,6 +166,14 @@ mod tests {
         r = receipt();
         r.completed_at_unix_ms = 99;
         assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidTimeRange));
+    }
+
+    #[test]
+    fn accepts_common_local_model_tags_and_registry_names() {
+        let mut r = receipt();
+        r.model_id = Some("hf.co/user/model_name:Q4_K_M".into());
+        r.model_version = Some("unknown".into());
+        assert_eq!(validate_receipt(&r), Ok(()));
     }
 
     #[test]
