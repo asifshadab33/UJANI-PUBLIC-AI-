@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import UpdateNotice from "./components/UpdateNotice";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
@@ -488,6 +489,7 @@ export default function App() {
         ? "Linux: follow the official Linux installation instructions on the Ollama download page."
         : "Choose your operating system on the official Ollama download page.";
   return <main className="shell">
+    <UpdateNotice />
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">U</div><div><b>UJANI</b><small>PUBLIC AI</small></div></div>
       <div className="nav-label">WORKSPACE</div>
