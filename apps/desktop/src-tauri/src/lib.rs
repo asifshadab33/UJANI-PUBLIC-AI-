@@ -303,8 +303,6 @@ async fn pull_ollama_model(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
-    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
-    let input_digest = sha256_hex(prompt.as_bytes());
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -374,6 +372,8 @@ async fn execute_local_ai_task(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
+    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
+    let input_digest = sha256_hex(prompt.as_bytes());
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
