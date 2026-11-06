@@ -46,7 +46,7 @@ fn valid_id(value: &str) -> bool {
 }
 
 fn registered_operation(value: &str) -> bool {
-    matches!(value, "local.ai.generate" | "local.word_count" | "file.analyze_text" | "image.inspect" | "document.summarize")
+    crate::capability::registered_operations().iter().any(|operation| operation.id == value)
 }
 
 fn blocked(mode: ExecutionMode, reason: &str) -> ModeRoutingDecision {
@@ -137,6 +137,20 @@ pub fn evaluate_mode(request: &RouteRequest) -> ModeRoutingDecision {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn router_uses_the_canonical_operation_registry() {
+        for operation in crate::capability::registered_operations() {
+            let request = RouteRequest {
+                task_id: "registry-test".into(), operation: operation.id.clone(),
+                mode: ExecutionMode::Fortress, required_capabilities: BTreeSet::new(),
+                available_capabilities: BTreeSet::new(), local_memory_required_mb: 0,
+                available_memory_mb: 1024, external_data_approved: false,
+                network_capability_available: false, requested_collaboration_rounds: 0,
+            };
+            assert_ne!(evaluate_mode(&request).action, RouteAction::Blocked, "{}", operation.id);
+        }
+    }
+
     use super::*;
     fn req(mode: ExecutionMode) -> RouteRequest {
         RouteRequest { task_id: "task-1".into(), operation: "local.ai.generate".into(), mode,
