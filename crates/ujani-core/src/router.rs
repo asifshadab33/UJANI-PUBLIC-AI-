@@ -45,8 +45,8 @@ fn valid_id(value: &str) -> bool {
         value.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
-fn registered_operation(value: &str) -> bool {
-    crate::capability::registered_operations().iter().any(|operation| operation.id == value)
+fn registered_operation(value: &str) -> Option<crate::capability::OperationDescriptor> {
+    crate::capability::registered_operations().into_iter().find(|operation| operation.id == value)
 }
 
 fn blocked(mode: ExecutionMode, reason: &str) -> ModeRoutingDecision {
@@ -62,13 +62,18 @@ pub fn evaluate_mode(request: &RouteRequest) -> ModeRoutingDecision {
     if !valid_id(&request.task_id) || !valid_id(&request.operation) {
         return blocked(mode, "Task ID and registered operation must be valid identifiers.");
     }
-    if !registered_operation(&request.operation) {
+    let Some(operation) = registered_operation(&request.operation) else {
         return blocked(mode, "Operation is not registered in the trusted local operation catalog.");
-    }
+    };
     if request.local_memory_required_mb > request.available_memory_mb {
         return blocked(mode, "The task exceeds the available local memory budget.");
     }
-    let local_ready = request.required_capabilities.is_subset(&request.available_capabilities);
+    // The trusted catalogue is authoritative: callers cannot omit a required
+    // capability to make an unavailable local or network operation appear ready.
+    let mut required = request.required_capabilities.clone();
+    required.extend(operation.required_capabilities.iter().cloned());
+    let requires_network = operation.required_capabilities.iter().any(|capability| capability.starts_with("network."));
+    let local_ready = !requires_network && required.is_subset(&request.available_capabilities);
 
     match mode {
         ExecutionMode::Fortress => {
@@ -147,7 +152,12 @@ mod tests {
                 available_memory_mb: 1024, external_data_approved: false,
                 network_capability_available: false, requested_collaboration_rounds: 0,
             };
-            assert_ne!(evaluate_mode(&request).action, RouteAction::Blocked, "{}", operation.id);
+            let decision = evaluate_mode(&request);
+            if operation.required_capabilities.iter().any(|capability| capability.starts_with("network.")) {
+                assert_eq!(decision.action, RouteAction::Blocked, "network operation must never execute inside Fortress: {}", operation.id);
+            } else {
+                assert_ne!(decision.action, RouteAction::Blocked, "{}", operation.id);
+            }
         }
     }
 
