@@ -248,7 +248,7 @@ async fn execute_cloud_ai_task(
  }
  // Reserve conservatively before sending: UTF-8 bytes / 2 plus the maximum completion budget.
  // Failed/cancelled requests are not refunded, preventing quota bypass through repeated retries.
- let budget = match security_store::reserve_cloud_tokens(&app, prompt.len().saturating_mul(2), 8_192) {
+ let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
   Err(error) => {
    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
