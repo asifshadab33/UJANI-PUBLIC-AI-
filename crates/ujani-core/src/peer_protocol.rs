@@ -176,6 +176,20 @@ mod tests {
     }
 
     #[test]
+    fn expired_replay_nonce_is_pruned_for_new_task() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let first = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
+        let mut guard = ReplayGuard::default();
+        assert_eq!(first.verify(&key.verifying_key(), 1_001, &mut guard), Ok(()));
+        let mut next = envelope();
+        next.issued_at = 1_121;
+        next.expires_at = 1_241;
+        let second = SignedTaskEnvelope::sign(next, &key).unwrap();
+        assert_eq!(second.verify(&key.verifying_key(), 1_122, &mut guard), Ok(()));
+        assert_eq!(guard.len(), 1);
+    }
+
+    #[test]
     fn rejects_expired_and_wrong_identity() {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
