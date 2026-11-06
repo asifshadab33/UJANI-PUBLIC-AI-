@@ -153,6 +153,7 @@ fn is_enabled(db:&Connection)->Result<bool,String>{
 }
 fn settings(db:&Connection)->Result<HistorySettings,String>{Ok(HistorySettings{enabled:is_enabled(db)?,retention_days:30,max_entries:MAX_ENTRIES})}
 
+#[cfg(test)]
 fn save(db:&mut Connection,prompt:&str,output:&str,mode:&str,model:&str,kind:&str,created_at:i64)->Result<i64,String>{
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
  if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{return Err("History prompt must be non-empty and at most 32 KiB.".into());}
@@ -170,6 +171,7 @@ fn save(db:&mut Connection,prompt:&str,output:&str,mode:&str,model:&str,kind:&st
  tx.execute("DELETE FROM task_history WHERE id NOT IN (SELECT id FROM task_history ORDER BY created_at DESC,id DESC LIMIT ?1)",params![MAX_ENTRIES]).map_err(|e|e.to_string())?;
  tx.commit().map_err(|e|e.to_string())?; Ok(id)
 }
+#[cfg(test)]
 fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
  let mut q=db.prepare("SELECT id,prompt,output,mode,model,kind,created_at FROM task_history ORDER BY created_at DESC,id DESC LIMIT ?1").map_err(|e|e.to_string())?;
  let rows=q.query_map(params![MAX_ENTRIES],|r|Ok(HistoryEntry{id:r.get(0)?,prompt:r.get(1)?,output:r.get(2)?,mode:r.get(3)?,model:r.get(4)?,kind:r.get(5)?,created_at:r.get(6)?})).map_err(|e|e.to_string())?;
