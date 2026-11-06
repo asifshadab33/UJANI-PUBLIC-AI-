@@ -1,4 +1,5 @@
 mod cloud_gateway;
+mod device_identity;
 mod folder_import;
 mod history;
 mod model_runtime;
@@ -605,7 +606,11 @@ pub fn run() {
             history::clear_task_history,
             security_store::append_execution_receipt,
             security_store::verify_execution_receipt_ledger,
-            security_store::get_cloud_budget_status
+            security_store::get_cloud_budget_status,
+            security_store::enroll_trusted_peer,
+            security_store::revoke_trusted_peer,
+            security_store::list_trusted_peers,
+            device_identity::get_or_create_device_identity
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
