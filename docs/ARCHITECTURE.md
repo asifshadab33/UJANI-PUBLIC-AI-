@@ -85,3 +85,12 @@ The snapshot is point-in-time information and can become stale. Future work must
 ## Versioned workflow graph (planning only)
 
 The core now accepts schema version 1 graphs containing at most 32 nodes. Each node must use a registered operation identifier and a bounded identifier; dependencies must exist, be unique and be acyclic. The planner produces a deterministic topological order and checks the union of required capabilities plus a conservative sequential peak-memory preflight. The desktop command rejects oversized node/dependency lists before planning. A successful plan is not an execution grant, does not reserve resources, and does not provide a sandbox. The current UI offers a fixed analyse → summarise → translate graph preview; execution still uses the dedicated document pipeline. General graph execution requires typed input/output schemas, per-node permission checks, cancellation, resource accounting and provenance before it should be enabled.
+
+
+## Resource-aware local scheduling policy
+
+The Rust core exposes a deterministic scheduler contract. A caller supplies a timestamped resource snapshot and a typed task request; the policy rejects stale or unknown telemetry, enforces CPU/RAM/concurrency limits, requires verified GPU runtime and VRAM before GPU placement, and gates background work on explicit owner opt-in, idle state and configured AC-power policy. This is a policy decision only: it does not collect telemetry, reserve resources, dispatch tasks or enforce OS limits. Native adapters must provide trustworthy measurements and atomically enforce reservations before enabling scheduling in production.
+
+## Execution provenance receipt contract
+
+The core defines a versioned receipt with exact input/output SHA-256 fields, operation, adapter/model identity, execution location, timestamps and an external-approval reference. Structural validation and hashing are implemented and tested. The receipt does not prove model correctness or execution by itself; native adapters must hash the exact bytes, bind approval evidence, persist receipts durably and sign them where remote verification is required.
