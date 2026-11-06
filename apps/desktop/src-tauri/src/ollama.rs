@@ -138,6 +138,30 @@ pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PullProgress {
+    status: String,
+    percent: u8,
+    success: bool,
+}
+
+fn parse_pull_progress_line(line: &[u8]) -> Result<PullProgress, String> {
+    let event: serde_json::Value = serde_json::from_slice(line)
+        .map_err(|_| "Ollama returned an invalid model-download progress event.".to_string())?;
+    if let Some(error) = event.get("error").and_then(|value| value.as_str()) {
+        return Err(format!("Ollama could not download this model: {error}"));
+    }
+    let status = event.get("status").and_then(|value| value.as_str())
+        .unwrap_or("Downloading model").to_string();
+    let total = event.get("total").and_then(|value| value.as_u64()).unwrap_or(0);
+    let completed = event.get("completed").and_then(|value| value.as_u64()).unwrap_or(0);
+    let percent = if total > 0 {
+        ((completed as u128 * 100 / total as u128).min(99)) as u8
+    } else { 0 };
+    let success = status.eq_ignore_ascii_case("success");
+    Ok(PullProgress { status, percent, success })
+}
+
 #[derive(Serialize)]
 struct PullModelRequest<'a> { name: &'a str, stream: bool }
 
@@ -171,18 +195,10 @@ where F: FnMut(String, u8) {
         for byte in chunk {
             if byte == b'\n' {
                 if pending.is_empty() { continue; }
-                let event: serde_json::Value = serde_json::from_slice(&pending)
-                    .map_err(|_| "Ollama returned an invalid model-download progress event.".to_string())?;
+                let progress = parse_pull_progress_line(&pending)?;
                 pending.clear();
-                if let Some(error) = event.get("error").and_then(|v| v.as_str()) {
-                    return Err(format!("Ollama could not download this model: {error}"));
-                }
-                let status = event.get("status").and_then(|v| v.as_str()).unwrap_or("Downloading model");
-                let total = event.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
-                let done = event.get("completed").and_then(|v| v.as_u64()).unwrap_or(0);
-                let percent = if total > 0 { ((done as u128 * 100 / total as u128).min(99)) as u8 } else { 0 };
-                on_progress(status.to_string(), percent);
-                if status.eq_ignore_ascii_case("success") { completed = true; }
+                on_progress(progress.status, progress.percent);
+                if progress.success { completed = true; }
             } else {
                 pending.push(byte);
                 if pending.len() > 16 * 1024 {
@@ -192,12 +208,10 @@ where F: FnMut(String, u8) {
         }
     }
     if !pending.is_empty() {
-        let event: serde_json::Value = serde_json::from_slice(&pending)
-            .map_err(|_| "Ollama returned an incomplete model-download progress event.".to_string())?;
-        if let Some(error) = event.get("error").and_then(|v| v.as_str()) {
-            return Err(format!("Ollama could not download this model: {error}"));
-        }
-        if event.get("status").and_then(|v| v.as_str()) == Some("success") { completed = true; }
+        let progress = parse_pull_progress_line(&pending)
+            .map_err(|_| "Ollama returned an incomplete or invalid model-download progress event.".to_string())?;
+        on_progress(progress.status, progress.percent);
+        if progress.success { completed = true; }
     }
     if !completed { return Err("Ollama download ended before reporting success. Check Ollama and retry.".into()); }
     on_progress("Model installed and ready".into(), 100);
@@ -229,6 +243,25 @@ mod tests {
         assert!(!retryable_status(reqwest::StatusCode::NOT_FOUND));
         assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));
         assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
+    }
+
+    #[test]
+    fn parses_download_progress_and_never_reports_complete_before_success() {
+        let progress = parse_pull_progress_line(br#"{"status":"downloading","total":1000,"completed":425}"#).unwrap();
+        assert_eq!(progress.status, "downloading");
+        assert_eq!(progress.percent, 42);
+        assert!(!progress.success);
+        let done = parse_pull_progress_line(br#"{"status":"success"}"#).unwrap();
+        assert_eq!(done.percent, 0);
+        assert!(done.success);
+    }
+
+    #[test]
+    fn caps_download_progress_and_rejects_provider_errors_or_bad_json() {
+        let progress = parse_pull_progress_line(br#"{"status":"downloading","total":10,"completed":100}"#).unwrap();
+        assert_eq!(progress.percent, 99);
+        assert!(parse_pull_progress_line(br#"{"error":"model not found"}"#).unwrap_err().contains("model not found"));
+        assert!(parse_pull_progress_line(b"not-json").is_err());
     }
 
     #[test]
