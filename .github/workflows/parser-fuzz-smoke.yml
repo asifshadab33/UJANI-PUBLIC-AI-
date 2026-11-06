@@ -26,8 +26,8 @@ jobs:
           - target: pdf_text
             max_len: 10485760
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           components: llvm-tools-preview
       - name: Install cargo-fuzz
