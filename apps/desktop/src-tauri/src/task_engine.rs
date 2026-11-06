@@ -264,11 +264,78 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if data.len() > 10 * 1024 * 1024 { return Err("PDF input exceeds the 10 MiB limit.".into()); }
     let exe = std::env::current_exe().map_err(|e| format!("Could not locate PDF worker executable: {e}"))?;
-    let mut child = tokio::process::Command::new(exe)
-        .arg("--pdf-extract-worker")
+
+    #[cfg(windows)]
+    let worker_job = {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+            JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+            JOB_OBJECT_LIMIT_PROCESS_TIME,
+        };
+        struct Job(HANDLE);
+        impl Drop for Job {
+            fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
+        }
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() { return Err(format!("Could not create PDF worker Job Object: {}", std::io::Error::last_os_error())); }
+        let job = Job(handle);
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME;
+        limits.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart = 45 * 10_000_000;
+        limits.ProcessMemoryLimit = 768 * 1024 * 1024;
+        let configured = unsafe {
+            SetInformationJobObject(
+                job.0, JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const _, std::mem::size_of_val(&limits) as u32
+            )
+        };
+        if configured == 0 { return Err(format!("Could not configure PDF worker resource limits: {}", std::io::Error::last_os_error())); }
+        job
+    };
+
+    let mut command = tokio::process::Command::new(exe);
+    command.arg("--pdf-extract-worker")
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .kill_on_drop(true).spawn()
-        .map_err(|e| format!("Could not start isolated PDF extraction worker: {e}"))?;
+        .kill_on_drop(true);
+
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().pre_exec(|| {
+            let limits = [
+                (libc::RLIMIT_CPU, 45_u64, 45_u64),
+                (libc::RLIMIT_AS, 768 * 1024 * 1024, 768 * 1024 * 1024),
+                (libc::RLIMIT_NOFILE, 16, 16),
+                (libc::RLIMIT_FSIZE, 0, 0),
+                (libc::RLIMIT_CORE, 0, 0),
+            ];
+            for (resource, soft, hard) in limits {
+                let limit = libc::rlimit { rlim_cur: soft as libc::rlim_t, rlim_max: hard as libc::rlim_t };
+                if libc::setrlimit(resource, &limit) != 0 { return Err(std::io::Error::last_os_error()); }
+            }
+            #[cfg(target_os = "linux")]
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    let mut child = command.spawn()
+        .map_err(|e| format!("Could not start resource-limited PDF extraction worker: {e}"))?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+        if unsafe { AssignProcessToJobObject(worker_job.0, child.as_raw_handle() as _) } == 0 {
+            let _ = child.kill().await;
+            return Err(format!("Could not assign PDF worker to its resource-limited Job Object: {}", std::io::Error::last_os_error()));
+        }
+    }
     let mut stdin = child.stdin.take().ok_or("PDF worker stdin unavailable")?;
     let mut stdout = child.stdout.take().ok_or("PDF worker stdout unavailable")?;
     let work = async move {
