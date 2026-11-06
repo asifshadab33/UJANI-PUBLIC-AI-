@@ -89,3 +89,10 @@ No release should be described as secure, private-by-design in implementation, o
 - [ ] Encrypted peer transport, device-to-device connection lifecycle, remote execution/dispatch and signed remote receipt exchange.
 - [ ] Full GPU/driver/runtime compatibility inventory and NPU support. Positive Ollama VRAM telemetry is evidence of GPU use only; absence of telemetry remains Unknown.
 - [ ] Hardware-backed device identity, external trust-anchor for the receipt ledger, user-configurable provider spend ceilings and independent platform security review.
+
+
+## Privacy receipt visibility update
+
+- [x] Expose a bounded latest-50 execution receipt listing only after full local hash-chain verification succeeds.
+- [x] Show ledger integrity, record count, execution adapter/model/location, timestamps and input/output/record digests in the desktop privacy panel.
+- [ ] Independent signature/remote anchoring and receipt export remain future work; the local hash chain is tamper-evident, not a signed external audit log.
