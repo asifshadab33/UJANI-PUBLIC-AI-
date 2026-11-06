@@ -18,6 +18,7 @@ use ujani_core::{FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
+use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
 
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
@@ -118,6 +119,12 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         capabilities, operations: registered_operations(),
         available_memory_mb: system.available_memory() / (1024 * 1024),
     })
+}
+
+/// Returns the bounded, built-in tool catalogue. Listing metadata never executes a tool or grants permissions.
+#[tauri::command]
+fn get_tool_catalogue() -> Vec<ToolManifest> {
+    builtin_tool_manifests()
 }
 
 /// Plans an allow-listed local operation. This command does not execute or reserve resources.
@@ -477,6 +484,7 @@ pub fn run() {
             execute_cloud_ai_task,
             get_device_info,
             get_capability_snapshot,
+            get_tool_catalogue,
             plan_local_operation,
             plan_task_workflow,
             list_local_models,

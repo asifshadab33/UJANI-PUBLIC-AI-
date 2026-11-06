@@ -174,18 +174,19 @@ mod tests {
     }
 }
 
-
 /// Four-mode execution policy preview; no execution or networking occurs here.
 pub mod router;
 pub mod file_processor;
 pub mod image_processor;
 pub mod capability;
+pub mod tool_registry;
+pub mod impact;
 
 pub use capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
-
 pub use file_processor::{analyze_text, FileAnalysis};
 pub use image_processor::{inspect_image, ImageInfo};
-
+pub use tool_registry::{builtin_tool_manifests, validate_tool_registry, ExecutionKind, NetworkAccess, ResourceBudget, ToolCategory, ToolManifest, ToolPermission};
+pub use impact::{compare_energy_scenarios, EnergyAccountingError, EnergyAccountingInput, EnergyImpactEstimate};
 
 pub mod task_graph;
 pub use task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
@@ -195,3 +196,13 @@ pub use model_advisor::{recommend_local_model, InstalledModelSize, ModelFitEstim
 
 /// Signed and consent-scoped Worker/Partner task envelope primitives (no transport/enrollment).
 pub mod peer_protocol;
+
+pub mod placement;
+pub use placement::{plan_energy_aware_placement, DevicePowerState, PlacementDecision, PlacementInput, WorkerCandidate, WorkerEstimate};
+pub mod safety_policy;
+pub use safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadIntent};
+
+pub mod policy_gate;
+pub use policy_gate::{evaluate_execution, DataClass, ExecutionRequest, ExecutionTarget, GateDecision, GateResult};
+pub mod energy_telemetry;
+pub use energy_telemetry::{aggregate_observations, validate_observation, DashboardTotals, EnergyObservation, MeasurementKind, ObservationError};

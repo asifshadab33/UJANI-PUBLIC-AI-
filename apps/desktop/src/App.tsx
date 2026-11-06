@@ -9,6 +9,7 @@ type DeviceInfo = { os: string; architecture: string; logical_cpus: number; tota
 type CapabilityRecord = { id: string; category: string; state: "available" | "unavailable" | "unknown"; source: string; detail: string };
 type OperationDescriptor = { id: string; description: string; required_capabilities: string[]; minimum_available_memory_mb: number };
 type CapabilitySnapshot = { capabilities: CapabilityRecord[]; operations: OperationDescriptor[]; available_memory_mb: number };
+type ToolManifest = { id: string; version: string; name: string; description: string; category: string; execution: string; network: string; permissions: string[]; budget: { max_input_bytes: number; max_output_bytes: number; max_memory_mb: number; max_runtime_ms: number }; adapter_available: boolean };
 type WorkflowNode = { id: string; operation_id: string; depends_on: string[] };
 type WorkflowPlan = { accepted: boolean; schema_version: number; ordered_node_ids: string[]; required_capabilities: string[]; estimated_peak_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type ModelRecommendation = { recommended_model: string | null; available_memory_mb: number; usable_memory_budget_mb: number; candidates: { name: string; size_bytes: number; estimated_working_memory_mb: number | null; estimated_to_fit: boolean; reason: string }[]; explanation: string };
@@ -101,6 +102,9 @@ export default function App() {
   const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
   const [capabilityBusy, setCapabilityBusy] = useState(false);
   const [capabilityError, setCapabilityError] = useState("");
+  const [toolCatalogue, setToolCatalogue] = useState<ToolManifest[] | null>(null);
+  const [toolCatalogueBusy, setToolCatalogueBusy] = useState(false);
+  const [toolCatalogueError, setToolCatalogueError] = useState("");
   const [plannedOperation, setPlannedOperation] = useState("local.ai.generate");
   const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
   const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
@@ -219,6 +223,14 @@ export default function App() {
       setCapabilitySnapshot(await invoke<CapabilitySnapshot>("get_capability_snapshot"));
     } catch (error) { setCapabilityError(String(error)); }
     finally { setCapabilityBusy(false); }
+  }
+
+  async function refreshToolCatalogue() {
+    if (!isTauri() || toolCatalogueBusy) return;
+    setToolCatalogueBusy(true); setToolCatalogueError("");
+    try { setToolCatalogue(await invoke<ToolManifest[]>("get_tool_catalogue")); }
+    catch (error) { setToolCatalogueError(String(error)); }
+    finally { setToolCatalogueBusy(false); }
   }
 
   async function previewLocalPlan() {
@@ -681,6 +693,25 @@ export default function App() {
           <small className="muted">Only this fixed, validated local sequence executes. It uses text already selected in the app; no arbitrary graph nodes, filesystem paths, shell commands or cloud requests are executed.</small>
         </div>
         <small className="muted">GPU/NPU are reported as unknown until verified. Memory thresholds are coarse preflight checks, not model-specific estimates or reservations. The planner supports local operations only; Worker/Partner gateway is not implemented.</small>
+      </div>
+      <div className="model-box resource-box" id="tool-catalogue">
+        <div className="section-heading">
+          <div><h2><HardDrive size={18}/> UJANI tool catalogue</h2><p>Small built-in catalogue loaded only when requested. Manifests describe capabilities; they do not grant permissions.</p></div>
+          <button className="model-run" onClick={refreshToolCatalogue} disabled={!isTauri() || toolCatalogueBusy}>{toolCatalogueBusy ? "Loading…" : "Load tool catalogue"}</button>
+        </div>
+        {toolCatalogueError && <p className="error" role="alert">{toolCatalogueError}</p>}
+        {!isTauri() && <p className="muted">Open the desktop application to load the native catalogue.</p>}
+        {toolCatalogue && <div className="capability-list">
+          {toolCatalogue.map((tool) => <div className="principle" key={tool.id}>
+            <span className={`dot ${tool.adapter_available ? "online" : ""}`}/>
+            <div><b>{tool.name} <small>v{tool.version}</small></b>
+              <small>{tool.description}</small>
+              <small>{tool.category.replace(/_/g, " ")} · {tool.execution.replace(/_/g, " ")} · Network: {tool.network} · {tool.adapter_available ? "Native adapter declared" : "Metadata only"}</small>
+              <small>Permissions: {tool.permissions.join(", ") || "None declared"} · Limits: {Math.round(tool.budget.max_input_bytes / 1024)} KiB input / {tool.budget.max_memory_mb} MiB memory / {tool.budget.max_runtime_ms} ms</small>
+            </div>
+          </div>)}
+        </div>}
+        <small className="muted">This is a curated catalogue, not a claim that 100+ tools are already implemented. Runtime adapters still enforce their own permissions, validation, cancellation and limits.</small>
       </div>
       <div className="workspace" id="chat-workspace">
         <div className="task-panel">
