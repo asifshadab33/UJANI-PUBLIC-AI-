@@ -240,7 +240,7 @@ async fn execute_cloud_ai_task(
  }
  emit_task_progress(&app, &task_id, "cloud_starting", "Preparing the user-approved cloud request.", 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
- let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved);
+ let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
  let result = tokio::select! {
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
   outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
