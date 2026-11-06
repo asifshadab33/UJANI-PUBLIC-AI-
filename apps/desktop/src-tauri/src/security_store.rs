@@ -26,6 +26,13 @@ pub struct ReceiptLedgerStatus {
     pub head_sha256: String,
 }
 
+/// Metadata-only execution receipt shown in the local privacy/provenance panel.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReceiptLedgerEntry {
+    pub receipt: ExecutionReceipt,
+    pub record_hash: String,
+}
+
 /// Current per-installation BYOK token reservation for the UTC day.
 #[derive(Debug, Clone, Serialize)]
 pub struct CloudBudgetStatus {
@@ -311,6 +318,33 @@ pub fn append_execution_receipt(app: AppHandle, receipt: ExecutionReceipt) -> Re
 #[tauri::command]
 pub fn verify_execution_receipt_ledger(app: AppHandle) -> Result<ReceiptLedgerStatus, String> {
     verify_receipts_db(&open(&app)?)
+}
+
+/// Return the latest 50 metadata-only receipts, refusing to display an invalid ledger.
+#[tauri::command]
+pub fn list_execution_receipts(app: AppHandle) -> Result<Vec<ReceiptLedgerEntry>, String> {
+    let db = open(&app)?;
+    let status = verify_receipts_db(&db)?;
+    if !status.valid {
+        return Err("Execution receipt ledger integrity check failed; receipts are hidden until the store is investigated.".into());
+    }
+    let mut statement = db.prepare(
+        "SELECT receipt_json,record_hash FROM execution_receipts ORDER BY id DESC LIMIT 50"
+    ).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, String>(1)?,
+    ))).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    for row in rows {
+        let (json, record_hash) = row.map_err(|e| e.to_string())?;
+        let receipt: ExecutionReceipt = serde_json::from_str(&json)
+            .map_err(|_| "Receipt ledger contains an unreadable entry.".to_string())?;
+        validate_receipt(&receipt)
+            .map_err(|_| "Receipt ledger contains an invalid entry.".to_string())?;
+        entries.push(ReceiptLedgerEntry { receipt, record_hash });
+    }
+    Ok(entries)
 }
 
 /// Return the current UTC-day token reservation for this installation.
