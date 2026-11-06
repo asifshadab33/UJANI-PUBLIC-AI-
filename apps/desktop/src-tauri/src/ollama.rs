@@ -22,10 +22,6 @@ const NUM_CTX: u32 = 8192;
 #[derive(Deserialize)] struct ChatReply { message: ChatReplyMsg }
 #[derive(Deserialize)] struct ChatReplyMsg { content: String }
 pub struct Turn<'a> { pub role: &'a str, pub content: &'a str }
-#[derive(Serialize)]
-struct GenerateRequest<'a> { model: &'a str, prompt: &'a str, stream: bool }
-#[derive(Deserialize)]
-struct GenerateResponse { response: String }
 
 fn build_client(total_timeout: Option<Duration>) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
