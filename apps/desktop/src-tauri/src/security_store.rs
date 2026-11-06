@@ -353,13 +353,13 @@ pub fn verify_and_claim_peer_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ujani_core::{ExecutionLocation, ExecutionReceipt};
+    use ujani_core::{ReceiptExecutionLocation, ExecutionReceipt};
 
     fn db() -> Connection { let c = Connection::open_in_memory().unwrap(); initialize(&c).unwrap(); c }
     fn receipt(task_id: &str) -> ExecutionReceipt {
         ExecutionReceipt {
             schema_version: 1, task_id: task_id.into(), operation_id: "document.summarize".into(),
-            location: ExecutionLocation::LocalCpu, adapter_id: "ollama.local".into(),
+            location: ReceiptExecutionLocation::LocalCpu, adapter_id: "ollama.local".into(),
             adapter_version: "1.0.0".into(), model_id: Some("qwen2.5".into()),
             model_version: Some("local-runtime".into()), input_sha256: sha256_hex(b"input"),
             output_sha256: sha256_hex(b"output"), started_at_unix_ms: 1_000,
