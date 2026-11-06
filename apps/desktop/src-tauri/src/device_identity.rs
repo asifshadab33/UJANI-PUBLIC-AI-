@@ -2,6 +2,9 @@
 //! Only the public key and its derived identifier are exposed to the frontend.
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use ed25519_dalek::SigningKey;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use ujani_core::{peer_protocol::{SignedTaskEnvelope, TaskEnvelope, PROTOCOL_VERSION}, registered_operations};
+use std::time::{SystemTime, UNIX_EPOCH};
 use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use tauri::AppHandle;
@@ -53,6 +56,56 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
     let public_key_hex = hex(&public);
     let device_id = ujani_core::sha256_hex(&public);
     Ok(DeviceIdentity { device_id, public_key_hex, algorithm: "Ed25519" })
+}
+
+
+#[tauri::command]
+pub fn sign_peer_task_envelope(
+    app: AppHandle,
+    task_id: String,
+    operation: String,
+    payload: Vec<u8>,
+    requested_scopes: Vec<String>,
+) -> Result<SignedTaskEnvelope, String> {
+    if payload.len() > 10 * 1024 * 1024 {
+        return Err("Peer payload exceeds the 10 MiB signing limit.".into());
+    }
+    if !registered_operations().iter().any(|registered| registered.id == operation) {
+        return Err("Peer operation is not in UJANI's registered operation catalogue.".into());
+    }
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid peer task identifier.".into());
+    }
+    let scopes = requested_scopes.join(", ");
+    let digest = ujani_core::sha256_hex(&payload);
+    let approved = app.dialog()
+        .message(format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len()))
+        .title("Approve peer task consent")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved {
+        return Err("Peer task signing was not approved. No data was sent.".into());
+    }
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?.as_secs();
+    let mut nonce_bytes = [0_u8; 16];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = hex(&nonce_bytes);
+    let envelope = TaskEnvelope {
+        protocol_version: PROTOCOL_VERSION,
+        task_id,
+        issued_at: now,
+        expires_at: now.saturating_add(ujani_core::peer_protocol::MAX_TASK_TTL_SECONDS),
+        nonce,
+        operation,
+        input_sha256: digest,
+        requested_scopes,
+        user_consent: true,
+    };
+    SignedTaskEnvelope::sign(envelope, &load_or_create_signing_key()?)
+        .map_err(|e| format!("Could not sign peer task envelope: {e:?}"))
 }
 
 #[cfg(test)]
