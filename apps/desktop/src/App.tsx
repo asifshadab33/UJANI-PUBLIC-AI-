@@ -90,6 +90,7 @@ export default function App() {
   const [fileTranslatedSummary, setFileTranslatedSummary] = useState("");
   const [translateSummary, setTranslateSummary] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [activePdfTaskId, setActivePdfTaskId] = useState<string | null>(null);
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
   const [folderResults, setFolderResults] = useState<FolderFileResult[]>([]);
@@ -473,11 +474,14 @@ export default function App() {
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("PDF processing is available in Fortress and Smart only."); return; }
+    const taskId = "pdf-" + Date.now().toString(36);
+    setActivePdfTaskId(taskId);
+    setTaskProgress({ task_id: taskId, stage: "pdf_starting", message: "Starting isolated PDF extraction…", progress_percent: 5 });
     setSummaryBusy(true);
     try {
       const data = Array.from(new Uint8Array(await file.arrayBuffer()));
       const result = await invoke<DocumentPipelineResult>("process_selected_pdf", {
-        fileName: file.name, data, mode: executionMode, model: ollamaModel,
+        taskId, fileName: file.name, data, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
       });
       setFileAnalysis(result.analysis);
@@ -487,7 +491,7 @@ export default function App() {
       await saveToPersistentHistory("PDF: " + file.name, result.summary, "pdf", result.model);
       setFileText("");
     } catch (error) { setFileError(String(error)); }
-    finally { setSummaryBusy(false); event.target.value = ""; }
+    finally { setSummaryBusy(false); setActivePdfTaskId(null); event.target.value = ""; }
   }
 
   async function translateLocally() {
@@ -799,6 +803,13 @@ export default function App() {
             <label className="file-picker">Extract and summarise PDF locally (max 10 MiB; extracted text up to 256 KiB)
               <input type="file" accept=".pdf,application/pdf" onChange={handlePdfFile} disabled={summaryBusy}/>
             </label>
+            {summaryBusy && activePdfTaskId && <div className="file-picker">
+              <p className="progress" role="status">{taskProgress?.task_id === activePdfTaskId ? taskProgress.message : "Processing PDF locally…"}</p>
+              <button type="button" className="model-run" onClick={async () => {
+                try { await invoke<boolean>("cancel_active_task", { taskId: activePdfTaskId }); }
+                catch (error) { setFileError("Could not cancel PDF processing: " + String(error)); }
+              }}>Cancel PDF processing</button>
+            </div>}
             <div className="file-picker">
               <b>Analyze a folder using the native folder picker</b>
               <button type="button" className="model-run" onClick={handleFolderSelection} disabled={!isTauri() || folderBusy || (executionMode !== "fortress" && executionMode !== "smart")}>
