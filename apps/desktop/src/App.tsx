@@ -215,9 +215,10 @@ export default function App() {
   }
 
   async function clearPersistentHistory() {
-    if (!window.confirm("Delete all saved UJANI task history? This does not securely erase storage media.")) return;
-    try { await invoke("clear_task_history"); setPersistentHistory([]); }
-    catch (error) { setHistoryError(String(error)); }
+    try {
+      const cleared = await invoke<boolean>("clear_task_history");
+      if (cleared) setPersistentHistory([]);
+    } catch (error) { setHistoryError(String(error)); }
   }
 
   async function refreshCapabilities() {
