@@ -214,6 +214,23 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   let tampered=format!("{}A",&encrypted);
   assert!(decrypt_text(&key,&tampered,1,"prompt").is_err());
  }
+ #[test] fn ciphertext_cannot_be_moved_between_rows_or_columns() {
+  let key=[1u8;32];
+  let encrypted=encrypt_text(&key,"secret",1,"prompt").unwrap();
+  assert_eq!(decrypt_text(&key,&encrypted,1,"prompt").unwrap(),"secret");
+  assert!(decrypt_text(&key,&encrypted,2,"prompt").is_err());
+  assert!(decrypt_text(&key,&encrypted,1,"output").is_err());
+ }
+ #[test] fn one_bad_row_does_not_break_the_history_list() {
+  let mut c=db(); c.execute("UPDATE history_settings SET value='true'",[]).unwrap();
+  let key=[3u8;32];
+  c.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('garbage','garbage','smart','m','chat',1)",[]).unwrap();
+  save_secure(&mut c,&key,"good prompt","good output","smart","m","chat",2).unwrap();
+  let entries=list_secure(&c,&key).unwrap();
+  assert_eq!(entries.len(),2);
+  assert!(entries.iter().any(|entry|entry.prompt=="[unreadable entry: key changed or data corrupted]"));
+  assert!(entries.iter().any(|entry|entry.prompt=="good prompt"));
+ }
  #[test] fn plaintext_history_rows_are_migrated() {
   let db=db();
   db.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('old prompt','old output','smart','m','chat',1)",[]).unwrap();
