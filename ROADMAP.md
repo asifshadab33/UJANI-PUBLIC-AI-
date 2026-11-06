@@ -67,3 +67,17 @@ This roadmap describes intended work, not completed features. Items are not prod
 ## Release gates
 
 No release should be described as secure, private-by-design in implementation, or production-ready solely because it follows this roadmap. Those claims require implementation evidence, tests and review.
+
+
+## Security release blockers — audit follow-up (implementation branch)
+
+- [x] Ollama client disables redirects and all environment proxies; local redirect regression test added.
+- [x] History v2 AES-GCM AAD binds ciphertext to row ID and column; normal reads reject legacy v1.
+- [x] One-time legacy/plaintext history migration marker prevents repeated v1 migration after v2 upgrade.
+- [x] PDF extraction runs in kill-on-drop child process with bounded stdin/stdout and hard extraction timeout.
+- [x] Native PDF command is registered in task cancellation state; UI exposes Cancel PDF processing.
+- [ ] Run and pass Rust, Tauri Windows/macOS/Linux, frontend build and CodeQL checks on final PR head.
+- [ ] Package and manually verify PDF cancellation/worker termination on Windows, macOS and Linux.
+- [ ] Consider stronger OS sandbox profiles; child-process isolation is not equivalent to OS sandboxing.
+
+Historical v1 caveat: ciphertexts swapped before the first v2 migration cannot be retrospectively associated with their original row/column. The migration re-encrypts the bytes found in each row; it cannot establish historical provenance. See `docs/SECURITY_AUDIT_REMEDIATION.md`.
