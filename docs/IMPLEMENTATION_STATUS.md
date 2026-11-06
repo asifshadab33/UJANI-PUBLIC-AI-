@@ -101,3 +101,8 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - The core now includes a typed execution receipt contract with exact-byte SHA-256 fields, adapter/model provenance, execution location, timestamps and external approval reference.
 - These additions are policy/schema foundations only. No native telemetry adapter, atomic reservation, task dispatcher, durable receipt ledger, signed receipt verification or real distributed execution is claimed.
 - A reproducible benchmark protocol is documented; no benchmark campaign or measured performance claim is asserted.
+
+
+## Audit remediation update — cancellable local tasks
+
+The document/PDF and translation commands now share the native task registry used by local chat and model downloads. Each accepts a bounded task identifier, rejects duplicate active IDs, emits lifecycle events, observes explicit cancellation, and applies a 240-second overall time budget. The desktop UI passes IDs and exposes cancellation buttons. Cancellation drops the in-flight async operation; the PDF child process uses kill-on-drop. CI and platform smoke tests are still required before claiming verified behaviour.
