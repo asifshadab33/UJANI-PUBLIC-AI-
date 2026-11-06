@@ -4,6 +4,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 
 ## Phase 0 — foundations (current)
 - [x] First-run workspace launcher with clear entry points for local AI chat, online BYOK AI, files, local setup, update center and explicitly unavailable Worker/Partner modes.
+- [x] Bounded multi-turn local and online chat context with separate clear-chat controls and fresh exact-request cloud consent.
 - [x] Define local-first product principles and explicit non-goals.
 - [x] Add an initial typed Rust task/capability model and routing tests.
 - [x] Document privacy, security and contribution expectations.

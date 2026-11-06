@@ -25,6 +25,14 @@ type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; 
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
+type ChatMessage = { role: "user" | "assistant"; content: string };
+function composeConversationPrompt(messages: ChatMessage[], current: string): string {
+  const currentText = current.trim();
+  const context = messages.slice(-8).map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content.slice(0, 2400)}`).join("\n\n");
+  const contextBudget = Math.max(0, 14000 - currentText.length - 40);
+  const clippedContext = context.slice(-contextBudget);
+  return clippedContext ? `Conversation context (recent messages):\n${clippedContext}\n\nUser: ${currentText}\nAssistant:` : currentText;
+}
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
 type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number };
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -33,6 +41,8 @@ export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
   const [deviceError, setDeviceError] = useState("");
   const [request, setRequest] = useState("");
+  const [localChatMessages, setLocalChatMessages] = useState<ChatMessage[]>([]);
+  const [cloudChatMessages, setCloudChatMessages] = useState<ChatMessage[]>([]);
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [policy, setPolicy] = useState("local");
@@ -91,7 +101,8 @@ export default function App() {
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
-  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), request.trim(), executionMode]);
+  const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
+  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudConversationPrompt, executionMode]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
@@ -287,14 +298,18 @@ export default function App() {
       return;
     }
     if (!ollamaModel) { setOllamaError("Install and start Ollama, then pull a model before running local AI."); return; }
+    const chatPrompt = composeConversationPrompt(localChatMessages, request);
+    const userMessage = request.trim();
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null);
     try {
-      const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: request, mode: executionMode, model: ollamaModel });
+      const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: chatPrompt, mode: executionMode, model: ollamaModel });
       setAiResult(result);
-      await saveToPersistentHistory(request.trim(), result.output, "chat", result.model);
+      setLocalChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: result.output }]);
+      await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
+      setRequest("");
     } catch (error) { setOllamaError(String(error)); }
     finally { setAiBusy(false); setActiveTaskId(null); }
   }
@@ -472,12 +487,16 @@ export default function App() {
       return;
     }
     if (!cloudApiKey.trim()) { setCloudError("Enter your own provider API key. UJANI does not supply keys or credits."); return; }
+    const userMessage = request.trim();
     const taskId = "cloud-ai-" + Date.now().toString(36);
     setActiveCloudTaskId(taskId);
     setTaskProgress({ task_id: taskId, stage: "cloud_starting", message: "Preparing approved cloud request…", progress_percent: 5 });
     setCloudBusy(true); setCloudError(""); setCloudResult("");
     try {
-      setCloudResult(await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: request.trim(), mode: executionMode, externalDataApproved: cloudConsent }));
+      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: cloudConversationPrompt, mode: executionMode, externalDataApproved: cloudConsent });
+      setCloudResult(response);
+      setCloudChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: response }]);
+      setRequest("");
     } catch (error) { setCloudError(String(error)); }
     finally { setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); setCloudConsentSnapshot(""); }
   }
@@ -597,7 +616,7 @@ export default function App() {
       </div>
       <div className="workspace" id="chat-workspace">
         <div className="task-panel">
-          <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a prompt to test the local-only execution path.</p></div><Zap size={20}/></div>
+          <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a task, or continue in the local or online chat workspace below.</p></div><Zap size={20}/></div>
           <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
           <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
           <div className="mode-panel">
@@ -651,7 +670,11 @@ export default function App() {
             <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
-            {aiResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Local AI result <span>{aiResult.execution_location}</span></div><p>{aiResult.output}</p><small>{aiResult.mode_used} · {aiResult.model} · no cloud fallback</small></div>}
+            <div className="chat-thread" aria-live="polite">
+              {localChatMessages.length === 0 ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><p>{message.content}</p></div>)}
+            </div>
+            <div className="chat-footer"><small>{localChatMessages.length ? "Recent conversation context is sent only to your local Ollama service." : "No conversation has started yet."}</small><button type="button" onClick={() => { setLocalChatMessages([]); setAiResult(null); }} disabled={!localChatMessages.length || aiBusy}>Clear local chat</button></div>
+            {aiResult && <small className="muted">{aiResult.mode_used} · {aiResult.model} · local Ollama · no cloud fallback</small>}
             <small className="muted">Fortress and Smart only. This uses HTTP to loopback Ollama. Fortress does not yet provide OS-wide process or network isolation on this build.</small>
           </div>
           <div className="model-box" id="document-workspace">
@@ -719,12 +742,16 @@ export default function App() {
             <label className="model-select">API endpoint<input type="url" value={cloudEndpoint} onChange={(event) => setCloudEndpoint(event.target.value)} placeholder="https://api.example.com/v1/chat/completions"/></label>
             <label className="model-select">Model name<input value={cloudModel} onChange={(event) => setCloudModel(event.target.value)} maxLength={128} placeholder="Provider model identifier"/></label>
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
-            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact prompt to this exact endpoint and model for this task only.</label>
+            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation and current message to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>
             <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot || !cloudApiKey.trim() || cloudBusy || executionMode !== "smart"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
             {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
-            {cloudResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Cloud provider response <span>{cloudModel}</span></div><p>{cloudResult}</p><small>External processing was approved for this task. Not saved to history automatically.</small></div>}
+            <div className="chat-thread cloud-thread" aria-live="polite">
+              {cloudChatMessages.length === 0 ? <p className="chat-empty">Your online conversation will appear here. Each new message includes recent turns and requires fresh approval before it is sent.</p> : cloudChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : cloudModel || "Online AI"}</b><p>{message.content}</p></div>)}
+            </div>
+            <div className="chat-footer"><small>{cloudChatMessages.length ? "Recent conversation context is sent to your selected provider after each approval." : "No online conversation has started."}</small><button type="button" onClick={() => { setCloudChatMessages([]); setCloudResult(""); }} disabled={!cloudChatMessages.length || cloudBusy}>Clear online chat</button></div>
+            {cloudResult && <small className="muted">Last response received from {cloudModel}. Online chat is not automatically saved to UJANI history.</small>}
           </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>
@@ -736,7 +763,7 @@ export default function App() {
             {modelResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> {modelResult.is_mock ? "Mock adapter result" : "Model result"} <span>{modelResult.execution}</span></div><p>{modelResult.output}</p><small>{modelResult.model_name} · {modelResult.model_id} · {modelResult.is_mock ? "No AI inference occurred" : "Local inference"}</small></div>}
           </div>
         </div>
-        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Requests stay on this device in this prototype.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
+        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history persistent-history">
             <h3>Saved task history</h3>
