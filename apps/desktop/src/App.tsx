@@ -557,14 +557,13 @@ export default function App() {
     setModelResult(null);
     setModelError("");
     try {
-      if (!isTauri()) {
-        setModelResult({ model_id: "ujani.mock.echo.v1", model_name: "UJANI Mock Echo (test adapter)", output: `MOCK RESPONSE — no model inference occurred. Browser preview received ${text.length} characters locally: ${text}`, execution: "Browser deterministic mock", is_mock: true });
+      if (isTauri()) {
+        setModelError("The mock adapter is disabled in desktop builds. Use the real Ollama Local AI workflow instead.");
       } else {
-        const modelId = selectedModel === "auto" ? "auto" : selectedModel;
-        setModelResult(await invoke<InferenceResult>("run_local_model_task", { modelId, prompt: text }));
+        setModelResult({ model_id: "ujani.mock.echo.v1", model_name: "UJANI Mock Echo (test adapter)", output: `MOCK RESPONSE — no model inference occurred. Browser preview received ${text.length} characters locally: ${text}`, execution: "Browser deterministic mock", is_mock: true });
       }
     } catch (error) {
-      setModelError(`Local model task failed: ${String(error)}`);
+      setModelError(`Browser preview mock failed: ${String(error)}`);
     } finally {
       setModelBusy(false);
     }
@@ -894,17 +893,17 @@ export default function App() {
             <div className="chat-footer"><small>{cloudChatMessages.length ? "Recent conversation context is sent to your selected provider after each approval." : "No online conversation has started."}</small><button type="button" onClick={() => { setCloudChatMessages([]); setCloudResult(""); }} disabled={!cloudChatMessages.length || cloudBusy}>Clear online chat</button></div>
             {cloudResult && <small className="muted">Last response received from {cloudModel}. Online chat is not automatically saved to UJANI history.</small>}
           </div>
-          <div className="model-box">
-            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local model adapter</h2><p>Runtime discovery and typed adapter proof-of-concept</p></div><span className="muted">NO CLOUD</span></div>
+          {!isTauri() && <div className="model-box">
+            <div className="section-heading"><div><h2><BrainCircuit size={18}/> Browser preview mock adapter</h2><p>Deterministic demo only — not an AI model and not shipped as a desktop runtime</p></div><span className="muted">DEMO ONLY</span></div>
             <label className="model-select">Model selection<select value={selectedModel} onChange={(event) => { setSelectedModel(event.target.value); setModelResult(null); setModelError(""); }}><option value="auto">Automatic (currently resolves to the only registered local mock)</option>{models.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
             {models.map((model) => <div className="model-status" key={model.id}><span className={model.available ? "dot online" : "dot"}/><div><b>{model.name}</b><small>{model.status} · {model.required_capabilities.join(", ")} required · {model.is_mock ? "MOCK — not a real model" : "Local model"}</small></div></div>)}
             {modelError && <p className="error" role="alert">{modelError}</p>}
             <button className="model-run" onClick={runModel} disabled={!request.trim() || modelBusy || (!!selected && !selected.available)}>{modelBusy ? "Running locally…" : "Run selected local adapter"} <Send size={15}/></button>
             {modelBusy && <p className="progress" role="status">Local adapter running. No network request is made.</p>}
-            {modelResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> {modelResult.is_mock ? "Mock adapter result" : "Model result"} <span>{modelResult.execution}</span></div><p>{modelResult.output}</p><small>{modelResult.model_name} · {modelResult.model_id} · {modelResult.is_mock ? "No AI inference occurred" : "Local inference"}</small></div>}
-          </div>
+            {modelResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Mock adapter result <span>{modelResult.execution}</span></div><p>{modelResult.output}</p><small>{modelResult.model_name} · {modelResult.model_id} · No AI inference occurred</small></div>}
+          </div>}
         </div>
-        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
+        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>Browser preview uses a labelled mock; desktop inference uses the selected local Ollama model.</small></div></div>
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history persistent-history">
             <h3>Saved task history</h3>
