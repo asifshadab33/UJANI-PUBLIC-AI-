@@ -36,4 +36,10 @@ ed25519-dalek = "3"
 ujani-core = { path = "../../../crates/ujani-core" }
 
 # Keep the Tauri application in its own workspace; the shared core crate is a path dependency.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects"] }
+
 [workspace]
