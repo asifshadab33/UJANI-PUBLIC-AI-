@@ -120,7 +120,7 @@ mod additional_format_tests {
 
     #[test]
     fn rejects_png_without_ihdr_and_legacy_os2_bmp_header() {
-        let mut png = b"\\x89PNG\\r\\n\\x1a\\n".to_vec();
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
         png.extend_from_slice(&[0, 0, 0, 13, b'B', b'A', b'D', b'!']);
         png.extend_from_slice(&1_u32.to_be_bytes());
         png.extend_from_slice(&1_u32.to_be_bytes());
