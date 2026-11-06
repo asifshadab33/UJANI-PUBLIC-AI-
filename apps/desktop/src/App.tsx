@@ -40,6 +40,7 @@ const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
   const [deviceError, setDeviceError] = useState("");
+  const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
   const [localChatMessages, setLocalChatMessages] = useState<ChatMessage[]>([]);
   const [cloudChatMessages, setCloudChatMessages] = useState<ChatMessage[]>([]);
@@ -109,27 +110,13 @@ export default function App() {
   const [cloudError, setCloudError] = useState("");
 
   useEffect(() => {
+    // Deliberately do not invoke native services during first render. The launcher
+    // must be interactive even if Ollama, the OS inventory, history or update service
+    // is slow, unavailable, or still starting.
     if (!isTauri()) {
-      setDeviceError("Browser preview: launch the Tauri desktop app to read device information.");
+      setDeviceError("Browser preview: launch the Tauri desktop app to use native features.");
       setModels([{ id: "ujani.mock.echo.v1", name: "UJANI Mock Echo (test adapter)", provider: "Built-in deterministic mock", available: true, is_mock: true, required_capabilities: ["cpu"], status: "Browser preview only — mock" }]);
-      return;
     }
-    // Keep startup independent: one slow native service must never block the workspace.
-    invoke<DeviceInfo>("get_device_info").then(setDevice).catch((error) => setDeviceError(String(error)));
-    invoke<CapabilitySnapshot>("get_capability_snapshot").then(setCapabilitySnapshot).catch((error) => setCapabilityError("Device capability check timed out or failed: " + String(error)));
-    invoke<ModelInfo[]>("list_local_models").then(setModels).catch((error) => setModelError(String(error)));
-    invoke<OllamaStatus>("get_ollama_status").then((status) => {
-      setOllamaStatus(status);
-      if (status.models.length) setOllamaModel(status.models[0].name);
-      else setOllamaError(status.available ? "Ollama is running, but no model is installed yet. Install a model in the Local AI setup section." : "Ollama is not running. You can still use online AI or file tools.");
-    }).catch((error) => setOllamaError("Local model check failed: " + String(error)));
-    // Model recommendations are loaded on demand; they are not required to open the app.
-    invoke<HistorySettings>("get_task_history_settings").then(async (settings) => {
-      setHistorySettings(settings);
-      if (!settings.enabled) { setPersistentHistory([]); return; }
-      try { setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history")); }
-      catch (error) { setHistoryError("Encrypted history could not be opened: " + String(error)); }
-    }).catch((error) => setHistoryError("History settings unavailable: " + String(error)));
   }, []);
 
   useEffect(() => {
@@ -140,6 +127,36 @@ export default function App() {
       .catch((error) => setOllamaError(String(error)));
     return () => { unlisten?.(); };
   }, []);
+
+  async function loadDeviceInfo() {
+    if (!isTauri() || device || deviceBusy) return;
+    setDeviceBusy(true);
+    setDeviceError("");
+    try {
+      setDevice(await invoke<DeviceInfo>("get_device_info"));
+    } catch (error) {
+      setDeviceError("Device information unavailable: " + String(error));
+    } finally {
+      setDeviceBusy(false);
+    }
+  }
+
+  function openLocalChat() {
+    document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
+  }
+
+  function openFileTools() {
+    document.getElementById("document-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // File inspection works without Ollama; check local AI only when the user opens file tools.
+    if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
+  }
+
+  function openLocalSetup() {
+    document.getElementById("local-resources")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    void loadDeviceInfo();
+    if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
+  }
 
   async function refreshPersistentHistory() {
     if (!isTauri()) return;
@@ -538,16 +555,16 @@ export default function App() {
       <section className="launcher-section" aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
-          <button className="launcher-card launcher-primary" onClick={() => document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          <button className="launcher-card launcher-primary" onClick={openLocalChat}>
             <span className="launcher-icon"><BrainCircuit size={21}/></span><b>Chat with my local AI</b><small>Use models running on this computer. No provider key or cloud transfer.</small><span className="launcher-action">Open local chat →</span>
           </button>
           <button className="launcher-card" onClick={() => document.getElementById("online-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
             <span className="launcher-icon"><Zap size={21}/></span><b>Chat with online AI</b><small>Use a hosted AI model over the internet. Bring a provider key or compatible API.</small><span className="launcher-action">Set up online chat →</span>
           </button>
-          <button className="launcher-card" onClick={() => document.getElementById("document-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          <button className="launcher-card" onClick={openFileTools}>
             <span className="launcher-icon"><HardDrive size={21}/></span><b>Work with my files</b><small>Analyze documents, PDFs, folders and image metadata using local tools.</small><span className="launcher-action">Open file tools →</span>
           </button>
-          <button className="launcher-card" onClick={() => document.getElementById("local-resources")?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+          <button className="launcher-card" onClick={openLocalSetup}>
             <span className="launcher-icon"><Cpu size={21}/></span><b>Set up local AI</b><small>Check Ollama, installed models, memory and available device capabilities.</small><span className="launcher-action">View device setup →</span>
           </button>
           <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
@@ -564,7 +581,7 @@ export default function App() {
       </section>
       <div className="section-heading"><div><h2>Your device</h2><p>Read-only system information</p></div><span className="muted">No background compute</span></div>
       <div className="metrics">
-        <div className="metric"><Cpu/><small>PROCESSOR</small><b>{device ? `${device.logical_cpus} logical cores` : "Not detected"}</b><span>{(device?.architecture ?? deviceError) || "Waiting for desktop runtime"}</span></div>
+        <div className="metric"><Cpu/><small>PROCESSOR</small><b>{deviceBusy ? "Checking…" : device ? `${device.logical_cpus} logical cores` : "Not checked"}</b><span>{(device?.architecture ?? deviceError) || "Waiting for desktop runtime"}</span></div>
         <div className="metric"><HardDrive/><small>SYSTEM MEMORY</small><b>{memory}</b><span>{device ? `${(device.available_memory_mb / 1024).toFixed(1)} GB currently available` : "Native runtime required"}</span></div>
         <div className="metric"><Monitor/><small>PLATFORM</small><b>{device?.os ?? "Not detected"}</b><span>GPU / NPU detection not yet implemented</span></div>
       </div>
@@ -644,7 +661,7 @@ export default function App() {
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
           <div className="model-box" id="local-ai-workspace">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI chat</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
-            <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaStatus === null ? "Checking local service…" : ollamaStatus.available ? "Connected locally" : "Not detected"}</b><small>{ollamaStatus === null ? "Checking 127.0.0.1:11434…" : ollamaStatus.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
+            <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaBusy ? "Checking local service…" : ollamaStatus === null ? "Not checked yet" : ollamaStatus.available ? "Connected locally" : "Not detected"}</b><small>{ollamaBusy ? "Checking 127.0.0.1:11434…" : ollamaStatus === null ? "UJANI checks the local service only when you open Local AI or choose Refresh." : ollamaStatus.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
             <button className="model-run" onClick={refreshOllamaStatus} disabled={!isTauri() || ollamaBusy}>{ollamaBusy ? "Checking Ollama…" : "Refresh Ollama status"}</button>
             {(!ollamaStatus?.available || ollamaStatus.models.length === 0) && <div className="install-guide">
               <b>Set up local AI on this PC</b>
