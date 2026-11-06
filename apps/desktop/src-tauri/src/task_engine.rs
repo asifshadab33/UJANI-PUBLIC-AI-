@@ -269,7 +269,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     let worker_job = {
         use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
         use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+            CreateJobObjectW, SetInformationJobObject,
             JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
             JOB_OBJECT_LIMIT_PROCESS_TIME,
@@ -284,7 +284,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags =
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME;
-        limits.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart = 45 * 10_000_000;
+        limits.BasicLimitInformation.PerProcessUserTimeLimit = 45 * 10_000_000;
         limits.ProcessMemoryLimit = 768 * 1024 * 1024;
         let configured = unsafe {
             SetInformationJobObject(
@@ -373,7 +373,8 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
-        if unsafe { AssignProcessToJobObject(worker_job.0, child.as_raw_handle() as _) } == 0 {
+        let process_handle = child.raw_handle().ok_or_else(|| "PDF worker exited before Job Object assignment.".to_string())?;
+        if unsafe { AssignProcessToJobObject(worker_job.0, process_handle as _) } == 0 {
             let _ = child.kill().await;
             return Err(format!("Could not assign PDF worker to its resource-limited Job Object: {}", std::io::Error::last_os_error()));
         }
