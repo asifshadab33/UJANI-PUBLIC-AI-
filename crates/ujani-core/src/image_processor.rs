@@ -41,12 +41,13 @@ pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> 
             ("WebP", None)
         }
         "bmp" => {
+            // Validate the fixed header length before any slice access.
+            if data.len() < 26 || &data[..2] != b"BM" { return Err("Invalid BMP header.".into()); }
             // Only parse Windows BITMAPINFOHEADER-compatible DIB headers; OS/2 12-byte headers use different offsets.
             let dib_header_size = u32::from_le_bytes(data[14..18].try_into().map_err(|_| "Invalid BMP DIB header size.")?);
             if dib_header_size < 40 || dib_header_size as usize > data.len().saturating_sub(14) {
                 return Err("Unsupported or incomplete BMP DIB header.".into());
             }
-            if data.len() < 26 || &data[..2] != b"BM" { return Err("Invalid BMP header.".into()); }
             let w = i32::from_le_bytes(data[18..22].try_into().map_err(|_| "Invalid BMP width.")?).unsigned_abs();
             let h = i32::from_le_bytes(data[22..26].try_into().map_err(|_| "Invalid BMP height.")?).unsigned_abs();
             if w == 0 || h == 0 { return Err("Invalid BMP dimensions.".into()); }
@@ -118,6 +119,13 @@ mod additional_format_tests {
         bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
         let bmp_info = inspect_image("bitmap.bmp", &bmp, 26).unwrap();
         assert_eq!(bmp_info.dimensions, Some((32, 16)));
+    }
+
+    #[test]
+    fn rejects_truncated_bmp_before_header_slicing() {
+        for length in 1..26 {
+            assert!(inspect_image("short.bmp", &vec![0; length], length as u64).is_err());
+        }
     }
 
     #[test]
