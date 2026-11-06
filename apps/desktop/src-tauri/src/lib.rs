@@ -10,7 +10,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::Mutex};
+use std::{collections::{BTreeSet, HashMap}, future::Future, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
@@ -207,19 +207,26 @@ struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::Docum
 
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
-async fn execute_document_workflow(file_name:String,content:String,mode:String,model:String,translation_language:Option<String>)->Result<WorkflowExecutionResult,String>{
- if content.len()>256*1024{return Err("Workflow input exceeds the 256 KiB document limit.".into());}
- if mode!="fortress"&&mode!="smart"{return Err("Executable document workflows are local-only (Fortress or Smart).".into());}
- let snapshot=get_capability_snapshot().await?;
- let graph=TaskGraph{schema_version:1,nodes:vec![
- TaskNode{id:"analyse".into(),operation_id:"file.analyze_text".into(),depends_on:vec![]},
- TaskNode{id:"summarise".into(),operation_id:"document.summarize".into(),depends_on:vec!["analyse".into()]},
- TaskNode{id:"translate".into(),operation_id:"translate.text".into(),depends_on:vec!["summarise".into()]}]};
- let plan=plan_task_graph(&graph,&mode,snapshot.available_memory_mb,&snapshot.capabilities);
- if !plan.accepted{return Err(format!("Workflow preflight rejected execution: {}",plan.reason));}
- // Do not interpret arbitrary graph data as executable code. This command runs this fixed sequence only.
- let result=LocalTaskEngine::process_document(file_name,content,mode,model,translation_language).await?;
- Ok(WorkflowExecutionResult{plan,result})
+async fn execute_document_workflow(
+ app: AppHandle, control: State<'_, TaskControlState>, task_id: String,
+ file_name: String, content: String, mode: String, model: String,
+ translation_language: Option<String>,
+) -> Result<WorkflowExecutionResult, String> {
+ let future = async {
+  if content.len() > 256 * 1024 { return Err("Workflow input exceeds the 256 KiB document limit.".into()); }
+  if mode != "fortress" && mode != "smart" { return Err("Executable document workflows are local-only (Fortress or Smart).".into()); }
+  let snapshot = get_capability_snapshot().await?;
+  let graph = TaskGraph { schema_version: 1, nodes: vec![
+   TaskNode { id: "analyse".into(), operation_id: "file.analyze_text".into(), depends_on: vec![] },
+   TaskNode { id: "summarise".into(), operation_id: "document.summarize".into(), depends_on: vec!["analyse".into()] },
+   TaskNode { id: "translate".into(), operation_id: "translate.text".into(), depends_on: vec!["summarise".into()] },
+  ]};
+  let plan = plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities);
+  if !plan.accepted { return Err(format!("Workflow preflight rejected execution: {}", plan.reason)); }
+  let result = LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await?;
+  Ok(WorkflowExecutionResult { plan, result })
+ };
+ run_budgeted(&app, &control, &task_id, Duration::from_secs(600), future).await
 }
 
 
@@ -346,6 +353,71 @@ struct TaskProgressEvent {
     progress_percent: u8,
 }
 
+
+struct TaskGuard<'a> { control: &'a TaskControlState, task_id: String }
+impl Drop for TaskGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.control.active.lock() { active.remove(&self.task_id); }
+    }
+}
+enum TaskEnd { Cancelled, TimedOut, Failed(String) }
+
+fn validate_task_id(task_id: &str) -> Result<(), String> {
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier.".into());
+    }
+    Ok(())
+}
+
+/// Common cancellation and deadline boundary for every native long-running task.
+/// Dropping the guarded future cancels its in-flight async work and always clears its registry entry.
+async fn run_budgeted<T, F>(
+    app: &AppHandle,
+    control: &TaskControlState,
+    task_id: &str,
+    budget: Duration,
+    future: F,
+) -> Result<T, String>
+where F: Future<Output = Result<T, String>> {
+    validate_task_id(task_id)?;
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(task_id) { return Err("Task identifier is already active.".into()); }
+        active.insert(task_id.to_string(), token.clone());
+    }
+    let _guard = TaskGuard { control, task_id: task_id.to_string() };
+    emit_task_progress(app, task_id, "running", "Task started.", 5);
+    let outcome: Result<T, TaskEnd> = tokio::select! {
+        _ = token.cancelled() => Err(TaskEnd::Cancelled),
+        result = tokio::time::timeout(budget, future) => match result {
+            Err(_) => Err(TaskEnd::TimedOut),
+            Ok(Err(error)) => Err(TaskEnd::Failed(error)),
+            Ok(Ok(value)) => Ok(value),
+        }
+    };
+    match outcome {
+        Ok(value) => {
+            emit_task_progress(app, task_id, "completed", "Task completed.", 100);
+            Ok(value)
+        }
+        Err(TaskEnd::Cancelled) => {
+            emit_task_progress(app, task_id, "cancelled", "Task cancelled by user.", 0);
+            Err("Task cancelled by user.".into())
+        }
+        Err(TaskEnd::TimedOut) => {
+            let message = format!("Task exceeded its {}-second time budget.", budget.as_secs());
+            emit_task_progress(app, task_id, "timed_out", &message, 0);
+            Err(message)
+        }
+        Err(TaskEnd::Failed(error)) => {
+            emit_task_progress(app, task_id, "failed", &error, 0);
+            Err(error)
+        }
+    }
+}
+
 fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str, progress_percent: u8) {
     let _ = app.emit("ujani-task-progress", TaskProgressEvent {
         task_id: task_id.to_string(),
@@ -412,20 +484,23 @@ fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis,
 
 /// Summarises explicitly selected text with Ollama on loopback only.
 #[tauri::command]
-async fn summarize_selected_text(file_name: String, content: String, mode: String, model: String) -> Result<String, String> {
-    LocalTaskEngine::summarize(file_name, content, mode, model).await
+async fn summarize_selected_text(
+    app: AppHandle, control: State<'_, TaskControlState>, task_id: String,
+    file_name: String, content: String, mode: String, model: String,
+) -> Result<String, String> {
+    let future = LocalTaskEngine::summarize(file_name, content, mode, model);
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(140), future).await
 }
 
 /// Runs bounded text analysis followed by local-only Ollama summarisation.
 #[tauri::command]
 async fn process_selected_document(
-    file_name: String,
-    content: String,
-    mode: String,
-    model: String,
+    app: AppHandle, control: State<'_, TaskControlState>, task_id: String,
+    file_name: String, content: String, mode: String, model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await
+    let future = LocalTaskEngine::process_document(file_name, content, mode, model, translation_language);
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(600), future).await
 }
 
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
@@ -474,12 +549,11 @@ async fn process_selected_pdf(
 /// Translates user-provided text through the selected local Ollama model.
 #[tauri::command]
 async fn translate_text_local(
-    text: String,
-    target_language: String,
-    mode: String,
-    model: String,
+    app: AppHandle, control: State<'_, TaskControlState>, task_id: String,
+    text: String, target_language: String, mode: String, model: String,
 ) -> Result<String, String> {
-    LocalTaskEngine::translate_local(text, target_language, mode, model).await
+    let future = LocalTaskEngine::translate_local(text, target_language, mode, model);
+    run_budgeted(&app, &control, &task_id, Duration::from_secs(140), future).await
 }
 
 /// Inspects image bytes supplied by the user through the UI; never opens a path.
