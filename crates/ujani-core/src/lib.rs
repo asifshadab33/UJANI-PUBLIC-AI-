@@ -210,3 +210,7 @@ pub use energy_telemetry::{aggregate_observations, validate_observation, Dashboa
 /// Fail-closed resource-aware scheduling policy; decisions do not execute or reserve work.
 pub mod resource_scheduler;
 pub use resource_scheduler::{plan_local_schedule, LocalPlacement, ResourceSnapshot, ScheduleDecision, TaskResourceRequest, ThermalState};
+
+/// Typed, hash-bound execution provenance receipt contract.
+pub mod execution_receipt;
+pub use execution_receipt::{sha256_hex, validate_receipt, ExecutionLocation as ReceiptExecutionLocation, ExecutionReceipt, ReceiptError};
