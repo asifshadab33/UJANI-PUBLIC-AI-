@@ -3,6 +3,7 @@ mod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
+pub mod pdf_worker;
 mod task_engine;
 
 use task_engine::LocalTaskEngine;
