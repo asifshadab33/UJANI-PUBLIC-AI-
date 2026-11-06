@@ -3,6 +3,7 @@ mod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
+pub mod pdf_worker;
 mod task_engine;
 
 use task_engine::LocalTaskEngine;
@@ -11,6 +12,7 @@ use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo
 use serde::Serialize;
 use std::{collections::{BTreeSet, HashMap}, sync::Mutex};
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
 use sysinfo::System;
@@ -239,7 +241,23 @@ async fn pull_ollama_model(
     control: State<'_, TaskControlState>,
     task_id: String,
     model: String,
+    mode: String,
 ) -> Result<(), String> {
+    if mode == "fortress" {
+        return Err("Fortress mode blocks model downloads because they require internet access.".into());
+    }
+    if mode != "smart" {
+        return Err("Model downloads are available only in Smart mode.".into());
+    }
+    let approved = app.dialog()
+        .message(format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry."))
+        .title("Approve model download")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved {
+        return Err("Model download was not approved. No download was started.".into());
+    }
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
@@ -257,18 +275,12 @@ async fn pull_ollama_model(
     });
     let result = tokio::select! {
         _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), download) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err("Model download exceeded the 30-minute task limit. Check your connection and Ollama status.".into()),
-            }
-        }
+        outcome = download => outcome,
     };
     if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
-        Err(error) if error.contains("30-minute") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
     result

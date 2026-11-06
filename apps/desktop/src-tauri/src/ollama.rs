@@ -1,6 +1,6 @@
 //! Strictly local Ollama adapter. It contacts only the loopback address and never a cloud endpoint.
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 const BASE_URL: &str = "http://127.0.0.1:11434";
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
@@ -14,15 +14,30 @@ pub struct OllamaModel {
 }
 #[derive(Deserialize)]
 struct ModelList { models: Vec<OllamaModel> }
-#[derive(Serialize)]
-struct GenerateRequest<'a> { model: &'a str, prompt: &'a str, stream: bool }
-#[derive(Deserialize)]
-struct GenerateResponse { response: String }
 
-fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder().connect_timeout(Duration::from_secs(2))
-        .timeout(Duration::from_secs(45)).build()
-        .map_err(|e| format!("Could not initialise local Ollama client: {e}"))
+const NUM_CTX: u32 = 8192;
+#[derive(Serialize)] struct ChatMsg<'a> { role: &'a str, content: &'a str }
+#[derive(Serialize)] struct ChatOptions { num_ctx: u32, temperature: f32 }
+#[derive(Serialize)] struct ChatBody<'a> { model: &'a str, messages: Vec<ChatMsg<'a>>, stream: bool, options: ChatOptions, keep_alive: &'a str }
+#[derive(Deserialize)] struct ChatReply { message: ChatReplyMsg }
+#[derive(Deserialize)] struct ChatReplyMsg { content: String }
+pub struct Turn<'a> { pub role: &'a str, pub content: &'a str }
+
+fn build_client(total_timeout: Option<Duration>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy();
+    if let Some(timeout) = total_timeout {
+        builder = builder.timeout(timeout);
+    }
+    builder.build().map_err(|e| format!("Could not initialise local Ollama client: {e}"))
+}
+
+fn client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT.get_or_init(|| build_client(Some(Duration::from_secs(180))))
+        .as_ref().map_err(Clone::clone)
 }
 fn retryable_status(status: reqwest::StatusCode) -> bool {
     // Retry transient throttling/timeouts and server faults, but never ordinary
@@ -36,6 +51,12 @@ fn retryable_status(status: reqwest::StatusCode) -> bool {
 fn valid_model(model: &str) -> bool {
     !model.is_empty() && model.len() <= 128 && !model.contains("..") &&
         model.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
+}
+
+pub fn valid_pull_model(model: &str) -> bool {
+    if !valid_model(model) { return false; }
+    let segments: Vec<&str> = model.split('/').collect();
+    segments.len() <= 2 && !(segments.len() == 2 && (segments[0].contains('.') || segments[0].contains(':')))
 }
 async fn parse_limited<T: for<'de> Deserialize<'de>>(mut response: reqwest::Response) -> Result<T, String> {
     let status = response.status();
@@ -92,50 +113,79 @@ pub async fn is_available() -> bool {
     }
 }
 pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
-    // Model discovery is a startup-adjacent health operation; cap it separately from inference.
-    let response = client()?.get(format!("{BASE_URL}/api/tags")).timeout(Duration::from_secs(6)).send().await
+    let response = client()?
+        .get(format!("{BASE_URL}/api/tags"))
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await
         .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
     let list: ModelList = parse_limited(response).await?;
     Ok(list.models)
 }
 
-/// Retry only transient connection/time-out and server failures. Validation errors,
-/// oversized responses, malformed JSON and other client errors are never retried.
-pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
-    if !valid_model(model) { return Err("Invalid local model identifier.".into()); }
-    if prompt.trim().is_empty() { return Err("Prompt cannot be empty.".into()); }
-    if prompt.len() > MAX_PROMPT_BYTES { return Err("Prompt exceeds the 32 KiB local limit.".into()); }
-
+pub async fn chat(
+    model: &str,
+    system: Option<&str>,
+    turns: &[Turn<'_>],
+) -> Result<String, String> {
+    if !valid_model(model) {
+        return Err("Invalid local model identifier.".into());
+    }
+    let total = turns
+        .iter()
+        .try_fold(system.map_or(0usize, str::len), |n, turn| n.checked_add(turn.content.len()))
+        .ok_or_else(|| "Prompt size overflow.".to_string())?;
+    if turns.is_empty() || total == 0 {
+        return Err("Prompt cannot be empty.".into());
+    }
+    if total > MAX_PROMPT_BYTES {
+        return Err("Prompt exceeds the 32 KiB local limit.".into());
+    }
+    let mut messages = Vec::with_capacity(turns.len() + usize::from(system.is_some()));
+    if let Some(content) = system {
+        messages.push(ChatMsg { role: "system", content });
+    }
+    for turn in turns {
+        if turn.role != "user" && turn.role != "assistant" {
+            return Err("Invalid chat role.".into());
+        }
+        messages.push(ChatMsg { role: turn.role, content: turn.content });
+    }
+    let body = ChatBody {
+        model,
+        messages,
+        stream: false,
+        options: ChatOptions { num_ctx: NUM_CTX, temperature: 0.3 },
+        keep_alive: "5m",
+    };
     let c = client()?;
-    let request = GenerateRequest { model, prompt, stream: false };
     let mut last_error = String::new();
-
     for attempt in 0..MAX_ATTEMPTS {
-        let response = c.post(format!("{BASE_URL}/api/generate")).json(&request).send().await;
-        match response {
+        match c.post(format!("{BASE_URL}/api/chat")).json(&body).send().await {
             Ok(response) if retryable_status(response.status()) => {
                 last_error = format!("Local Ollama returned HTTP {}.", response.status());
             }
             Ok(response) => {
-                let result: GenerateResponse = parse_limited(response).await?;
-                if result.response.trim().is_empty() {
+                let parsed: ChatReply = parse_limited(response).await?;
+                if parsed.message.content.trim().is_empty() {
                     return Err("Local Ollama returned an empty response.".into());
                 }
-                return Ok(result.response);
+                return Ok(parsed.message.content);
             }
-            Err(error) if error.is_timeout() || error.is_connect() => {
+            Err(error) if error.is_connect() => {
                 last_error = format!("Local Ollama request failed: {error}");
             }
             Err(error) => return Err(format!("Local Ollama request failed: {error}")),
         }
-
         if attempt + 1 < MAX_ATTEMPTS {
-            let delay_ms = 250_u64 * (1_u64 << attempt);
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            tokio::time::sleep(Duration::from_millis(250 * (1u64 << attempt))).await;
         }
     }
-
     Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
+}
+
+pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
+    chat(model, None, &[Turn { role: "user", content: prompt }]).await
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -168,14 +218,10 @@ struct PullModelRequest<'a> { name: &'a str, stream: bool }
 /// Pulls one model from the local Ollama service. Progress is parsed from its NDJSON stream.
 pub async fn pull_model<F>(model: &str, mut on_progress: F) -> Result<(), String>
 where F: FnMut(String, u8) {
-    if !valid_model(model) {
-        return Err("Invalid Ollama model name. Use a library identifier such as llama3.2 or qwen2.5:3b.".into());
+    if !valid_pull_model(model) {
+        return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2 or qwen2.5:3b.".into());
     }
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(30 * 60))
-        .build()
-        .map_err(|e| format!("Could not initialise local Ollama download client: {e}"))?;
+    let client = build_client(None)?;
     let response = client.post(format!("{BASE_URL}/api/pull"))
         .json(&PullModelRequest { name: model, stream: true })
         .send().await
@@ -185,19 +231,26 @@ where F: FnMut(String, u8) {
     }
     let mut response = response;
     let mut pending = Vec::<u8>::new();
-    let mut received = 0usize;
+    let mut last_percent: i32 = -1;
+    let mut last_status = String::new();
     let mut completed = false;
-    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Model download stream failed: {e}"))? {
-        received = received.saturating_add(chunk.len());
-        if received > 8 * 1024 * 1024 {
-            return Err("Ollama progress stream exceeded the 8 MiB safety limit.".into());
-        }
+    loop {
+        let chunk = match tokio::time::timeout(Duration::from_secs(120), response.chunk()).await {
+            Err(_) => return Err("Model download stalled for 2 minutes. Check your connection and retry.".into()),
+            Ok(Err(e)) => return Err(format!("Model download stream failed: {e}")),
+            Ok(Ok(None)) => break,
+            Ok(Ok(Some(chunk))) => chunk,
+        };
         for byte in chunk {
             if byte == b'\n' {
                 if pending.is_empty() { continue; }
                 let progress = parse_pull_progress_line(&pending)?;
                 pending.clear();
-                on_progress(progress.status, progress.percent);
+                if progress.percent as i32 != last_percent || progress.status != last_status {
+                    last_percent = progress.percent as i32;
+                    last_status = progress.status.clone();
+                    on_progress(progress.status.clone(), progress.percent);
+                }
                 if progress.success { completed = true; }
             } else {
                 pending.push(byte);
@@ -210,7 +263,7 @@ where F: FnMut(String, u8) {
     if !pending.is_empty() {
         let progress = parse_pull_progress_line(&pending)
             .map_err(|_| "Ollama returned an incomplete or invalid model-download progress event.".to_string())?;
-        on_progress(progress.status, progress.percent);
+        on_progress(progress.status.clone(), progress.percent);
         if progress.success { completed = true; }
     }
     if !completed { return Err("Ollama download ended before reporting success. Check Ollama and retry.".into()); }
@@ -231,6 +284,17 @@ mod tests {
         assert!(!valid_model("org/../model"));
         assert!(!valid_model("model name"));
         assert!(!valid_model(&"m".repeat(129)));
+    }
+
+    #[test]
+    fn pull_rejects_custom_registry_hosts() {
+        assert!(valid_pull_model("llama3.2"));
+        assert!(valid_pull_model("qwen2.5:3b"));
+        assert!(valid_pull_model("library/llama3.2"));
+        assert!(!valid_pull_model("evil.example.com/ns/model"));
+        assert!(!valid_pull_model("localhost:5000/m"));
+        assert!(!valid_pull_model("hf.co/org/repo"));
+        assert!(!valid_pull_model("a/b/c"));
     }
 
     #[test]

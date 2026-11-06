@@ -235,6 +235,14 @@ pub fn validate_tool_registry(manifests: &[ToolManifest]) -> Result<(), Registry
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_builtin_tool_is_in_the_canonical_operation_registry() {
+        let operations = crate::capability::registered_operations();
+        for tool in builtin_tool_manifests() {
+            assert!(operations.iter().any(|operation| operation.id == tool.id), "unregistered tool: {}", tool.id);
+        }
+    }
+
     use super::*;
 
     #[test]
