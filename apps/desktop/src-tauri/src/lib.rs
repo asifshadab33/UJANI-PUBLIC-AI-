@@ -254,6 +254,12 @@ async fn execute_cloud_ai_task(
  if !validate_model_identifier(&model) {
   return Err("Model identifier cannot be recorded safely in execution provenance.".into());
  }
+ let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .map_err(|e| e.to_string())?.as_millis() as u64;
+ let input_digest = sha256_hex(prompt.as_bytes());
+ let receipt_model_id = model.clone();
+ // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
+ let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  let token = CancellationToken::new();
  {
   let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -267,12 +273,6 @@ async fn execute_cloud_ai_task(
    return Err(error);
   }
  };
- let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-  .map_err(|e| e.to_string())?.as_millis() as u64;
- let input_digest = sha256_hex(prompt.as_bytes());
- let receipt_model_id = model.clone();
- // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
- let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
  let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
