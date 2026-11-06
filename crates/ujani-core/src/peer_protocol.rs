@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
@@ -15,6 +15,8 @@ const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"
 pub struct TaskEnvelope {
     pub protocol_version: u16,
     pub task_id: String,
+    /// Exact recipient device fingerprint; prevents forwarding consent to another peer.
+    pub recipient_device_id: String,
     pub issued_at: u64,
     pub expires_at: u64,
     /// 16 random bytes encoded as 32 lowercase hexadecimal characters.
@@ -40,6 +42,7 @@ pub struct SignedTaskEnvelope {
 pub enum EnvelopeError {
     InvalidVersion,
     InvalidTaskId,
+    InvalidRecipient,
     InvalidTimeWindow,
     Expired,
     ExcessiveLifetime,
@@ -118,6 +121,9 @@ fn validate_fields(e: &TaskEnvelope, now: u64) -> Result<(), EnvelopeError> {
         || !e.task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err(EnvelopeError::InvalidTaskId);
     }
+    if e.recipient_device_id.len() != 64 || !e.recipient_device_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err(EnvelopeError::InvalidRecipient);
+    }
     if e.issued_at > now.saturating_add(30) || e.expires_at <= e.issued_at {
         return Err(EnvelopeError::InvalidTimeWindow);
     }
@@ -151,6 +157,7 @@ mod tests {
         TaskEnvelope {
             protocol_version: PROTOCOL_VERSION,
             task_id: "task-42".into(),
+            recipient_device_id: "b".repeat(64),
             issued_at: 1_000,
             expires_at: 1_120,
             nonce: "0123456789abcdef0123456789abcdef".into(),
@@ -200,6 +207,14 @@ mod tests {
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidScope));
         signed.envelope.requested_scopes = vec!["document.read".into()];
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
+    }
+
+    #[test]
+    fn rejects_invalid_or_missing_recipient_fingerprint() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let mut e = envelope();
+        e.recipient_device_id = "not-a-fingerprint".into();
+        assert_eq!(SignedTaskEnvelope::sign(e, &key), Err(EnvelopeError::InvalidRecipient));
     }
 
     #[test]
