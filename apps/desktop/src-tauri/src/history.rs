@@ -95,8 +95,10 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
  for row in rows {
   let (id, prompt, output) = row.map_err(|e| e.to_string())?;
   if !prompt.starts_with(ENC_V2) || !output.starts_with(ENC_V2) {
-   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) { decrypt_legacy_text(key, &prompt)? } else { prompt };
-   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) { decrypt_legacy_text(key, &output)? } else { output };
+   let plain_prompt = if prompt.starts_with(ENC_V2) { decrypt_text(key, &prompt, id, "prompt")? }
+    else if prompt.starts_with(ENCRYPTED_PREFIX) { decrypt_legacy_text(key, &prompt)? } else { prompt };
+   let plain_output = if output.starts_with(ENC_V2) { decrypt_text(key, &output, id, "output")? }
+    else if output.starts_with(ENCRYPTED_PREFIX) { decrypt_legacy_text(key, &output)? } else { output };
    pending.push((id, encrypt_text(key, &plain_prompt, id, "prompt")?, encrypt_text(key, &plain_output, id, "output")?));
   }
  }
@@ -253,6 +255,33 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   assert_eq!(entries.len(),2);
   assert!(entries.iter().any(|entry|entry.prompt=="[unreadable entry: key changed or data corrupted]"));
   assert!(entries.iter().any(|entry|entry.prompt=="good prompt"));
+ }
+ #[test] fn legacy_v1_is_only_accepted_during_one_time_migration() {
+  let db=db();
+  let key=test_key();
+  let cipher=Aes256Gcm::new_from_slice(&key).unwrap();
+  let nonce=Aes256Gcm::generate_nonce(&mut OsRng);
+  let encrypted=cipher.encrypt(&nonce,b"legacy prompt".as_ref()).unwrap();
+  let mut payload=nonce.to_vec(); payload.extend_from_slice(&encrypted);
+  let legacy=format!("{ENCRYPTED_PREFIX}{}",B64.encode(payload));
+  db.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,'plain output','smart','m','chat',1)",params![legacy]).unwrap();
+  migrate_plaintext_rows(&db,&key).unwrap();
+  let (p,o):(String,String)=db.query_row("SELECT prompt,output FROM task_history WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+  assert_eq!(decrypt_text(&key,&p,1,"prompt").unwrap(),"legacy prompt");
+  assert_eq!(decrypt_text(&key,&o,1,"output").unwrap(),"plain output");
+  assert_eq!(db.query_row::<String,_,_>("SELECT value FROM history_settings WHERE key=?1",params![ENCRYPTION_VERSION_KEY],|r|r.get(0)).unwrap(),"2");
+  // An old-format ciphertext injected after migration is not silently re-migrated.
+  db.execute("UPDATE task_history SET prompt=?1 WHERE id=1",params![legacy]).unwrap();
+  migrate_plaintext_rows(&db,&key).unwrap();
+  assert!(decrypt_text(&key,&legacy,1,"prompt").is_err());
+ }
+ #[test] fn v2_ciphertext_swapping_is_rejected_for_rows_and_columns() {
+  let key=test_key();
+  let one=encrypt_text(&key,"row one",1,"prompt").unwrap();
+  let two=encrypt_text(&key,"row two",2,"prompt").unwrap();
+  assert!(decrypt_text(&key,&one,2,"prompt").is_err());
+  assert!(decrypt_text(&key,&two,1,"prompt").is_err());
+  assert!(decrypt_text(&key,&one,1,"output").is_err());
  }
  #[test] fn plaintext_history_rows_are_migrated() {
   let db=db();
