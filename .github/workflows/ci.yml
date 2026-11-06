@@ -36,6 +36,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Install frontend and Tauri CLI dependencies
+        working-directory: apps/desktop
+        run: npm install
+      - name: Generate Tauri platform icons from the checked-in SVG
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Install Tauri Linux prerequisites
@@ -53,6 +62,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Install frontend and Tauri CLI dependencies
+        working-directory: apps/desktop
+        run: npm install
+      - name: Generate Tauri platform icons from the checked-in SVG
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           components: clippy
