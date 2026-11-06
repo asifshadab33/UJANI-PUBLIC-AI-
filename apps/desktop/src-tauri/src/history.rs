@@ -31,7 +31,8 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
   .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;
  match entry.get_password() {
   Ok(encoded) => {
-   let decoded = Zeroizing::new(B64.decode(encoded).map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?);
+   let encoded = Zeroizing::new(encoded);
+   let decoded = Zeroizing::new(B64.decode(&*encoded).map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
    Ok(Zeroizing::new(key))
   }
