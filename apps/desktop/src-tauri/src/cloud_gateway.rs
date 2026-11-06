@@ -59,7 +59,7 @@ impl MessageContent {
  fn into_text(self) -> String {
   match self {
    Self::Text(text) => text,
-   Self::Parts(parts) => parts.into_iter().filter_map(|part| part.text).collect::<Vec<_>>().join("\\n"),
+   Self::Parts(parts) => parts.into_iter().filter_map(|part| part.text).collect::<Vec<_>>().join("\n"),
   }
  }
 }
