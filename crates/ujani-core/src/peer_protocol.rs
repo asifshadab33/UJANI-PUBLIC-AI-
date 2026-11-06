@@ -4,7 +4,7 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
@@ -45,6 +45,7 @@ pub enum EnvelopeError {
     ExcessiveLifetime,
     InvalidNonce,
     InvalidOperation,
+    UnknownOperation,
     InvalidDigest,
     MissingConsent,
     InvalidScope,
@@ -89,11 +90,15 @@ impl SignedTaskEnvelope {
         trusted_key: &VerifyingKey,
         now: u64,
         replay: &mut ReplayGuard,
+        registered_operations: &HashSet<String>,
     ) -> Result<(), EnvelopeError> {
         validate_fields(&self.envelope, now)?;
         let bytes = serde_json::to_vec(&self.envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
         let signature = Signature::from_slice(&self.signature).map_err(|_| EnvelopeError::InvalidSignature)?;
         trusted_key.verify(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
+        if !registered_operations.contains(&self.envelope.operation) {
+            return Err(EnvelopeError::UnknownOperation);
+        }
         // Expired nonce entries can be removed because envelope expiry was checked above.
         replay.seen.retain(|_, expires_at| *expires_at > now);
         if replay.seen.contains_key(&self.envelope.nonce) {
@@ -120,7 +125,7 @@ fn validate_fields(e: &TaskEnvelope, now: u64) -> Result<(), EnvelopeError> {
     if e.expires_at.saturating_sub(e.issued_at) > MAX_TASK_TTL_SECONDS {
         return Err(EnvelopeError::ExcessiveLifetime);
     }
-    if e.nonce.len() != 32 || !e.nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if e.nonce.len() != 32 || !e.nonce.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
         return Err(EnvelopeError::InvalidNonce);
     }
     if e.operation.is_empty() || e.operation.len() > 128
@@ -161,8 +166,9 @@ mod tests {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard), Ok(()));
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard), Err(EnvelopeError::ReplayDetected));
+        let operations = HashSet::from(["document.summarize".to_string()]);
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Ok(()));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::ReplayDetected));
     }
 
     #[test]
@@ -177,14 +183,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unregistered_operations() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
+        let mut guard = ReplayGuard::default();
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &HashSet::new()), Err(EnvelopeError::UnknownOperation));
+    }
+
+    #[test]
     fn signature_binds_consent_scope_and_task_content() {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let mut signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         signed.envelope.requested_scopes.push("filesystem.root".into());
         let mut guard = ReplayGuard::default();
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard), Err(EnvelopeError::InvalidScope));
+        let operations = HashSet::from(["document.summarize".to_string()]);
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidScope));
         signed.envelope.requested_scopes = vec!["document.read".into()];
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard), Err(EnvelopeError::InvalidSignature));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
     }
 
     #[test]
@@ -203,12 +218,13 @@ mod tests {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let first = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
-        assert_eq!(first.verify(&key.verifying_key(), 1_001, &mut guard), Ok(()));
+        let operations = HashSet::from(["document.summarize".to_string()]);
+        assert_eq!(first.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Ok(()));
         let mut next = envelope();
         next.issued_at = 1_121;
         next.expires_at = 1_241;
         let second = SignedTaskEnvelope::sign(next, &key).unwrap();
-        assert_eq!(second.verify(&key.verifying_key(), 1_122, &mut guard), Ok(()));
+        assert_eq!(second.verify(&key.verifying_key(), 1_122, &mut guard, &operations), Ok(()));
         assert_eq!(guard.len(), 1);
     }
 
@@ -217,8 +233,9 @@ mod tests {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let signed = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
-        assert_eq!(signed.verify(&key.verifying_key(), 1_120, &mut guard), Err(EnvelopeError::Expired));
+        let operations = HashSet::from(["document.summarize".to_string()]);
+        assert_eq!(signed.verify(&key.verifying_key(), 1_120, &mut guard, &operations), Err(EnvelopeError::Expired));
         let other = SigningKey::from_bytes(&[8u8; 32]);
-        assert_eq!(signed.verify(&other.verifying_key(), 1_001, &mut guard), Err(EnvelopeError::InvalidSignature));
+        assert_eq!(signed.verify(&other.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
     }
 }
