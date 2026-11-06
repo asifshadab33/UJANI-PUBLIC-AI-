@@ -178,7 +178,7 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
         return Err("Cloud token reservation request is outside the supported bounds.".into());
     }
     let day = (now / 86_400) as i64;
-    let prompt_tokens = ((prompt_bytes as u64).saturating_add(1) / 2) as i64;
+    let prompt_tokens = prompt_bytes as i64;
     let reservation = prompt_tokens.saturating_add(completion_tokens as i64);
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR IGNORE INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,0)", params![day])
@@ -430,10 +430,10 @@ mod tests {
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
-        assert_eq!(status.reserved_tokens, 10_192);
-        for _ in 0..9 { reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).unwrap(); }
+        assert_eq!(status.reserved_tokens, 12_192);
+        for _ in 0..5 { reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).unwrap(); }
         assert!(reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).is_err());
         let next_day = reserve_budget_db(&mut db, 100, 100, 172_800).unwrap();
-        assert_eq!(next_day.reserved_tokens, 150);
+        assert_eq!(next_day.reserved_tokens, 200);
     }
 }
