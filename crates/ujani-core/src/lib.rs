@@ -180,11 +180,13 @@ pub mod file_processor;
 pub mod image_processor;
 pub mod capability;
 pub mod tool_registry;
+pub mod impact;
 
 pub use capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
 pub use file_processor::{analyze_text, FileAnalysis};
 pub use image_processor::{inspect_image, ImageInfo};
 pub use tool_registry::{builtin_tool_manifests, validate_tool_registry, ExecutionKind, NetworkAccess, ResourceBudget, ToolCategory, ToolManifest, ToolPermission};
+pub use impact::{compare_energy_scenarios, EnergyAccountingError, EnergyAccountingInput, EnergyImpactEstimate};
 
 pub mod task_graph;
 pub use task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
