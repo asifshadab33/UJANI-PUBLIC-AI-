@@ -44,7 +44,6 @@ fn evaluate_task_route(
 ) -> Result<ModeRoutingDecision, String> {
     if !valid_command_identifier(&task_id, 96)
         || !valid_command_identifier(&operation, 96)
-        || required_capabilities.is_empty()
         || required_capabilities.len() > 32
         || available_capabilities.len() > 64
         || required_capabilities.iter().chain(available_capabilities.iter())
@@ -512,6 +511,20 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
         output: format!("Your request contains {word_count} words. This is a deterministic local demonstration, not an AI-generated answer."),
         execution: "Native local runtime".into(),
     })
+}
+
+#[cfg(test)]
+mod ipc_input_tests {
+    use super::valid_command_identifier;
+
+    #[test]
+    fn command_identifiers_are_bounded_and_path_safe() {
+        assert!(valid_command_identifier("task-01", 96));
+        assert!(!valid_command_identifier("", 96));
+        assert!(!valid_command_identifier("../task", 96));
+        assert!(!valid_command_identifier("task\\nadmin", 96));
+        assert!(!valid_command_identifier(&"x".repeat(97), 96));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
