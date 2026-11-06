@@ -32,7 +32,12 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
  match entry.get_password() {
   Ok(encoded) => {
    let encoded = Zeroizing::new(encoded);
-   let decoded = Zeroizing::new(B64.decode(encoded.as_bytes()).map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?);
+   // Decode into caller-owned zeroizing storage so even a partially written
+   // output buffer is erased if the decoder reports malformed base64.
+   let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
+   let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
+       .map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
+   decoded.truncate(decoded_len);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
    Ok(Zeroizing::new(key))
   }
