@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 pub const PROTOCOL_VERSION: u16 = 2;
-const SIGNING_DOMAIN: &[u8] = b"UJANI-TASK-ENVELOPE-V2\\0";
+const SIGNING_DOMAIN: &[u8] = b"UJANI-TASK-ENVELOPE-V2\0";
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
@@ -37,7 +37,7 @@ pub struct TaskEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedTaskEnvelope {
     pub envelope: TaskEnvelope,
-    /// Ed25519 signature over the canonical serde JSON serialization of envelope.
+    /// Ed25519 signature over the versioned, domain-separated binary envelope encoding.
     pub signature: Vec<u8>,
 }
 
@@ -203,7 +203,7 @@ mod tests {
         let mut guard = ReplayGuard::default();
         let operations = HashSet::from(["document.summarize".to_string()]);
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Ok(()));
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::ReplayDetected));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::ReplayDetected));
     }
 
     #[test]
@@ -245,9 +245,9 @@ mod tests {
         signed.envelope.requested_scopes.push("filesystem.root".into());
         let mut guard = ReplayGuard::default();
         let operations = HashSet::from(["document.summarize".to_string()]);
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidScope));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::InvalidScope));
         signed.envelope.requested_scopes = vec!["document.read".into()];
-        assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
+        assert_eq!(signed.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
         let first = SignedTaskEnvelope::sign(envelope(), &key).unwrap();
         let mut guard = ReplayGuard::default();
         let operations = HashSet::from(["document.summarize".to_string()]);
-        assert_eq!(first.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Ok(()));
+        assert_eq!(first.verify(&key.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Ok(()));
         let mut next = envelope();
         next.issued_at = 1_121;
         next.expires_at = 1_241;
@@ -284,6 +284,6 @@ mod tests {
         let operations = HashSet::from(["document.summarize".to_string()]);
         assert_eq!(signed.verify(&key.verifying_key(), 1_120, "worker-01", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::Expired));
         let other = SigningKey::from_bytes(&[8u8; 32]);
-        assert_eq!(signed.verify(&other.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
+        assert_eq!(signed.verify(&other.verifying_key(), 1_001, "worker-01", "admin-key-1", &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
     }
 }
