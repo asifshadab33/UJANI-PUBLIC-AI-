@@ -113,20 +113,51 @@ pub async fn is_available() -> bool {
     }
 }
 pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
-    // Model discovery is a startup-adjapub async fn chat(model: &str, system: Option<&str>, turns: &[Turn<'_>]) -> Result<String, String> {
-    if !valid_model(model) { return Err("Invalid local model identifier.".into()); }
-    let total = turns.iter().try_fold(system.map_or(0usize, str::len), |n, t| n.checked_add(t.content.len()))
+    let response = client()?
+        .get(format!("{BASE_URL}/api/tags"))
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await
+        .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
+    let list: ModelList = parse_limited(response).await?;
+    Ok(list.models)
+}
+
+pub async fn chat(
+    model: &str,
+    system: Option<&str>,
+    turns: &[Turn<'_>],
+) -> Result<String, String> {
+    if !valid_model(model) {
+        return Err("Invalid local model identifier.".into());
+    }
+    let total = turns
+        .iter()
+        .try_fold(system.map_or(0usize, str::len), |n, turn| n.checked_add(turn.content.len()))
         .ok_or_else(|| "Prompt size overflow.".to_string())?;
-    if turns.is_empty() || total == 0 { return Err("Prompt cannot be empty.".into()); }
-    if total > MAX_PROMPT_BYTES { return Err("Prompt exceeds the 32 KiB local limit.".into()); }
+    if turns.is_empty() || total == 0 {
+        return Err("Prompt cannot be empty.".into());
+    }
+    if total > MAX_PROMPT_BYTES {
+        return Err("Prompt exceeds the 32 KiB local limit.".into());
+    }
     let mut messages = Vec::with_capacity(turns.len() + usize::from(system.is_some()));
-    if let Some(content) = system { messages.push(ChatMsg { role: "system", content }); }
+    if let Some(content) = system {
+        messages.push(ChatMsg { role: "system", content });
+    }
     for turn in turns {
-        if turn.role != "user" && turn.role != "assistant" { return Err("Invalid chat role.".into()); }
+        if turn.role != "user" && turn.role != "assistant" {
+            return Err("Invalid chat role.".into());
+        }
         messages.push(ChatMsg { role: turn.role, content: turn.content });
     }
-    let body = ChatBody { model, messages, stream: false,
-        options: ChatOptions { num_ctx: NUM_CTX, temperature: 0.3 }, keep_alive: "5m" };
+    let body = ChatBody {
+        model,
+        messages,
+        stream: false,
+        options: ChatOptions { num_ctx: NUM_CTX, temperature: 0.3 },
+        keep_alive: "5m",
+    };
     let c = client()?;
     let mut last_error = String::new();
     for attempt in 0..MAX_ATTEMPTS {
@@ -136,10 +167,14 @@ pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
             }
             Ok(response) => {
                 let parsed: ChatReply = parse_limited(response).await?;
-                if parsed.message.content.trim().is_empty() { return Err("Local Ollama returned an empty response.".into()); }
+                if parsed.message.content.trim().is_empty() {
+                    return Err("Local Ollama returned an empty response.".into());
+                }
                 return Ok(parsed.message.content);
             }
-            Err(error) if error.is_connect() => { last_error = format!("Local Ollama request failed: {error}"); }
+            Err(error) if error.is_connect() => {
+                last_error = format!("Local Ollama request failed: {error}");
+            }
             Err(error) => return Err(format!("Local Ollama request failed: {error}")),
         }
         if attempt + 1 < MAX_ATTEMPTS {
@@ -228,11 +263,7 @@ where F: FnMut(String, u8) {
     if !pending.is_empty() {
         let progress = parse_pull_progress_line(&pending)
             .map_err(|_| "Ollama returned an incomplete or invalid model-download progress event.".to_string())?;
-        if progress.percent as i32 != last_percent || progress.status != last_status {
-            last_percent = progress.percent as i32;
-            last_status = progress.status.clone();
-            on_progress(progress.status.clone(), progress.percent);
-        }
+        on_progress(progress.status.clone(), progress.percent);
         if progress.success { completed = true; }
     }
     if !completed { return Err("Ollama download ended before reporting success. Check Ollama and retry.".into()); }
