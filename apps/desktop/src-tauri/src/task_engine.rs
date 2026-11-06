@@ -298,6 +298,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
 
     let mut command = tokio::process::Command::new(exe);
     command.arg("--pdf-extract-worker")
+        .env_clear()
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .kill_on_drop(true);
 
