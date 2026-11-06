@@ -38,7 +38,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
+      "pubkey": "",
       "endpoints": [
         "https://github.com/asifshadab33/UJANI-PUBLIC-AI-/releases/latest/download/latest.json"
       ],
