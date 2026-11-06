@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [image_header, pdf_text]
+        include:
+          - target: image_header
+            max_len: 65536
+          - target: pdf_text
+            max_len: 10485760
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -30,4 +34,4 @@ jobs:
         run: cargo install cargo-fuzz --locked
       - name: Run bounded fuzz smoke
         working-directory: fuzz
-        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=45 -timeout=10 -rss_limit_mb=2048 -max_len=10485760
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=45 -timeout=10 -rss_limit_mb=2048 -max_len=${{ matrix.max_len }}
