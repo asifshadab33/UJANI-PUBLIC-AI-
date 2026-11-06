@@ -137,17 +137,44 @@ jobs:
     needs: build-and-upload
     runs-on: ubuntu-latest
     steps:
-      - name: Publish the draft only after all platform assets are uploaded
+      - name: Generate size report and checksums before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
           mkdir release-assets
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
-          find release-assets -type f -printf '%P\\t%s bytes\\t%.2f MiB\\n' | sort > INSTALLER_SIZES.txt
-          (cd release-assets && sha256sum * > SHA256SUMS)
-          gh release upload "$TAG" INSTALLER_SIZES.txt --clobber --repo "$REPOSITORY"
+          rm -f release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const root = 'release-assets';
+          const allowed = new Set(['.msi', '.exe', '.dmg', '.deb', '.appimage', '.rpm', '.zip']);
+          const files = [];
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (allowed.has(path.extname(entry.name).toLowerCase())) {
+                const bytes = fs.statSync(full).size;
+                files.push({ name: path.relative(root, full), bytes, mib: (bytes / 1048576).toFixed(2) });
+              }
+            }
+          }
+          walk(root);
+          if (!files.length) {
+            console.error('No supported installer assets found; refusing to publish an empty size report.');
+            process.exit(1);
+          }
+          files.sort((a, b) => a.name.localeCompare(b.name));
+          const lines = ['UJANI installer size report', 'Filename\\tBytes\\tMiB'];
+          for (const file of files) lines.push(`${file.name}\\t${file.bytes}\\t${file.mib}`);
+          fs.writeFileSync('INSTALLER_SIZES.txt', lines.join('\\n') + '\\n');
+          NODE
+          cp INSTALLER_SIZES.txt release-assets/INSTALLER_SIZES.txt
+          (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt --clobber --repo "$REPOSITORY"
           gh release upload "$TAG" release-assets/SHA256SUMS --clobber --repo "$REPOSITORY"
+          gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
