@@ -335,6 +335,8 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     #[cfg(unix)]
     unsafe {
         use std::os::unix::process::CommandExt;
+        #[cfg(target_os = "linux")]
+        let mut network_syscall_filter = network_syscall_filter;
         command.as_std_mut().pre_exec(move || {
             let limits = [
                 (libc::RLIMIT_CPU, 45_u64, 45_u64),
@@ -352,8 +354,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                let mut filter = network_syscall_filter;
-                let program = libc::sock_fprog { len: filter.len() as u16, filter: filter.as_mut_ptr() };
+                let program = libc::sock_fprog { len: network_syscall_filter.len() as u16, filter: network_syscall_filter.as_mut_ptr() };
                 if libc::prctl(
                     libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER,
                     &program as *const _ as libc::c_ulong, 0, 0
