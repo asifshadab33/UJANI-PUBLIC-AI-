@@ -18,6 +18,54 @@ pub enum ExecutionLocation {
     DeterministicTool,
 }
 
+/// Confidence attached to a network observation; unknown values never become zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum NetworkObservation<T> {
+    Measured { value: T },
+    Inferred { value: T },
+    Unknown { reason: String },
+}
+
+impl<T> Default for NetworkObservation<T> {
+    fn default() -> Self {
+        Self::Unknown {
+            reason: "Not observed at the UJANI application boundary.".into(),
+        }
+    }
+}
+
+/// Network telemetry with explicit evidence quality and a bounded measurement scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkTelemetry {
+    #[serde(default)]
+    pub destinations: NetworkObservation<Vec<String>>,
+    #[serde(default)]
+    pub resolved_addresses: NetworkObservation<Vec<String>>,
+    #[serde(default)]
+    pub application_request_body_bytes: NetworkObservation<u64>,
+    #[serde(default)]
+    pub application_response_body_bytes: NetworkObservation<u64>,
+    #[serde(default = "default_network_note")]
+    pub note: String,
+}
+
+fn default_network_note() -> String {
+    "Unknown means UJANI did not observe this value; application-body byte counts exclude HTTP headers, TLS, transport framing, DNS traffic and other process/system traffic.".into()
+}
+
+impl Default for NetworkTelemetry {
+    fn default() -> Self {
+        Self {
+            destinations: NetworkObservation::default(),
+            resolved_addresses: NetworkObservation::default(),
+            application_request_body_bytes: NetworkObservation::default(),
+            application_response_body_bytes: NetworkObservation::default(),
+            note: default_network_note(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Metadata-only record of an inference operation and exact input/output digests.
 pub struct ExecutionReceipt {
@@ -34,6 +82,9 @@ pub struct ExecutionReceipt {
     pub started_at_unix_ms: u64,
     pub completed_at_unix_ms: u64,
     pub user_approval_id: Option<String>,
+    /// Missing in legacy v1 receipts; deserializes to explicit unknown observations.
+    #[serde(default)]
+    pub network: NetworkTelemetry,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +97,7 @@ pub enum ReceiptError {
     InvalidTimeRange,
     MissingModelProvenance,
     MissingExternalApproval,
+    InvalidNetworkTelemetry,
 }
 
 fn valid_identifier(value: &str, max: usize) -> bool {
@@ -75,6 +127,39 @@ fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+fn valid_unknown_reason(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+}
+
+fn valid_network_name(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 260
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".:-[]".contains(&byte))
+        && !value.starts_with('.') && !value.ends_with('.')
+}
+
+fn validate_network_telemetry(network: &NetworkTelemetry) -> Result<(), ReceiptError> {
+    let validate_names = |observation: &NetworkObservation<Vec<String>>| match observation {
+        NetworkObservation::Measured { value } | NetworkObservation::Inferred { value } => {
+            !value.is_empty() && value.len() <= 16 && value.iter().all(|name| valid_network_name(name))
+        }
+        NetworkObservation::Unknown { reason } => valid_unknown_reason(reason),
+    };
+    let validate_bytes = |observation: &NetworkObservation<u64>| match observation {
+        NetworkObservation::Measured { value } | NetworkObservation::Inferred { value } => *value <= 1_073_741_824,
+        NetworkObservation::Unknown { reason } => valid_unknown_reason(reason),
+    };
+    if !validate_names(&network.destinations)
+        || !validate_names(&network.resolved_addresses)
+        || !validate_bytes(&network.application_request_body_bytes)
+        || !validate_bytes(&network.application_response_body_bytes)
+        || network.note.len() > 512
+        || network.note.chars().any(char::is_control)
+    {
+        return Err(ReceiptError::InvalidNetworkTelemetry);
+    }
+    Ok(())
+}
+
 /// Hash exact bytes using lowercase hexadecimal SHA-256.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
@@ -83,9 +168,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Validate structural provenance before a trusted adapter persists a receipt.
 pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> {
-    if receipt.schema_version != 1 {
+    if !matches!(receipt.schema_version, 1 | 2) {
         return Err(ReceiptError::UnsupportedSchema);
     }
+    validate_network_telemetry(&receipt.network)?;
     if receipt.task_id.trim().is_empty()
         || receipt.operation_id.trim().is_empty()
         || receipt.adapter_id.trim().is_empty()
@@ -143,7 +229,45 @@ mod tests {
             started_at_unix_ms: 100,
             completed_at_unix_ms: 200,
             user_approval_id: None,
+            network: NetworkTelemetry::default(),
         }
+    }
+
+    #[test]
+    fn accepts_v2_receipts_with_explicit_measured_inferred_and_unknown_network_values() {
+        let mut r = receipt();
+        r.schema_version = 2;
+        r.network = NetworkTelemetry {
+            destinations: NetworkObservation::Inferred { value: vec!["api.example.com".into()] },
+            resolved_addresses: NetworkObservation::Inferred { value: vec!["203.0.113.8:443".into()] },
+            application_request_body_bytes: NetworkObservation::Measured { value: 0 },
+            application_response_body_bytes: NetworkObservation::Unknown {
+                reason: "Response stream ended before the body could be measured.".into(),
+            },
+            note: "Measured body bytes only; no wire-level traffic observation.".into(),
+        };
+        assert_eq!(validate_receipt(&r), Ok(()));
+    }
+
+    #[test]
+    fn legacy_v1_receipts_without_network_fields_remain_readable_as_unknown() {
+        let mut value = serde_json::to_value(receipt()).unwrap();
+        value.as_object_mut().unwrap().remove("network");
+        let legacy: ExecutionReceipt = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.schema_version, 1);
+        assert!(matches!(legacy.network.application_request_body_bytes, NetworkObservation::Unknown { .. }));
+        assert_eq!(validate_receipt(&legacy), Ok(()));
+    }
+
+    #[test]
+    fn rejects_unbounded_or_malformed_network_telemetry() {
+        let mut r = receipt();
+        r.schema_version = 2;
+        r.network.destinations = NetworkObservation::Measured { value: vec!["https://user:secret@example.com/path".into()] };
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkTelemetry));
+        r.network = NetworkTelemetry::default();
+        r.network.application_request_body_bytes = NetworkObservation::Unknown { reason: "".into() };
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkTelemetry));
     }
 
     #[test]
