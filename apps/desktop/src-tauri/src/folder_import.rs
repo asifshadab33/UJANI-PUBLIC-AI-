@@ -76,7 +76,7 @@ pub async fn process_selected_folder(
         }
         active.insert(task_id.clone(), token.clone());
     }
-    let _preflight_guard = crate::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let _preflight_guard = crate::ActiveTaskGuard { control: &control, task_id: task_id.clone(), token: token.clone() };
 
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
