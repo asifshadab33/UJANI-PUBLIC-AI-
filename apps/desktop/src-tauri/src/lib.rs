@@ -774,6 +774,63 @@ async fn process_selected_document(
         LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
 }
 
+const MAX_PDF_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+
+/// Decode bounded PDF IPC data without allocating beyond the configured payload limit.
+fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let max_base64_bytes = MAX_PDF_UPLOAD_BYTES.div_ceil(3) * 4;
+    if data_base64.len() > max_base64_bytes {
+        return Err("PDF upload exceeds the 10 MiB limit.".into());
+    }
+    let data = STANDARD.decode(data_base64.as_bytes())
+        .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
+    if data.is_empty() || data.len() > MAX_PDF_UPLOAD_BYTES {
+        return Err("PDF files must be non-empty and no larger than 10 MiB.".into());
+    }
+    Ok(data)
+}
+
+#[cfg(test)]
+mod pdf_upload_tests {
+    use super::decode_pdf_upload;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    fn decode_with_limit(encoded: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let max_encoded = max_bytes.div_ceil(3) * 4;
+        if encoded.len() > max_encoded {
+            return Err("PDF upload exceeds the 10 MiB limit.".into());
+        }
+        let bytes = STANDARD.decode(encoded.as_bytes())
+            .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
+        if bytes.is_empty() || bytes.len() > max_bytes {
+            return Err("PDF files must be non-empty and no larger than 10 MiB.".into());
+        }
+        Ok(bytes)
+    }
+
+    #[test]
+    fn pdf_upload_decoder_accepts_exact_limit_and_rejects_over_limit() {
+        let exact = STANDARD.encode(b"12345678");
+        assert_eq!(decode_with_limit(&exact, 8).unwrap(), b"12345678");
+        let oversized = STANDARD.encode(b"123456789");
+        assert!(decode_with_limit(&oversized, 8).is_err());
+    }
+
+    #[test]
+    fn pdf_upload_decoder_rejects_empty_and_malformed_payloads() {
+        assert!(decode_with_limit("", 8).is_err());
+        assert!(decode_with_limit("not base64!", 8).is_err());
+    }
+
+    #[test]
+    fn production_pdf_upload_limit_is_ten_mib_and_decoder_is_callable() {
+        let _ = decode_pdf_upload;
+        assert_eq!(super::MAX_PDF_UPLOAD_BYTES, 10 * 1024 * 1024);
+    }
+}
+
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
 /// The arguments intentionally mirror the stable Tauri IPC payload fields.
 #[tauri::command]
@@ -788,18 +845,11 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
-    const MAX_BASE64_BYTES: usize = MAX_PDF_BYTES.div_ceil(3) * 4;
-    if data_base64.len() > MAX_BASE64_BYTES {
-        return Err("PDF upload exceeds the 10 MiB limit.".into());
-    }
-    let data = STANDARD.decode(data_base64.as_bytes())
-        .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
-    if data.is_empty() || data.len() > MAX_PDF_BYTES {
-        return Err("PDF files must be non-empty and no larger than 10 MiB.".into());
-    }
+    // Base64 decoding can allocate and briefly occupy CPU for a large upload.
+    // Keep it off the async runtime so a maximum-size PDF cannot stall other commands.
+    let data = tokio::task::spawn_blocking(move || decode_pdf_upload(&data_base64))
+        .await
+        .map_err(|error| format!("PDF decode worker failed: {error}"))??;
 
     let language = translation_language.as_deref().unwrap_or("");
     let receipt = local_receipt_context(
