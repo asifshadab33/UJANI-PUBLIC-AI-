@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Search, FolderSearch, FileVideo, FileText, Trash2, RefreshCw, Clock3 } from "lucide-react";
 
-type SearchMatch = { path: string; file_name: string; extension: string; size_bytes: number; modified_unix_ms: number | null; matched_in: string[]; file_identity?: string | null };
+type SearchMatch = { path: string; file_name: string; extension: string; size_bytes: number; modified_unix_ms: number | null; matched_in: string[] };
 type SearchResult = { cancelled: boolean; root_name: string | null; scanned_files: number; matches: SearchMatch[]; truncated: boolean; note: string; cache_hit: boolean };
 type CacheSettings = { enabled: boolean; retention_days: number; max_entries: number; max_bytes: number };
 type RecentSearch = { query: string; created_at: number };
