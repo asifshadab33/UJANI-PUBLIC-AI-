@@ -9,7 +9,9 @@ use std::{
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
+use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
+use tokio_util::sync::CancellationToken;
 
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
@@ -50,14 +52,30 @@ struct Candidate {
 /// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
 #[tauri::command]
 pub async fn find_local_files(
-    app: tauri::AppHandle,
+    app: AppHandle,
+    control: State<'_, super::TaskControlState>,
+    task_id: String,
     query: String,
     search_pdf_text: bool,
 ) -> Result<LocalSearchResult, String> {
+    if !super::valid_command_identifier(&task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
     let query = query.trim().to_lowercase();
     if query.is_empty() || query.encode_utf16().count() > 160 || query.chars().any(char::is_control) {
         return Err("Enter a search phrase between 1 and 160 characters.".into());
     }
+
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) {
+            return Err("Task identifier is already active.".into());
+        }
+        active.insert(task_id.clone(), token.clone());
+    }
+    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to search.", 1);
 
     let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
         let Some(folder) = app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
@@ -68,6 +86,9 @@ pub async fn find_local_files(
         Ok(Some(path))
     }).await.map_err(|e| format!("Folder picker failed: {e}"))??;
 
+    if token.is_cancelled() {
+        return Err("File search cancelled by user.".into());
+    }
     let Some(folder) = selected else {
         return Ok(LocalSearchResult {
             cancelled: true, root_name: None, scanned_files: 0, matches: Vec::new(),
@@ -75,8 +96,10 @@ pub async fn find_local_files(
         });
     };
 
+    super::emit_task_progress(&app, &task_id, "scanning", "Scanning the selected folder.", 10);
+    let collect_token = token.clone();
     let (root, candidates, scanned_files, mut truncated) = tauri::async_runtime::spawn_blocking(move || {
-        collect_candidates(&folder)
+        collect_candidates(&folder, &collect_token)
     }).await.map_err(|e| format!("File search worker failed: {e}"))??;
 
     let root_name = root.file_name().map(|v| v.to_string_lossy().into_owned())
@@ -87,6 +110,8 @@ pub async fn find_local_files(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
 
     for candidate in candidates {
+        if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+        if tokio::time::Instant::now() >= deadline { truncated = true; break; }
         if matches.len() >= MAX_MATCHES { truncated = true; break; }
         let mut matched_in = Vec::new();
         if candidate.name.to_lowercase().contains(&query) {
@@ -119,13 +144,18 @@ pub async fn find_local_files(
                 if bytes.starts_with(b"%PDF-") {
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                     if !remaining.is_zero() {
-                        if let Ok(Ok(text)) = tokio::time::timeout(
+                        let extraction = tokio::time::timeout(
                             remaining.min(std::time::Duration::from_secs(45)),
                             crate::task_engine::extract_pdf_isolated(bytes)
-                        ).await {
-                            if text.to_lowercase().contains(&query) {
+                        );
+                        match tokio::select! {
+                            _ = token.cancelled() => return Err("File search cancelled by user.".into()),
+                            result = extraction => result,
+                        } {
+                            Ok(Ok(text)) if text.to_lowercase().contains(&query) => {
                                 matched_in.push("PDF text (isolated worker)".to_string());
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -144,6 +174,7 @@ pub async fn find_local_files(
         }
     }
 
+    super::emit_task_progress(&app, &task_id, "completed", "File search completed.", 100);
     Ok(LocalSearchResult {
         cancelled: false,
         root_name: Some(root_name),
@@ -160,7 +191,7 @@ pub async fn find_local_files(
 
 /// Collects bounded file metadata beneath the folder selected through the native picker.
 /// Walks a user-selected directory with depth and entry-count limits.
-fn collect_candidates(folder: &Path) -> Result<(PathBuf, Vec<Candidate>, usize, bool), String> {
+fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathBuf, Vec<Candidate>, usize, bool), String> {
     let meta = fs::symlink_metadata(folder).map_err(|e| format!("Cannot inspect folder: {e}"))?;
     if meta.file_type().is_symlink() || !meta.is_dir() {
         return Err("Choose a real folder, not a symbolic link.".into());
@@ -173,6 +204,7 @@ fn collect_candidates(folder: &Path) -> Result<(PathBuf, Vec<Candidate>, usize, 
     let mut truncated = false;
 
     while let Some((directory, depth)) = stack.pop() {
+        if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
         if depth > MAX_DEPTH { truncated = true; continue; }
         let directory_meta = match fs::symlink_metadata(&directory) {
             Ok(meta) => meta,
@@ -190,6 +222,7 @@ fn collect_candidates(folder: &Path) -> Result<(PathBuf, Vec<Candidate>, usize, 
             Err(_) => { truncated = true; continue; }
         };
         for item in iterator {
+            if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
             let item = match item { Ok(entry) => entry, Err(_) => { truncated = true; continue; } };
             entries_seen += 1;
             if entries_seen > MAX_ENTRIES { truncated = true; break; }
@@ -279,7 +312,7 @@ mod tests {
             std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("linked-file.txt")).unwrap();
             std::os::unix::fs::symlink(&outside, root.join("linked-dir")).unwrap();
         }
-        let (canonical, files, count, truncated) = collect_candidates(&root).unwrap();
+        let (canonical, files, count, truncated) = collect_candidates(&root, &CancellationToken::new()).unwrap();
         assert_eq!(canonical, fs::canonicalize(&root).unwrap());
         assert_eq!(count, 1);
         assert_eq!(files.len(), 1);
@@ -311,7 +344,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let link = root.with_extension("link");
         std::os::unix::fs::symlink(&root, &link).unwrap();
-        assert!(collect_candidates(&link).is_err());
+        assert!(collect_candidates(&link, &CancellationToken::new()).is_err());
         fs::remove_file(link).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
