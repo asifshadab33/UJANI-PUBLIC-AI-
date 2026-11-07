@@ -132,9 +132,11 @@ fn valid_unknown_reason(value: &str) -> bool {
 }
 
 fn valid_network_name(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 260
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".:-[]".contains(&byte))
-        && !value.starts_with('.') && !value.ends_with('.')
+    let normalized = value.strip_suffix('.').unwrap_or(value);
+    !normalized.is_empty() && value.len() <= 260
+        && normalized.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".:-[]".contains(&byte))
+        && !normalized.starts_with('.') && !normalized.ends_with('.')
+        && !normalized.contains("..")
 }
 
 fn validate_network_telemetry(network: &NetworkTelemetry) -> Result<(), ReceiptError> {
