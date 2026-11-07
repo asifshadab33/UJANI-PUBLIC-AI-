@@ -248,13 +248,29 @@ pub struct ReceiptSlotReservation {
 
 impl ReceiptSlotReservation {
     /// Persist the completed receipt and atomically consume this reservation.
-    pub fn persist(mut self, receipt: ExecutionReceipt) -> Result<String, String> {
+    pub fn persist(self, receipt: ExecutionReceipt) -> Result<String, String> {
+        self.persist_recoverable(receipt).map_err(|(_, error)| error)
+    }
+
+    /// Persist while returning the still-live reservation on failure, allowing
+    /// the caller to retry without attempting to insert a duplicate task slot.
+    pub fn persist_recoverable(
+        mut self,
+        receipt: ExecutionReceipt,
+    ) -> Result<String, (Self, String)> {
         if receipt.task_id != self.task_id {
-            return Err("Execution receipt task identifier does not match its reserved ledger slot.".into());
+            return Err((
+                self,
+                "Execution receipt task identifier does not match its reserved ledger slot.".into(),
+            ));
         }
-        let result = append_execution_receipt(self.app.clone(), receipt)?;
-        self.consumed = true;
-        Ok(result)
+        match append_execution_receipt(self.app.clone(), receipt) {
+            Ok(result) => {
+                self.consumed = true;
+                Ok(result)
+            }
+            Err(error) => Err((self, error)),
+        }
     }
 }
 
