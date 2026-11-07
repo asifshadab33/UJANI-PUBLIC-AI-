@@ -90,51 +90,12 @@ fn open_database(path: &Path) -> Result<Connection, String> {
 
 /// Creates the versioned cache schema and verifies SQLite integrity.
 fn initialize(db: &Connection) -> Result<(), String> {
-    db.execute_batch(
-        "PRAGMA foreign_keys=ON;
-         PRAGMA secure_delete=ON;
-         PRAGMA journal_mode=DELETE;
-         PRAGMA auto_vacuum=FULL;
-         CREATE TABLE IF NOT EXISTS cache_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-         INSERT OR IGNORE INTO cache_settings(key,value) VALUES('enabled','false');
-         INSERT OR IGNORE INTO cache_settings(key,value) VALUES('retention_days','30');
-         CREATE TABLE IF NOT EXISTS approved_scopes(
-           scope_id TEXT PRIMARY KEY,
-           encrypted_path TEXT NOT NULL,
-           created_at INTEGER NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS search_cache(
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           scope_id TEXT NOT NULL,
-           request_key TEXT NOT NULL,
-           inventory_ciphertext TEXT NOT NULL,
-           payload_ciphertext TEXT NOT NULL,
-           is_negative INTEGER NOT NULL CHECK(is_negative IN (0,1)),
-           created_at INTEGER NOT NULL,
-           last_access INTEGER NOT NULL,
-           UNIQUE(scope_id,request_key),
-           FOREIGN KEY(scope_id) REFERENCES approved_scopes(scope_id) ON DELETE CASCADE
-         );
-         CREATE INDEX IF NOT EXISTS idx_search_cache_lru ON search_cache(last_access ASC);
-         CREATE INDEX IF NOT EXISTS idx_search_cache_scope ON search_cache(scope_id);
-         CREATE TABLE IF NOT EXISTS recent_searches(
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           scope_id TEXT NOT NULL,
-           request_key TEXT NOT NULL,
-           encrypted_query TEXT NOT NULL,
-           is_negative INTEGER NOT NULL CHECK(is_negative IN (0,1)),
-           created_at INTEGER NOT NULL,
-           last_access INTEGER NOT NULL,
-           UNIQUE(scope_id,request_key),
-           FOREIGN KEY(scope_id) REFERENCES approved_scopes(scope_id) ON DELETE CASCADE
-         );
-         CREATE INDEX IF NOT EXISTS idx_recent_searches_lru ON recent_searches(created_at DESC);"
-    ).map_err(|error| format!("Could not initialise local search cache: {error}"))?;
-    // Search caching and recent-query retention now require an explicit user opt-in.
-    // Version-1 installations used an implicit-on default, so discard those automatic
-    // entries and disable caching rather than treating that historical default as consent.
-    // Serialize migration with other cache opens, then re-read the version under the write lock.
-    // Consent reset, legacy data deletion and schema bump commit as one atomic operation.
+    // These are connection-local settings and do not mutate the on-disk schema.
+    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON;")
+        .map_err(|error| format!("Could not configure local search cache: {error}"))?;
+
+    // Acquire the write lock before checking the version. A newer database is
+    // rejected before any schema, settings or data changes can be made.
     db.execute_batch("BEGIN IMMEDIATE;")
         .map_err(|error| format!("Could not start local search cache migration: {error}"))?;
     let migration = (|| -> Result<(), String> {
@@ -143,6 +104,46 @@ fn initialize(db: &Connection) -> Result<(), String> {
         if current_schema > 2 {
             return Err("Local search cache schema is newer than this UJANI build.".into());
         }
+
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cache_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+             INSERT OR IGNORE INTO cache_settings(key,value) VALUES('enabled','false');
+             INSERT OR IGNORE INTO cache_settings(key,value) VALUES('retention_days','30');
+             CREATE TABLE IF NOT EXISTS approved_scopes(
+               scope_id TEXT PRIMARY KEY,
+               encrypted_path TEXT NOT NULL,
+               created_at INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS search_cache(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               scope_id TEXT NOT NULL,
+               request_key TEXT NOT NULL,
+               inventory_ciphertext TEXT NOT NULL,
+               payload_ciphertext TEXT NOT NULL,
+               is_negative INTEGER NOT NULL CHECK(is_negative IN (0,1)),
+               created_at INTEGER NOT NULL,
+               last_access INTEGER NOT NULL,
+               UNIQUE(scope_id,request_key),
+               FOREIGN KEY(scope_id) REFERENCES approved_scopes(scope_id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_search_cache_lru ON search_cache(last_access ASC);
+             CREATE INDEX IF NOT EXISTS idx_search_cache_scope ON search_cache(scope_id);
+             CREATE TABLE IF NOT EXISTS recent_searches(
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               scope_id TEXT NOT NULL,
+               request_key TEXT NOT NULL,
+               encrypted_query TEXT NOT NULL,
+               is_negative INTEGER NOT NULL CHECK(is_negative IN (0,1)),
+               created_at INTEGER NOT NULL,
+               last_access INTEGER NOT NULL,
+               UNIQUE(scope_id,request_key),
+               FOREIGN KEY(scope_id) REFERENCES approved_scopes(scope_id) ON DELETE CASCADE
+             );
+             CREATE INDEX IF NOT EXISTS idx_recent_searches_lru ON recent_searches(created_at DESC);"
+        ).map_err(|error| format!("Could not initialise local search cache: {error}"))?;
+
+        // Version-1 installs implicitly enabled caching. Do not infer consent:
+        // clear those legacy cache entries, recent phrases and approved scopes.
         if current_schema < 2 {
             db.execute_batch(
                 "UPDATE cache_settings SET value='false' WHERE key='enabled';
@@ -669,9 +670,13 @@ mod tests {
         db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
         insert_scope(&db, "legacy-scope");
         insert_cache_row(&db, "legacy-scope", "legacy-request", 10, 10, false, 8);
+        db.execute(
+            "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+             VALUES('legacy-scope','legacy-request','encrypted',0,10,10)", []
+        ).unwrap();
         db.execute_batch(
             "PRAGMA user_version=1;
-             CREATE TRIGGER reject_legacy_cache_delete BEFORE DELETE ON search_cache
+             CREATE TRIGGER reject_legacy_scope_delete BEFORE DELETE ON approved_scopes
              BEGIN SELECT RAISE(ABORT, 'simulated migration failure'); END;"
         ).unwrap();
 
@@ -680,9 +685,13 @@ mod tests {
             "SELECT value FROM cache_settings WHERE key='enabled'", [], |row| row.get(0)
         ).unwrap();
         let cached: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        let recent: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        let scopes: i64 = db.query_row("SELECT COUNT(*) FROM approved_scopes", [], |row| row.get(0)).unwrap();
         let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(enabled, "true");
         assert_eq!(cached, 1);
+        assert_eq!(recent, 1);
+        assert_eq!(scopes, 1);
         assert_eq!(version, 1);
     }
 
@@ -743,11 +752,18 @@ mod tests {
     }
 
     #[test]
-    fn newer_cache_schema_is_not_treated_as_corruption() {
+    fn newer_cache_schema_is_rejected_without_schema_or_settings_mutation() {
         let db = Connection::open_in_memory().unwrap();
-        db.execute_batch("PRAGMA user_version=3;").unwrap();
+        db.execute_batch("CREATE TABLE future_table(value TEXT); INSERT INTO future_table VALUES('preserve'); PRAGMA user_version=3;").unwrap();
+        let before: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| row.get(0)).unwrap();
         let error = initialize(&db).unwrap_err();
         assert!(error.contains("newer than this UJANI build"));
+        let after: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| row.get(0)).unwrap();
+        let settings: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='cache_settings'", [], |row| row.get(0)).unwrap();
+        let preserved: String = db.query_row("SELECT value FROM future_table", [], |row| row.get(0)).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(settings, 0);
+        assert_eq!(preserved, "preserve");
     }
 
     #[test]
