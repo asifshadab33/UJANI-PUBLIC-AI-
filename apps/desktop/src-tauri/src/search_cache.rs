@@ -88,6 +88,7 @@ fn initialize(db: &Connection) -> Result<(), String> {
         "PRAGMA foreign_keys=ON;
          PRAGMA secure_delete=ON;
          PRAGMA journal_mode=DELETE;
+         PRAGMA auto_vacuum=FULL;
          CREATE TABLE IF NOT EXISTS cache_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
          INSERT OR IGNORE INTO cache_settings(key,value) VALUES('enabled','true');
          INSERT OR IGNORE INTO cache_settings(key,value) VALUES('retention_days','30');
