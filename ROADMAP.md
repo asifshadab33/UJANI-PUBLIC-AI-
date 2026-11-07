@@ -121,3 +121,13 @@ The first delivery requested in issue #44 is present in the desktop application 
 - [ ] Continue with the next utilities only after the first delivery receives product review: bounded large/recent/empty-file finders, followed by image metadata and preview-only organisation.
 
 This records implementation already present on `main`; it does not claim that all proposals in issue #44 or the broader issue #46 are complete. Duplicate detection is read-only and must remain so until a separately reviewed, explicit-confirmation deletion workflow exists.
+
+
+## Bounded large-file discovery — 2026-11-07
+
+- [x] Add a native folder-picker workflow to find files above a user-selected size threshold using filesystem metadata only; file contents are never opened.
+- [x] Bound traversal to six directory levels, 5,000 entries, 100 displayed results and a 60-second time budget; support task cancellation and progress events.
+- [x] Skip symbolic links and Windows reparse points, constrain canonical paths to the selected root, and keep the operation read-only.
+- [x] Add native tests for size ordering and Unix symbolic-link exclusion.
+- [ ] Validate Windows/macOS/Linux native builds and tests in CI; add real-device filesystem race and Windows reparse-point validation.
+- [ ] Continue with preview-only sorting plans, archive safety, image metadata and large-folder search after platform validation.
