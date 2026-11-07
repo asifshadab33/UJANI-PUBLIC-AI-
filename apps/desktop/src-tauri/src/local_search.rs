@@ -58,7 +58,7 @@ pub async fn find_local_files(
         return Err("Enter a search phrase between 1 and 160 characters.".into());
     }
 
-    let selected = tauri::async_runtime::spawn_blocking(move || {
+    let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
         let Some(folder) = app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
             return Ok(None);
         };
