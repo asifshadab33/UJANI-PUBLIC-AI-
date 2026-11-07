@@ -20,6 +20,7 @@ export default function LocalFinder() {
   const [cacheSettings, setCacheSettings] = useState<CacheSettings>({ enabled: false, retention_days: 30, max_entries: 50, max_bytes: 10 * 1024 * 1024 });
   const [cacheMessage, setCacheMessage] = useState("Search caching is off until you opt in.");
   const [cacheBusy, setCacheBusy] = useState(false);
+  const [cacheSettingsAvailable, setCacheSettingsAvailable] = useState(false);
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
 
   async function refreshRecentSearches() {
@@ -32,9 +33,13 @@ export default function LocalFinder() {
     invoke<CacheSettings>("get_local_search_cache_settings")
       .then((settings) => {
         setCacheSettings(settings);
+        setCacheSettingsAvailable(true);
         setCacheMessage(settings.enabled ? "Encrypted local search cache is on." : "Search cache is off; searches will always run fresh.");
       })
-      .catch(() => setCacheMessage("Cache settings unavailable. Searches still run without cached results."));
+      .catch(() => {
+        setCacheSettingsAvailable(false);
+        setCacheMessage("Cache settings unavailable. Caching controls are disabled; searches still run fresh.");
+      });
     invoke<RecentSearch[]>("list_recent_local_searches").then(setRecentSearches).catch(() => setRecentSearches([]));
   }, []);
 
@@ -106,9 +111,9 @@ export default function LocalFinder() {
     </form>
     <div className="local-cache-controls">
       <div className="section-heading"><div><h3>Recent search cache</h3><p>Encrypted metadata only; document contents are never cached.</p></div></div>
-      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results (opt-in)</label>
+      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={!cacheSettingsAvailable || cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results and recent search phrases (opt-in)</label>
       <label className="model-select">Delete cached results after
-        <select value={String(cacheSettings.retention_days)} disabled={cacheBusy || busy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
+        <select value={String(cacheSettings.retention_days)} disabled={!cacheSettingsAvailable || cacheBusy || busy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
           <option value="7">7 days</option>
           <option value="30">30 days (recommended)</option>
           <option value="90">90 days</option>
