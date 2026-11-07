@@ -26,6 +26,9 @@ type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; 
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
+type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null };
+type ReceiptLedgerStatus = { entries: number; valid: boolean; head_sha256: string };
+type ReceiptLedgerEntry = { receipt: ExecutionReceipt; record_hash: string };
 type ChatMessage = { role: "user" | "assistant"; content: string };
 function composeConversationPrompt(messages: ChatMessage[], current: string): string {
   const currentText = current.trim();
@@ -60,6 +63,10 @@ export default function App() {
   const [historySettings, setHistorySettings] = useState<HistorySettings | null>(null);
   const [historyError, setHistoryError] = useState("");
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [receiptLedgerStatus, setReceiptLedgerStatus] = useState<ReceiptLedgerStatus | null>(null);
+  const [executionReceipts, setExecutionReceipts] = useState<ReceiptLedgerEntry[]>([]);
+  const [receiptBusy, setReceiptBusy] = useState(false);
+  const [receiptError, setReceiptError] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("auto");
   const [modelBusy, setModelBusy] = useState(false);
@@ -186,6 +193,23 @@ export default function App() {
       setHistorySettings(settings); setPersistentHistory(entries);
     } catch (error) { setHistoryError("Local history unavailable: " + String(error)); }
     finally { setHistoryBusy(false); }
+  }
+
+  async function refreshExecutionReceipts() {
+    if (!isTauri() || receiptBusy) return;
+    setReceiptBusy(true); setReceiptError("");
+    try {
+      const [status, entries] = await Promise.all([
+        invoke<ReceiptLedgerStatus>("verify_execution_receipt_ledger"),
+        invoke<ReceiptLedgerEntry[]>("list_execution_receipts")
+      ]);
+      setReceiptLedgerStatus(status);
+      setExecutionReceipts(entries);
+      if (!status.valid) setReceiptError("Receipt integrity verification failed. Entries are hidden; investigate the local security store.");
+    } catch (error) {
+      setReceiptError("Privacy receipts unavailable: " + String(error));
+      setExecutionReceipts([]);
+    } finally { setReceiptBusy(false); }
   }
 
   async function togglePersistentHistory(enabled: boolean) {
@@ -882,6 +906,28 @@ export default function App() {
         </div>
         <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
+          <div className="history receipt-history">
+            <h3>Privacy & execution receipts</h3>
+            <p>Metadata-only records for supported local chat and approved cloud chat tasks. Document, PDF, translation and model-download operations are not yet connected to this receipt ledger. Prompts and outputs are not stored in this ledger.</p>
+            <div className="history-actions">
+              <button onClick={refreshExecutionReceipts} disabled={!isTauri() || receiptBusy}>{receiptBusy ? "Verifying…" : "Verify & refresh receipts"}</button>
+            </div>
+            {receiptLedgerStatus && <small>Ledger: {receiptLedgerStatus.valid ? "Integrity verified" : "Integrity check failed"} · {receiptLedgerStatus.entries} entries · Head SHA-256: {receiptLedgerStatus.head_sha256.slice(0, 16)}…</small>}
+            {receiptError && <p className="error" role="alert">{receiptError}</p>}
+            {executionReceipts.slice(0, 10).map(({ receipt, record_hash }) => <div className="saved-history-item" key={receipt.task_id + record_hash}>
+              <b>{receipt.operation_id} · {receipt.task_id}</b>
+              <small>{receipt.location} · {receipt.adapter_id} v{receipt.adapter_version} · {receipt.model_id || "No model recorded"}</small>
+              <small>{new Date(receipt.started_at_unix_ms).toLocaleString()} · {Math.max(0, receipt.completed_at_unix_ms - receipt.started_at_unix_ms)} ms</small>
+              <details className="saved-history-output"><summary>View provenance hashes</summary>
+                <small>Input SHA-256: {receipt.input_sha256}</small>
+                <small>Output SHA-256: {receipt.output_sha256}</small>
+                <small>Ledger record SHA-256: {record_hash}</small>
+                <small>Approval reference: {receipt.user_approval_id || "Not required for this local task"}</small>
+              </details>
+            </div>)}
+            {!executionReceipts.length && !receiptError && <small>No execution receipts recorded yet. Run a supported AI task, then refresh this panel.</small>}
+            <small>The ledger is hash-chained and tamper-evident, not digitally signed or independently anchored. A local administrator with database access may still replace the entire store.</small>
+          </div>
           <div className="history persistent-history">
             <h3>Saved task history</h3>
             <p>Optional local history. Saved prompts and outputs are encrypted on this device using AES-256-GCM with a key held in the operating-system credential vault.</p>

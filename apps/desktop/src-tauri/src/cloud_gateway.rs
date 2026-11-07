@@ -53,7 +53,7 @@ fn validate_endpoint(endpoint:&str)->Result<Url,String>{
  if url.scheme()!="https"||url.host_str().is_none()||url.username()!=""||url.password().is_some()||url.query().is_some()||url.fragment().is_some(){return Err("Endpoint must use HTTPS and cannot contain credentials, query, or fragment.".into());}
  let host=url.host_str().unwrap_or_default();
  if host.eq_ignore_ascii_case("localhost")||host.ends_with(".localhost"){return Err("Localhost endpoints are not accepted.".into());}
- if let Ok(ip)=host.parse::<IpAddr>(){let bad=match ip{IpAddr::V4(v)=>v.is_private()||v.is_loopback()||v.is_link_local()||v.is_unspecified(),IpAddr::V6(v)=>v.is_loopback()||v.is_unique_local()||v.is_unicast_link_local()||v.is_unspecified()};if bad{return Err("Private, loopback, and link-local IP endpoints are not allowed.".into());}}
+ if let Ok(ip)=host.parse::<IpAddr>(){if !is_public_ip(ip){return Err("Literal IP endpoints must be globally routable public addresses; private, loopback, link-local, multicast, broadcast, and reserved ranges are blocked.".into());}}
  Ok(url)
 }
 fn validate_mode(mode:&str)->Result<(),String>{
@@ -64,7 +64,7 @@ fn validate_mode(mode:&str)->Result<(),String>{
 fn validate(endpoint:&str,model:&str,key:&str,prompt:&str,approved:bool)->Result<Url,String>{
  if !approved{return Err("Cloud transfer was not approved for this task. No request was sent.".into());}
  let url=validate_endpoint(endpoint)?;
- if model.trim().is_empty()||model.len()>128||model.chars().any(char::is_control){return Err("Model name must be non-empty and at most 128 characters.".into());}
+ if !ujani_core::validate_model_identifier(model){return Err("Model name must be a supported identifier of at most 128 characters, without whitespace or path traversal.".into());}
  if key.trim().is_empty()||key.len()>MAX_KEY||key.chars().any(char::is_control){return Err("Enter a valid API key (maximum 4 KiB).".into());}
  if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{return Err("Cloud prompt must be non-empty and no larger than 32 KiB.".into());}
  Ok(url)
@@ -111,9 +111,25 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
  Ok(resolved)
 }
 
+/// Validate all local BYOK request fields before reserving quota or starting network work.
+pub fn validate_request(
+    endpoint: &str,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+    mode: &str,
+    approved: bool,
+    token_parameter: &str,
+) -> Result<(), String> {
+    validate_mode(mode)?;
+    let _url = validate(endpoint, model, api_key, prompt, approved)?;
+    let _limits = token_limits(model, token_parameter)?;
+    Ok(())
+}
+
 pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String)->Result<String,String>{
  let api_key = Zeroizing::new(api_key);
- validate_mode(&mode)?;
+ validate_request(&endpoint,&model,api_key.as_str(),&prompt,&mode,approved,&token_parameter)?;
  let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
  let host = url.host_str().ok_or_else(|| "Cloud endpoint has no host.".to_string())?.trim_start_matches('[').trim_end_matches(']').to_string();
  let addresses = resolve_public_addresses(&url).await?;
@@ -147,7 +163,7 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 }
 #[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
-#[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
+#[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("224.0.0.1".parse().unwrap()));assert!(!is_public_ip("255.255.255.255".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
 #[test]fn automatic_token_selection_supports_reasoning_models_on_custom_hosts(){
  assert_eq!(token_limits("gpt-5","auto").unwrap(),(None,Some(REASONING_MAX_COMPLETION_TOKENS)));
  assert_eq!(token_limits("o3-mini","auto").unwrap(),(None,Some(REASONING_MAX_COMPLETION_TOKENS)));

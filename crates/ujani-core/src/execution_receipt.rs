@@ -9,14 +9,17 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Provenance classification for where inference was performed.
 pub enum ExecutionLocation {
     LocalCpu,
     LocalGpu,
+    LocalUnverified,
     ExternalProvider,
     DeterministicTool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Metadata-only record of an inference operation and exact input/output digests.
 pub struct ExecutionReceipt {
     pub schema_version: u16,
     pub task_id: String,
@@ -34,6 +37,7 @@ pub struct ExecutionReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Structural validation failures for execution provenance receipts.
 pub enum ReceiptError {
     UnsupportedSchema,
     MissingIdentity,
@@ -47,7 +51,24 @@ pub enum ReceiptError {
 fn valid_identifier(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
-        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-".contains(c))
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-_".contains(c))
+}
+
+fn valid_model_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && !value.chars().any(char::is_control)
+        && !value.chars().any(char::is_whitespace)
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.contains("//")
+        && !value.split('/').any(|part| part == "." || part == "..")
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-_/".contains(c))
+}
+
+/// Validate an Ollama/provider model identifier before dispatching inference.
+pub fn validate_model_identifier(value: &str) -> bool {
+    valid_model_identifier(value)
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -76,7 +97,7 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
         || !valid_identifier(&receipt.operation_id, 128)
         || !valid_identifier(&receipt.adapter_id, 96)
         || !valid_identifier(&receipt.adapter_version, 64)
-        || receipt.model_id.as_ref().is_some_and(|v| !valid_identifier(v, 128))
+        || receipt.model_id.as_ref().is_some_and(|v| !valid_model_identifier(v))
         || receipt.model_version.as_ref().is_some_and(|v| !valid_identifier(v, 64))
         || receipt.user_approval_id.as_ref().is_some_and(|v| !valid_identifier(v, 128))
     {
@@ -90,13 +111,13 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
     {
         return Err(ReceiptError::InvalidTimeRange);
     }
-    if matches!(receipt.location, ExecutionLocation::LocalCpu | ExecutionLocation::LocalGpu)
+    if matches!(receipt.location, ExecutionLocation::LocalCpu | ExecutionLocation::LocalGpu | ExecutionLocation::LocalUnverified)
         && receipt.model_id.is_some() != receipt.model_version.is_some()
     {
         return Err(ReceiptError::MissingModelProvenance);
     }
     if receipt.location == ExecutionLocation::ExternalProvider
-        && receipt.user_approval_id.as_deref().map_or(true, str::is_empty)
+        && receipt.user_approval_id.as_deref().is_none_or(str::is_empty)
     {
         return Err(ReceiptError::MissingExternalApproval);
     }
@@ -153,6 +174,23 @@ mod tests {
         r = receipt();
         r.completed_at_unix_ms = 99;
         assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidTimeRange));
+    }
+
+    #[test]
+    fn accepts_common_local_model_tags_and_registry_names() {
+        let mut r = receipt();
+        r.model_id = Some("hf.co/user/model_name:Q4_K_M".into());
+        r.model_version = Some("unknown".into());
+        assert_eq!(validate_receipt(&r), Ok(()));
+    }
+
+    #[test]
+    fn model_identifier_preflight_rejects_ambiguous_names() {
+        assert!(validate_model_identifier("qwen2.5:3b"));
+        assert!(validate_model_identifier("hf.co/user/model_name:Q4_K_M"));
+        assert!(!validate_model_identifier("../escape"));
+        assert!(!validate_model_identifier("model name"));
+        assert!(!validate_model_identifier("model\\nname"));
     }
 
     #[test]

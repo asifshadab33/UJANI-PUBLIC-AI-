@@ -1,4 +1,6 @@
 //! Minimal, side-effect-free foundations for UJANI Public AI.
+
+#![forbid(unsafe_code)]
 //! This crate intentionally does not execute tools, inspect hardware, or make network calls.
 
 use std::collections::BTreeSet;
@@ -215,3 +217,4 @@ pub use resource_scheduler::{plan_local_schedule, LocalPlacement, ResourceSnapsh
 /// Typed, hash-bound execution provenance receipt contract.
 pub mod execution_receipt;
 pub use execution_receipt::{sha256_hex, validate_receipt, ExecutionLocation as ReceiptExecutionLocation, ExecutionReceipt, ReceiptError};
+pub use execution_receipt::validate_model_identifier;

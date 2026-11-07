@@ -1,20 +1,39 @@
 //! Signed, consent-scoped Worker/Partner task envelope contract.
 //! This module defines verification primitives only; it does not enroll peers,
 //! open network listeners, or dispatch remote tasks.
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+/// Current recipient-bound peer task envelope protocol version.
+pub const PROTOCOL_VERSION: u16 = 2;
+/// Maximum accepted lifetime of a signed peer task envelope.
 pub const MAX_TASK_TTL_SECONDS: u64 = 300;
+/// Maximum number of unexpired nonces retained by the in-memory replay guard.
 pub const MAX_REPLAY_ENTRIES: usize = 4096;
 const ALLOWED_SCOPES: &[&str] = &["prompt.read", "document.read", "result.write"];
+const SIGNING_DOMAIN: &[u8] = b"UJANI-PUBLIC-PEER-TASK-ENVELOPE-V2\0";
+
+/// Domain-separated, length-prefixed signing bytes. The envelope schema remains JSON,
+/// but its exact serialized bytes are length-bound and cannot be reused in another protocol.
+fn signing_bytes(envelope: &TaskEnvelope) -> Result<Vec<u8>, EnvelopeError> {
+    let encoded = serde_json::to_vec(envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+    let len = u32::try_from(encoded.len()).map_err(|_| EnvelopeError::InvalidSignature)?;
+    let mut bytes = Vec::with_capacity(SIGNING_DOMAIN.len() + 4 + encoded.len());
+    bytes.extend_from_slice(SIGNING_DOMAIN);
+    bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.extend_from_slice(&encoded);
+    Ok(bytes)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Signed authorization metadata for one recipient-bound peer task.
 pub struct TaskEnvelope {
     pub protocol_version: u16,
     pub task_id: String,
+    /// Exact recipient device fingerprint; prevents forwarding consent to another peer.
+    pub recipient_device_id: String,
     pub issued_at: u64,
     pub expires_at: u64,
     /// 16 random bytes encoded as 32 lowercase hexadecimal characters.
@@ -30,16 +49,19 @@ pub struct TaskEnvelope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Task envelope plus its Ed25519 signature.
 pub struct SignedTaskEnvelope {
     pub envelope: TaskEnvelope,
-    /// Ed25519 signature over the canonical serde JSON serialization of envelope.
+    /// Ed25519 signature over domain-separated, length-prefixed envelope bytes.
     pub signature: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Validation and verification failures for peer task envelopes.
 pub enum EnvelopeError {
     InvalidVersion,
     InvalidTaskId,
+    InvalidRecipient,
     InvalidTimeWindow,
     Expired,
     ExcessiveLifetime,
@@ -55,19 +77,23 @@ pub enum EnvelopeError {
 }
 
 #[derive(Default)]
+/// Bounded in-memory replay guard; production adapters also persist nonce claims.
 pub struct ReplayGuard {
     seen: HashMap<String, u64>,
 }
 
 impl ReplayGuard {
+    /// Return the number of unexpired nonces currently retained.
     pub fn len(&self) -> usize { self.seen.len() }
+    /// Return whether the replay guard contains no unexpired nonces.
     pub fn is_empty(&self) -> bool { self.seen.is_empty() }
 }
 
 impl SignedTaskEnvelope {
+    /// Validate and sign an envelope with the sender's Ed25519 private key.
     pub fn sign(envelope: TaskEnvelope, key: &SigningKey) -> Result<Self, EnvelopeError> {
         validate_fields(&envelope, envelope.issued_at)?;
-        let bytes = serde_json::to_vec(&envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        let bytes = signing_bytes(&envelope)?;
         let signature = key.sign(&bytes).to_bytes().to_vec();
         Ok(Self { envelope, signature })
     }
@@ -93,9 +119,9 @@ impl SignedTaskEnvelope {
         registered_operations: &HashSet<String>,
     ) -> Result<(), EnvelopeError> {
         validate_fields(&self.envelope, now)?;
-        let bytes = serde_json::to_vec(&self.envelope).map_err(|_| EnvelopeError::InvalidSignature)?;
+        let bytes = signing_bytes(&self.envelope)?;
         let signature = Signature::from_slice(&self.signature).map_err(|_| EnvelopeError::InvalidSignature)?;
-        trusted_key.verify(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
+        trusted_key.verify_strict(&bytes, &signature).map_err(|_| EnvelopeError::InvalidSignature)?;
         if !registered_operations.contains(&self.envelope.operation) {
             return Err(EnvelopeError::UnknownOperation);
         }
@@ -117,6 +143,9 @@ fn validate_fields(e: &TaskEnvelope, now: u64) -> Result<(), EnvelopeError> {
     if e.task_id.is_empty() || e.task_id.len() > 96
         || !e.task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err(EnvelopeError::InvalidTaskId);
+    }
+    if e.recipient_device_id.len() != 64 || !e.recipient_device_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err(EnvelopeError::InvalidRecipient);
     }
     if e.issued_at > now.saturating_add(30) || e.expires_at <= e.issued_at {
         return Err(EnvelopeError::InvalidTimeWindow);
@@ -151,6 +180,7 @@ mod tests {
         TaskEnvelope {
             protocol_version: PROTOCOL_VERSION,
             task_id: "task-42".into(),
+            recipient_device_id: "b".repeat(64),
             issued_at: 1_000,
             expires_at: 1_120,
             nonce: "0123456789abcdef0123456789abcdef".into(),
@@ -200,6 +230,14 @@ mod tests {
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidScope));
         signed.envelope.requested_scopes = vec!["document.read".into()];
         assert_eq!(signed.verify(&key.verifying_key(), 1_001, &mut guard, &operations), Err(EnvelopeError::InvalidSignature));
+    }
+
+    #[test]
+    fn rejects_invalid_or_missing_recipient_fingerprint() {
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let mut e = envelope();
+        e.recipient_device_id = "not-a-fingerprint".into();
+        assert_eq!(SignedTaskEnvelope::sign(e, &key), Err(EnvelopeError::InvalidRecipient));
     }
 
     #[test]

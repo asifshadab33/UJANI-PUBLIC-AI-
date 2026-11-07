@@ -162,8 +162,8 @@ impl ToolManifest {
 /// Adapter availability is descriptive only; execution still goes through native policy.
 pub fn builtin_tool_manifests() -> Vec<ToolManifest> {
     let deterministic_budget = ResourceBudget {
-        max_input_bytes: 1 * 1024 * 1024,
-        max_output_bytes: 1 * 1024 * 1024,
+        max_input_bytes: 1024 * 1024,
+        max_output_bytes: 1024 * 1024,
         max_memory_mb: 256,
         max_runtime_ms: 15_000,
     };

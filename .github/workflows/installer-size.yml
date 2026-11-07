@@ -1,0 +1,81 @@
+name: UJANI installer size audit
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ujani-installer-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-installers:
+    name: Build installer (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            bundles: msi,nsis
+          - platform: macos-latest
+            bundles: dmg
+          - platform: ubuntu-24.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev patchelf xdg-utils
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm install
+      - name: Generate platform installer icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
+      - name: Disable updater signing artifacts for unsigned size measurement
+        working-directory: apps/desktop/src-tauri
+        run: node -e "const fs=require('fs');const p='tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(p,JSON.stringify(c,null,2));"
+      - name: Build native installer bundles
+        working-directory: apps/desktop
+        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+      - name: Report exact installer sizes
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const root = 'src-tauri/target/release/bundle';
+          const allowed = new Set(['.msi', '.exe', '.dmg', '.deb', '.appimage']);
+          const found = [];
+          function walk(dir) {
+            if (!fs.existsSync(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (allowed.has(path.extname(entry.name).toLowerCase())) {
+                const bytes = fs.statSync(full).size;
+                found.push({ name: path.relative(root, full), bytes, mib: (bytes / 1048576).toFixed(2) });
+              }
+            }
+          }
+          walk(root);
+          if (!found.length) { console.error('No installer bundles were produced.'); process.exit(1); }
+          found.sort((a, b) => a.name.localeCompare(b.name));
+          const rows = ['| Installer | Bytes | MiB |', '|---|---:|---:|'];
+          for (const f of found) rows.push(`| ${f.name} | ${f.bytes} | ${f.mib} |`);
+          console.log(rows.join('\n'));
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ${process.env.RUNNER_OS} installer sizes\n\n${rows.join('\n')}\n`);
+          NODE

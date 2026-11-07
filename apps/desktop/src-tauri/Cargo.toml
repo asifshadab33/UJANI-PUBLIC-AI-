@@ -2,6 +2,7 @@
 name = "ujani-desktop"
 version = "0.1.0"
 description = "UJANI Public AI desktop application"
+license = "GPL-3.0-only"
 authors = ["UJANI contributors"]
 edition = "2021"
 
@@ -32,7 +33,14 @@ tokio = { version = "1", features = ["time", "rt", "sync", "net", "macros", "pro
 tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 zeroize = "1"
+ed25519-dalek = "3"
 ujani-core = { path = "../../../crates/ujani-core" }
 
 # Keep the Tauri application in its own workspace; the shared core crate is a path dependency.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }
+
 [workspace]

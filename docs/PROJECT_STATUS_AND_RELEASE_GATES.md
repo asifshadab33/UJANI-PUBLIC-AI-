@@ -17,9 +17,9 @@
 - User-selected text/PDF/image-header processing, fixed local document pipeline and native selected-folder import with bounded file counts/sizes.
 - Local encrypted history with AES-GCM v2 row/column authenticated data and migration support.
 - BYOK OpenAI-compatible HTTPS gateway with explicit per-task consent, endpoint/DNS checks, redirect/proxy restrictions, response bounds and local-only Fortress policy.
-- Shared safety-policy checks at relevant native command boundaries.
+- Native boundaries currently validate routing through `router::evaluate_mode`, validate BYOK requests through `cloud_gateway::validate_request`, and validate command/task identifiers. The separate `safety_policy` and `policy_gate` modules are not yet universal gates on every native command.
 - Versioned workflow planning, resource-aware scheduler policy contracts and typed execution receipt contracts.
-- Peer-envelope v2 signing/verification primitives, without peer enrollment or transport.
+- Peer-envelope v2 uses recipient-bound, domain-separated Ed25519 signatures with strict verification; the desktop also has OS-vault device identity, native-confirmed peer trust/revocation and persistent nonce claims. There is still no encrypted peer transport, remote dispatch or remote execution.
 - Native IPC input bounds, history-key zeroization improvements, optional parser fuzz harnesses and pinned CI dependencies.
 - These foundations do not establish a full OS sandbox, hardware attestation, distributed execution or independent verification of model output.
 
@@ -36,7 +36,7 @@
 ### P0 — before describing either product as production-ready
 
 1. **OS-enforced isolation:** implement and test supported Linux, macOS and Windows sandbox adapters. Fortress is currently an application policy boundary, not OS-enforced network/process isolation. Validate filesystem, network-egress, child-process, CPU, memory and file-descriptor restrictions.
-2. **PDF worker containment:** add OS-enforced CPU/memory/file-descriptor limits and validate worker launch, cancellation, termination and cleanup. A child process with time/output limits is not a complete sandbox.
+2. **PDF worker containment:** OS-specific worker restrictions are implemented in the current remediation branch (Unix resource limits and Linux network syscall filtering, macOS deny-network/file-write profile, Windows Job Object). Validate launch, cancellation, termination and cleanup on all supported OSes; these worker restrictions are not a full application sandbox.
 3. **Security verification:** commission independent threat modelling and penetration testing; review dependencies/SBOM, signing, update provenance, secrets, IPC, local services, cloud gateway, storage and installer/release pipeline.
 4. **Release engineering:** establish signed reproducible builds, provenance/attestations, protected release approvals, artifact verification, rollback and a tested update/recovery process.
 5. **Data lifecycle:** verify history migration, backup/restore, user-visible export/deletion, key rotation/recovery, retention enforcement and concurrent key initialization across supported OS credential stores.
@@ -76,7 +76,7 @@
 - Worker and Partner are not general distributed execution modes; no peer transport or device-to-device dispatch is implemented.
 - The Public scheduler does not collect telemetry, reserve resources, dispatch work or guarantee capacity.
 - The execution receipt type is a contract; there is no durable receipt ledger or universal cryptographic attestation of execution.
-- Peer protocol v2 primitives do not provide key enrollment, authenticated transport, persistent replay storage or organisation authorization.
+- Peer protocol v2 plus local device identity, native-confirmed trust/revocation and persistent nonce claims do not provide encrypted/authenticated network transport, remote dispatch, organisation-level identity, or remote execution.
 - Enterprise in-memory leases/replay protection are not durable across process restarts.
 - A workload manifest validates requested input only; it does not authenticate a sender, authorize a workload or execute it.
 - Parser fuzz targets exist, but no completed fuzz campaign is claimed.

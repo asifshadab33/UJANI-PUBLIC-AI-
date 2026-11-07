@@ -43,7 +43,7 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
   }
   Err(keyring::Error::NoEntry) => {
    let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
-   let encoded = Zeroizing::new(B64.encode(&*key));
+   let encoded = Zeroizing::new(B64.encode(*key));
    entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
    Ok(key)
   }
@@ -87,8 +87,12 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
  for row in rows {
   let (id, prompt, output) = row.map_err(|e| e.to_string())?;
   if !prompt.starts_with(ENC_V2) || !output.starts_with(ENC_V2) {
-   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) { decrypt_text(key, &prompt, id, "prompt")? } else { prompt };
-   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) { decrypt_text(key, &output, id, "output")? } else { output };
+   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) {
+    match decrypt_text(key, &prompt, id, "prompt") { Ok(value) => value, Err(_) => continue }
+   } else { prompt };
+   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) {
+    match decrypt_text(key, &output, id, "output") { Ok(value) => value, Err(_) => continue }
+   } else { output };
    pending.push((id, encrypt_text(key, &plain_prompt, id, "prompt")?, encrypt_text(key, &plain_output, id, "output")?));
   }
  }
@@ -100,6 +104,7 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
  tx.commit().map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)] // Keep persisted history fields explicit at this private DB boundary.
 fn save_secure(db: &mut Connection, key: &[u8; 32], prompt: &str, output: &str, mode: &str, model: &str, kind: &str, created_at: i64) -> Result<i64, String> {
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
  if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT { return Err("History prompt must be non-empty and at most 32 KiB.".into()); }
@@ -222,7 +227,7 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   let encrypted=encrypt_text(&key,"private prompt",1,"prompt").unwrap();
   assert!(encrypted.starts_with(ENC_V2));
   assert_eq!(decrypt_text(&key,&encrypted,1,"prompt").unwrap(),"private prompt");
-  let tampered=format!("{}A",&encrypted);
+  let tampered=format!("{}A",encrypted);
   assert!(decrypt_text(&key,&tampered,1,"prompt").is_err());
  }
  #[test] fn ciphertext_cannot_be_moved_between_rows_or_columns() {
@@ -249,6 +254,23 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   let (p,o):(String,String)=db.query_row("SELECT prompt,output FROM task_history WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
   assert!(p.starts_with(ENC_V2)); assert!(o.starts_with(ENC_V2));
   assert_eq!(decrypt_text(&key,&p,1,"prompt").unwrap(),"old prompt");
+ }
+ #[test] fn corrupt_v1_row_does_not_block_good_history_migration() {
+  let db = db();
+  db.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('ujani:v1:%%%','ujani:v1:%%%','smart','m','chat',1)",[]).unwrap();
+  db.execute("INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('good prompt','good output','smart','m','chat',2)",[]).unwrap();
+  let key = test_key();
+  migrate_plaintext_rows(&db, &key).unwrap();
+  let (bad_prompt, bad_output): (String, String) = db.query_row("SELECT prompt,output FROM task_history WHERE id=1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+  assert_eq!(bad_prompt, "ujani:v1:%%%");
+  assert_eq!(bad_output, "ujani:v1:%%%");
+  let (good_prompt, good_output): (String, String) = db.query_row("SELECT prompt,output FROM task_history WHERE id=2", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+  assert!(good_prompt.starts_with(ENC_V2));
+  assert!(good_output.starts_with(ENC_V2));
+  let entries = list_secure(&db, &key).unwrap();
+  assert_eq!(entries.len(), 2);
+  assert!(entries.iter().any(|entry| entry.prompt == "[unreadable entry: key changed or data corrupted]"));
+  assert!(entries.iter().any(|entry| entry.prompt == "good prompt"));
  }
  #[test] fn disabled_by_default(){let mut c=db();assert!(!is_enabled(&c).unwrap());assert!(save(&mut c,"p","o","smart","m","chat",1).is_err());}
  #[test] fn disabled_history_does_not_require_a_credential_key(){let c=db();assert!(!is_enabled(&c).unwrap());assert!(list(&c).unwrap().is_empty());}

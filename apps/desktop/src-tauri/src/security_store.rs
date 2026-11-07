@@ -1,0 +1,617 @@
+//! Durable security state for provenance receipts, peer replay protection and cloud budgets.
+//! This module stores metadata only; it never stores prompts, outputs, API keys or peer private keys.
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use serde::Serialize;
+use ed25519_dalek::VerifyingKey;
+use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use std::collections::HashSet;
+use ujani_core::peer_protocol::{ReplayGuard, SignedTaskEnvelope};
+use ujani_core::registered_operations;
+use ujani_core::{sha256_hex, validate_receipt, ExecutionReceipt};
+
+const MAX_RECEIPTS: i64 = 10_000;
+const RECEIPT_SLOT_TTL_SECONDS: u64 = 900;
+const MAX_REPLAY_ENTRIES: i64 = 4_096;
+const MAX_NONCE_TTL_SECONDS: u64 = 300;
+const DAILY_CLOUD_TOKEN_RESERVATION: i64 = 250_000;
+const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Verification summary for the local hash-chained execution receipt ledger.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReceiptLedgerStatus {
+    pub entries: i64,
+    pub valid: bool,
+    pub head_sha256: String,
+}
+
+/// Metadata-only execution receipt shown in the local privacy/provenance panel.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReceiptLedgerEntry {
+    pub receipt: ExecutionReceipt,
+    pub record_hash: String,
+}
+
+/// Current per-installation BYOK token reservation for the UTC day.
+#[derive(Debug, Clone, Serialize)]
+pub struct CloudBudgetStatus {
+    pub utc_day: i64,
+    pub reserved_tokens: i64,
+    pub daily_limit_tokens: i64,
+    pub remaining_tokens: i64,
+}
+
+fn now_seconds() -> Result<u64, String> {
+    SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs()).map_err(|e| format!("System clock is before Unix epoch: {e}"))
+}
+
+fn open(app: &AppHandle) -> Result<Connection, String> {
+    let mut dir: PathBuf = app.path().app_data_dir()
+        .map_err(|e| format!("Could not locate UJANI app data directory: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Could not create UJANI app data directory: {e}"))?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("Could not secure UJANI app data directory: {e}"))?;
+    }
+    dir.push("security-state.sqlite3");
+    let db = Connection::open(&dir).map_err(|e| format!("Could not open UJANI security store: {e}"))?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Could not secure UJANI security database: {e}"))?;
+    }
+    db.busy_timeout(std::time::Duration::from_secs(3)).map_err(|e| e.to_string())?;
+    initialize(&db)?;
+    Ok(db)
+}
+
+fn initialize(db: &Connection) -> Result<(), String> {
+    db.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         PRAGMA secure_delete=ON;
+         PRAGMA journal_mode=DELETE;
+         CREATE TABLE IF NOT EXISTS execution_receipts(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           task_id TEXT NOT NULL,
+           receipt_json TEXT NOT NULL,
+           previous_hash TEXT NOT NULL,
+           record_hash TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_receipts_task ON execution_receipts(task_id);
+         CREATE TABLE IF NOT EXISTS receipt_slots(
+           task_id TEXT PRIMARY KEY,
+           reserved_at INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS peer_replay_nonces(
+           peer_id TEXT NOT NULL,
+           nonce TEXT NOT NULL,
+           expires_at INTEGER NOT NULL,
+           PRIMARY KEY(peer_id, nonce)
+         );
+         CREATE INDEX IF NOT EXISTS idx_peer_nonce_expiry ON peer_replay_nonces(expires_at);
+         CREATE TABLE IF NOT EXISTS cloud_budget(
+           utc_day INTEGER PRIMARY KEY,
+           reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens >= 0)
+         );
+         CREATE TABLE IF NOT EXISTS trusted_peers(
+           peer_id TEXT PRIMARY KEY,
+           public_key_hex TEXT NOT NULL,
+           label TEXT NOT NULL,
+           enrolled_at INTEGER NOT NULL,
+           revoked_at INTEGER
+         );"
+    ).map_err(|e| format!("Could not initialise UJANI security store: {e}"))
+}
+
+fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<String, String> {
+    validate_receipt(receipt).map_err(|e| format!("Execution receipt rejected: {e:?}"))?;
+    let receipt_json = serde_json::to_string(receipt)
+        .map_err(|e| format!("Could not encode execution receipt: {e}"))?;
+    if receipt_json.len() > 16 * 1024 {
+        return Err("Execution receipt exceeds the 16 KiB storage limit.".into());
+    }
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let owns_slot: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots WHERE task_id=?1", params![receipt.task_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if count >= MAX_RECEIPTS || (owns_slot == 0 && count.saturating_add(reserved) >= MAX_RECEIPTS) {
+        return Err("Execution receipt ledger is full or has no reserved capacity; archive support is required before accepting more receipts.".into());
+    }
+    let previous: Option<String> = tx.query_row(
+        "SELECT record_hash FROM execution_receipts ORDER BY id DESC LIMIT 1", [], |r| r.get(0)
+    ).optional().map_err(|e| e.to_string())?;
+    let previous_hash = previous.unwrap_or_else(|| GENESIS_HASH.to_string());
+    let record_hash = sha256_hex(format!("{previous_hash}:{receipt_json}").as_bytes());
+    tx.execute(
+        "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
+        params![receipt.task_id, receipt_json, previous_hash, record_hash]
+    ).map_err(|e| format!("Could not append execution receipt: {e}"))?;
+    tx.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![receipt.task_id])
+        .map_err(|e| format!("Could not consume execution receipt reservation: {e}"))?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(record_hash)
+}
+
+fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
+    let mut statement = db.prepare(
+        "SELECT receipt_json,previous_hash,record_hash FROM execution_receipts ORDER BY id ASC"
+    ).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |r| Ok((
+        r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?
+    ))).map_err(|e| e.to_string())?;
+    let mut previous = GENESIS_HASH.to_string();
+    let mut entries = 0_i64;
+    let mut valid = true;
+    for row in rows {
+        let (receipt_json, previous_hash, record_hash) = row.map_err(|e| e.to_string())?;
+        let parsed: ExecutionReceipt = match serde_json::from_str(&receipt_json) {
+            Ok(value) => value,
+            Err(_) => { valid = false; break; }
+        };
+        if validate_receipt(&parsed).is_err() || previous_hash != previous
+            || sha256_hex(format!("{previous_hash}:{receipt_json}").as_bytes()) != record_hash {
+            valid = false;
+            break;
+        }
+        previous = record_hash;
+        entries += 1;
+    }
+    Ok(ReceiptLedgerStatus { entries, valid, head_sha256: previous })
+}
+
+fn claim_nonce_tx(
+    tx: &Transaction<'_>,
+    peer_id: &str,
+    nonce: &str,
+    expires_at: u64,
+    now: u64,
+) -> Result<(), String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Peer replay namespace requires a valid device fingerprint.".into());
+    }
+    if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err("Peer nonce must be 32 lowercase hexadecimal characters.".into());
+    }
+    if expires_at <= now || expires_at.saturating_sub(now) > MAX_NONCE_TTL_SECONDS + 30 {
+        return Err("Peer nonce expiry is invalid or exceeds the five-minute protocol limit plus allowed 30-second clock skew.".into());
+    }
+    tx.execute("DELETE FROM peer_replay_nonces WHERE expires_at <= ?1", params![now as i64])
+        .map_err(|e| e.to_string())?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM peer_replay_nonces", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if count >= MAX_REPLAY_ENTRIES {
+        return Err("Persistent peer replay store is full; new peer tasks are fail-closed.".into());
+    }
+    tx.execute(
+        "INSERT INTO peer_replay_nonces(peer_id,nonce,expires_at) VALUES(?1,?2,?3)",
+        params![peer_id.to_ascii_lowercase(), nonce, expires_at as i64]
+    ).map_err(|e| {
+        if e.to_string().contains("UNIQUE") { "Peer task replay detected; nonce was already used.".into() }
+        else { format!("Could not persist peer replay nonce: {e}") }
+    })?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u64, now: u64) -> Result<(), String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    claim_nonce_tx(&tx, peer_id, nonce, expires_at, now)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens: u16, now: u64) -> Result<CloudBudgetStatus, String> {
+    if prompt_bytes == 0 || prompt_bytes > 32 * 1024 || completion_tokens == 0 || completion_tokens > 8_192 {
+        return Err("Cloud token reservation request is outside the supported bounds.".into());
+    }
+    let day = (now / 86_400) as i64;
+    let prompt_tokens = prompt_bytes as i64;
+    let reservation = prompt_tokens.saturating_add(completion_tokens as i64);
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    tx.execute("INSERT OR IGNORE INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,0)", params![day])
+        .map_err(|e| e.to_string())?;
+    let used: i64 = tx.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if used.saturating_add(reservation) > DAILY_CLOUD_TOKEN_RESERVATION {
+        return Err(format!(
+            "Daily cloud token safety limit reached ({used}/{DAILY_CLOUD_TOKEN_RESERVATION} reserved tokens). Try again after the UTC day resets."
+        ));
+    }
+    let next = used.saturating_add(reservation);
+    tx.execute("UPDATE cloud_budget SET reserved_tokens=?1 WHERE utc_day=?2", params![next, day])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(CloudBudgetStatus {
+        utc_day: day,
+        reserved_tokens: next,
+        daily_limit_tokens: DAILY_CLOUD_TOKEN_RESERVATION,
+        remaining_tokens: DAILY_CLOUD_TOKEN_RESERVATION - next,
+    })
+}
+
+/// Atomically reserve a conservative local token allowance before a BYOK request is sent.
+pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetStatus, String> {
+    reserve_budget_db(&mut open(app)?, prompt_bytes, completion_tokens, now_seconds()?)
+}
+
+/// Holds one durable ledger slot while a local or cloud inference is in flight.
+pub struct ReceiptSlotReservation {
+    app: AppHandle,
+    task_id: String,
+    consumed: bool,
+}
+
+impl ReceiptSlotReservation {
+    /// Persist the completed receipt and atomically consume this reservation.
+    pub fn persist(mut self, receipt: ExecutionReceipt) -> Result<String, String> {
+        if receipt.task_id != self.task_id {
+            return Err("Execution receipt task identifier does not match its reserved ledger slot.".into());
+        }
+        let result = append_execution_receipt(self.app.clone(), receipt)?;
+        self.consumed = true;
+        Ok(result)
+    }
+}
+
+impl Drop for ReceiptSlotReservation {
+    fn drop(&mut self) {
+        if !self.consumed {
+            let _ = release_receipt_slot(&self.app, &self.task_id);
+        }
+    }
+}
+
+fn reserve_receipt_slot_db(db: &mut Connection, task_id: &str, now: u64) -> Result<(), String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM receipt_slots WHERE reserved_at <= ?1", params![now.saturating_sub(RECEIPT_SLOT_TTL_SECONDS) as i64])
+        .map_err(|e| e.to_string())?;
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if count.saturating_add(reserved) >= MAX_RECEIPTS {
+        return Err("Execution receipt ledger is full; new inference is blocked until receipts can be archived.".into());
+    }
+    tx.execute(
+        "INSERT INTO receipt_slots(task_id,reserved_at) VALUES(?1,?2)",
+        params![task_id, now as i64]
+    ).map_err(|e| format!("Could not reserve execution receipt capacity: {e}"))?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+fn release_receipt_slot_db(db: &Connection, task_id: &str) -> Result<(), String> {
+    db.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![task_id])
+        .map(|_| ()).map_err(|e| format!("Could not release execution receipt reservation: {e}"))
+}
+
+fn release_receipt_slot(app: &AppHandle, task_id: &str) -> Result<(), String> {
+    release_receipt_slot_db(&open(app)?, task_id)
+}
+
+/// Reserve a durable receipt slot before inference. The reservation is released on drop
+/// if the request fails, is cancelled, or never reaches successful receipt persistence.
+pub fn reserve_execution_receipt_slot(
+    app: &AppHandle,
+    task_id: &str,
+) -> Result<ReceiptSlotReservation, String> {
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+        return Err("Invalid task identifier for execution receipt reservation.".into());
+    }
+    let now = now_seconds()?;
+    let mut db = open(app)?;
+    reserve_receipt_slot_db(&mut db, task_id, now)?;
+    Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
+}
+
+/// Append a validated execution receipt to the local SQLite hash chain.
+pub fn append_execution_receipt(app: AppHandle, receipt: ExecutionReceipt) -> Result<String, String> {
+    append_receipt_db(&mut open(&app)?, &receipt)
+}
+
+/// Verify the local receipt hash chain and return its entry count and head hash.
+#[tauri::command]
+pub fn verify_execution_receipt_ledger(app: AppHandle) -> Result<ReceiptLedgerStatus, String> {
+    verify_receipts_db(&open(&app)?)
+}
+
+/// Return the latest 50 metadata-only receipts, refusing to display an invalid ledger.
+#[tauri::command]
+pub fn list_execution_receipts(app: AppHandle) -> Result<Vec<ReceiptLedgerEntry>, String> {
+    let db = open(&app)?;
+    let status = verify_receipts_db(&db)?;
+    if !status.valid {
+        return Err("Execution receipt ledger integrity check failed; receipts are hidden until the store is investigated.".into());
+    }
+    let mut statement = db.prepare(
+        "SELECT receipt_json,record_hash FROM execution_receipts ORDER BY id DESC LIMIT 50"
+    ).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, String>(1)?,
+    ))).map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    for row in rows {
+        let (json, record_hash) = row.map_err(|e| e.to_string())?;
+        let receipt: ExecutionReceipt = serde_json::from_str(&json)
+            .map_err(|_| "Receipt ledger contains an unreadable entry.".to_string())?;
+        validate_receipt(&receipt)
+            .map_err(|_| "Receipt ledger contains an invalid entry.".to_string())?;
+        entries.push(ReceiptLedgerEntry { receipt, record_hash });
+    }
+    Ok(entries)
+}
+
+/// Return the current UTC-day token reservation for this installation.
+#[tauri::command]
+pub fn get_cloud_budget_status(app: AppHandle) -> Result<CloudBudgetStatus, String> {
+    let db = open(&app)?;
+    let day = (now_seconds()? / 86_400) as i64;
+    let used: i64 = db.query_row(
+        "SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |r| r.get(0)
+    ).optional().map_err(|e| e.to_string())?.unwrap_or(0);
+    Ok(CloudBudgetStatus {
+        utc_day: day,
+        reserved_tokens: used,
+        daily_limit_tokens: DAILY_CLOUD_TOKEN_RESERVATION,
+        remaining_tokens: DAILY_CLOUD_TOKEN_RESERVATION - used,
+    })
+}
+
+
+/// Public identity and local trust state for an enrolled UJANI peer.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrustedPeer {
+    pub peer_id: String,
+    pub public_key_hex: String,
+    pub label: String,
+    pub enrolled_at: i64,
+    pub revoked_at: Option<i64>,
+}
+
+fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
+    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Peer public key must be 32 bytes encoded as 64 hexadecimal characters.".into());
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        let pair = std::str::from_utf8(chunk).map_err(|_| "Invalid public key encoding.")?;
+        bytes[index] = u8::from_str_radix(pair, 16).map_err(|_| "Invalid public key encoding.")?;
+    }
+    Ok(bytes)
+}
+
+/// Enrol an Ed25519 peer key only after native device-owner confirmation.
+#[tauri::command]
+pub async fn enroll_trusted_peer(
+    app: AppHandle,
+    peer_id: String,
+    public_key_hex: String,
+    label: String,
+) -> Result<TrustedPeer, String> {
+    if label.trim().is_empty() || label.len() > 64 || label.chars().any(char::is_control) {
+        return Err("Peer label must be 1–64 printable characters.".into());
+    }
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer fingerprint.".into());
+    }
+    let public = decode_public_key(&public_key_hex)?;
+    VerifyingKey::from_bytes(&public).map_err(|_| "Peer Ed25519 public key is invalid.".to_string())?;
+    let expected_id = sha256_hex(&public);
+    if peer_id.to_ascii_lowercase() != expected_id {
+        return Err("Peer identifier does not match the supplied public key.".into());
+    }
+    let label = label.trim().to_string();
+    let approved = app.dialog()
+        .message(format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}"))
+        .title("Approve trusted device enrollment")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved {
+        return Err("Peer enrollment was not approved by the device owner.".into());
+    }
+    let now = now_seconds()? as i64;
+    let db = open(&app)?;
+    db.execute(
+        "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
+         VALUES(?1,?2,?3,?4,NULL)
+         ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
+        params![expected_id, public_key_hex.to_ascii_lowercase(), label, now]
+    ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
+    Ok(TrustedPeer { peer_id: expected_id, public_key_hex: public_key_hex.to_ascii_lowercase(), label, enrolled_at: now, revoked_at: None })
+
+}
+
+/// Check whether a peer fingerprint is currently enrolled and not revoked.
+pub fn is_active_trusted_peer(app: &AppHandle, peer_id: &str) -> Result<bool, String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer fingerprint.".into());
+    }
+    let db = open(app)?;
+    let count: i64 = db.query_row(
+        "SELECT COUNT(*) FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
+        params![peer_id.to_ascii_lowercase()], |row| row.get(0)
+    ).map_err(|e| e.to_string())?;
+    Ok(count == 1)
+}
+
+/// Revoke an enrolled peer after native device-owner confirmation.
+#[tauri::command]
+pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool, String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer identifier.".into());
+    }
+    let approved = app.dialog()
+        .message(format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"))
+        .title("Confirm device revocation")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .blocking_show();
+    if !approved { return Err("Peer revocation was cancelled.".into()); }
+    let changed = open(&app)?.execute(
+        "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
+        params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
+    ).map_err(|e| format!("Could not revoke trusted peer: {e}"))?;
+    Ok(changed == 1)
+}
+
+/// List enrolled peer public keys and their local revocation state.
+#[tauri::command]
+pub fn list_trusted_peers(app: AppHandle) -> Result<Vec<TrustedPeer>, String> {
+    let db = open(&app)?;
+    let mut statement = db.prepare(
+        "SELECT peer_id,public_key_hex,label,enrolled_at,revoked_at FROM trusted_peers ORDER BY enrolled_at DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok(TrustedPeer {
+        peer_id: row.get(0)?, public_key_hex: row.get(1)?, label: row.get(2)?,
+        enrolled_at: row.get(3)?, revoked_at: row.get(4)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+
+/// Verify a signed task from an enrolled, non-revoked peer and persist its nonce
+/// before returning. This authenticates an envelope only; no peer transport or
+/// Verify a recipient-bound signed peer envelope and atomically claim its replay nonce.
+/// This validates authorization only; encrypted transport and remote task execution are not implemented.
+#[tauri::command]
+pub fn verify_and_claim_peer_envelope(
+    app: AppHandle,
+    peer_id: String,
+    signed: SignedTaskEnvelope,
+    payload: Vec<u8>,
+) -> Result<(), String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid peer identifier.".into());
+    }
+    if payload.len() > 10 * 1024 * 1024 {
+        return Err("Peer payload exceeds the 10 MiB verification limit.".into());
+    }
+    let mut db = open(&app)?;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let public_key_hex: String = tx.query_row(
+        "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
+        params![peer_id.to_ascii_lowercase()], |row| row.get(0)
+    ).optional().map_err(|e| e.to_string())?
+      .ok_or_else(|| "Peer is not enrolled or has been revoked.".to_string())?;
+    let public = decode_public_key(&public_key_hex)?;
+    let key = VerifyingKey::from_bytes(&public)
+        .map_err(|_| "Stored peer public key is invalid.".to_string())?;
+    if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
+        return Err("Stored peer identity fingerprint does not match its public key.".into());
+    }
+    let local_identity = crate::device_identity::get_or_create_device_identity(app.clone())?;
+    if signed.envelope.recipient_device_id != local_identity.device_id {
+        return Err("Signed peer task is addressed to a different UJANI device.".into());
+    }
+    signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
+    let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
+    let now = now_seconds()?;
+    signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
+        .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
+    claim_nonce_tx(&tx, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ujani_core::{ReceiptExecutionLocation, ExecutionReceipt};
+
+    fn db() -> Connection { let c = Connection::open_in_memory().unwrap(); initialize(&c).unwrap(); c }
+    fn receipt(task_id: &str) -> ExecutionReceipt {
+        ExecutionReceipt {
+            schema_version: 1, task_id: task_id.into(), operation_id: "document.summarize".into(),
+            location: ReceiptExecutionLocation::LocalCpu, adapter_id: "ollama.local".into(),
+            adapter_version: "1.0.0".into(), model_id: Some("qwen2.5".into()),
+            model_version: Some("local-runtime".into()), input_sha256: sha256_hex(b"input"),
+            output_sha256: sha256_hex(b"output"), started_at_unix_ms: 1_000,
+            completed_at_unix_ms: 2_000, user_approval_id: None,
+        }
+    }
+
+    #[test]
+    fn receipt_ledger_appends_and_verifies_hash_chain() {
+        let mut db = db();
+        append_receipt_db(&mut db, &receipt("task-1")).unwrap();
+        append_receipt_db(&mut db, &receipt("task-2")).unwrap();
+        let status = verify_receipts_db(&db).unwrap();
+        assert!(status.valid);
+        assert_eq!(status.entries, 2);
+        assert_ne!(status.head_sha256, GENESIS_HASH);
+    }
+
+    #[test]
+    fn receipt_ledger_detects_row_tampering() {
+        let mut db = db();
+        append_receipt_db(&mut db, &receipt("task-1")).unwrap();
+        db.execute("UPDATE execution_receipts SET receipt_json='{}' WHERE id=1", []).unwrap();
+        assert!(!verify_receipts_db(&db).unwrap().valid);
+    }
+
+    #[test]
+    fn persistent_replay_nonce_rejects_duplicate_and_prunes_expired() {
+        let mut db = db();
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let peer_a = "a".repeat(64);
+        let peer_b = "b".repeat(64);
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_err());
+        assert!(claim_nonce_db(&mut db, &peer_b, nonce, 200, 100).is_ok());
+        let skew_nonce = "b".repeat(32);
+        let too_far_nonce = "c".repeat(32);
+        assert!(claim_nonce_db(&mut db, &peer_a, &skew_nonce, 430, 100).is_ok());
+        assert!(claim_nonce_db(&mut db, &peer_a, &too_far_nonce, 431, 100).is_err());
+        assert!(claim_nonce_db(&mut db, &peer_a, nonce, 400, 201).is_ok());
+    }
+
+
+    #[test]
+    fn trusted_peer_public_key_must_be_exactly_32_bytes() {
+        assert!(decode_public_key(&"a".repeat(64)).is_ok());
+        assert!(decode_public_key("abc").is_err());
+        assert!(decode_public_key(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn receipt_slot_reservations_are_atomic_and_expire_after_crashes() {
+        let mut db = db();
+        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_000).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_001).is_err());
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(release_receipt_slot_db(&db, "task-one").is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-two", 2_000).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-three", 2_901).is_ok());
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn receipt_ledger_refuses_to_prune_chain_history() {
+        let mut db = db();
+        for index in 0..MAX_RECEIPTS {
+            db.execute(
+                "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,'{}',?2,?3)",
+                params![format!("old-{index}"), GENESIS_HASH, "0".repeat(64)]
+            ).unwrap();
+        }
+        assert!(append_receipt_db(&mut db, &receipt("task-new")).is_err());
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get::<_, i64>(0)).unwrap(), MAX_RECEIPTS);
+    }
+
+    #[test]
+    fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
+        let mut db = db();
+        let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
+        assert_eq!(status.reserved_tokens, 12_192);
+        for _ in 0..5 { reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).unwrap(); }
+        assert!(reserve_budget_db(&mut db, 32 * 1024, 8_192, 86_400).is_err());
+        let next_day = reserve_budget_db(&mut db, 100, 100, 172_800).unwrap();
+        assert_eq!(next_day.reserved_tokens, 200);
+    }
+}

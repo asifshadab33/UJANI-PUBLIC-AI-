@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ujani-release-${{ github.ref }}
@@ -27,13 +27,18 @@ jobs:
         platform: [windows-latest, macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-      - uses: actions/setup-node@v7
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0
+      - name: Require release commit to be reachable from main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - name: Install Linux native build prerequisites
         if: runner.os == 'Linux'
         run: |
@@ -53,6 +58,9 @@ jobs:
   build-and-upload:
     needs: verify
     name: Build ${{ matrix.platform }} (${{ matrix.args || 'native' }})
+    environment: release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       # tauri-action merges each platform into latest.json; serialize to avoid manifest races.
@@ -69,10 +77,11 @@ jobs:
             args: "--target aarch64-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-      - uses: actions/setup-node@v7
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
@@ -90,23 +99,28 @@ jobs:
           APP_VERSION=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
           TAG_VERSION="${RELEASE_TAG#v}"
           test "$TAG_VERSION" = "$APP_VERSION" || { echo "::error::Release tag $RELEASE_TAG does not match app version $APP_VERSION"; exit 1; }
-          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\\n');"
+          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
+      - name: Refuse release build with an empty updater public key
+        run: node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if(!c.plugins.updater.pubkey) { console.error('Empty updater public key'); process.exit(1); }"
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev patchelf xdg-utils
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           targets: ${{ startsWith(matrix.args, '--target ') && contains(matrix.args, 'apple-darwin') && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: apps/desktop/src-tauri -> target
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm install
+      - name: Generate platform installer icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
       - name: Build and upload signed installers and updater manifest
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -136,16 +150,47 @@ jobs:
     name: Publish completed multi-platform release
     needs: build-and-upload
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Publish the draft only after all platform assets are uploaded
+      - name: Generate size report and checksums before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
           mkdir release-assets
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
-          (cd release-assets && sha256sum * > SHA256SUMS)
+          rm -f release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const root = 'release-assets';
+          const allowed = new Set(['.msi', '.exe', '.dmg', '.deb', '.appimage', '.rpm', '.zip']);
+          const files = [];
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (allowed.has(path.extname(entry.name).toLowerCase())) {
+                const bytes = fs.statSync(full).size;
+                files.push({ name: path.relative(root, full), bytes, mib: (bytes / 1048576).toFixed(2) });
+              }
+            }
+          }
+          walk(root);
+          if (!files.length) {
+            console.error('No supported installer assets found; refusing to publish an empty size report.');
+            process.exit(1);
+          }
+          files.sort((a, b) => a.name.localeCompare(b.name));
+          const lines = ['UJANI installer size report', 'Filename\tBytes\tMiB'];
+          for (const file of files) lines.push(`${file.name}\t${file.bytes}\t${file.mib}`);
+          fs.writeFileSync('INSTALLER_SIZES.txt', lines.join('\n') + '\n');
+          NODE
+          cp INSTALLER_SIZES.txt release-assets/INSTALLER_SIZES.txt
+          (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt --clobber --repo "$REPOSITORY"
           gh release upload "$TAG" release-assets/SHA256SUMS --clobber --repo "$REPOSITORY"
+          gh release edit "$TAG" --draft=false --repo "$REPOSITORY"

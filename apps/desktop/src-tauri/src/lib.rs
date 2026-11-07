@@ -1,8 +1,11 @@
 mod cloud_gateway;
+mod device_identity;
 mod folder_import;
 mod history;
 mod model_runtime;
 mod ollama;
+mod resource_runtime;
+mod security_store;
 pub mod pdf_worker;
 mod task_engine;
 
@@ -21,6 +24,8 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
+use ujani_core::{sha256_hex, validate_model_identifier, ReceiptExecutionLocation, ExecutionReceipt};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 
 fn valid_command_identifier(value: &str, max_len: usize) -> bool {
@@ -31,6 +36,7 @@ fn valid_command_identifier(value: &str, max_len: usize) -> bool {
 
 /// Evaluates policy only; this command does not execute a task or make network calls.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
 fn evaluate_task_route(
     task_id: String,
     operation: String,
@@ -86,6 +92,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
     let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
+    let pdf_worker_limits_available = !cfg!(target_os = "macos") || std::path::Path::new("/usr/bin/sandbox-exec").is_file();
     let capabilities = vec![
         CapabilityRecord {
             id: "cpu".into(), category: "compute".into(),
@@ -127,9 +134,19 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             detail: "NPU hardware and runtime are not probed; remains Unknown until a supported OS/runtime API confirms a usable NPU".into(),
         },
         CapabilityRecord {
+            id: "local.ai.memory_reservation".into(), category: "resource_management".into(),
+            state: CapabilityState::Available, source: "UJANI native process-local reservation manager".into(),
+            detail: "Interactive local AI pipelines are serialized and require at least 1 GiB available RAM at admission; this is not an OS-level reservation.".into(),
+        },
+        CapabilityRecord {
+            id: "pdf.worker.resource_limits".into(), category: "security".into(),
+            state: if pdf_worker_limits_available { CapabilityState::Available } else { CapabilityState::Unavailable }, source: "OS process limits and platform worker sandbox".into(),
+            detail: "Unix: 768 MiB address-space, 45-second CPU, 16-file-descriptor, zero file-growth and zero core-dump limits; Linux also enables no_new_privs and seccomp network-syscall denial. macOS additionally launches through sandbox-exec with file writes and network denied. Windows uses 768 MiB process-memory and 45-second CPU Job Object limits with kill-on-close. These constrain the PDF worker, not the complete application.".into(),
+        },
+        CapabilityRecord {
             id: "fortress.os_isolation".into(), category: "security".into(),
-            state: CapabilityState::Unavailable, source: "No OS sandbox adapter is currently installed".into(),
-            detail: "Fortress blocks UJANI cloud requests at the native command boundary, but OS-enforced process and network isolation is not active on this build".into(),
+            state: CapabilityState::Unavailable, source: "Full application sandbox adapter not yet installed".into(),
+            detail: "Fortress blocks UJANI cloud requests and the PDF worker has OS resource limits, but full application process, filesystem and network isolation is not active on this build.".into(),
         },
     ];
     Ok(CapabilitySnapshot {
@@ -197,6 +214,7 @@ struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::Docum
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
 async fn execute_document_workflow(file_name:String,content:String,mode:String,model:String,translation_language:Option<String>)->Result<WorkflowExecutionResult,String>{
+ let _reservation = resource_runtime::MemoryReservation::acquire("document-workflow")?;
  if content.len()>256*1024{return Err("Workflow input exceeds the 256 KiB document limit.".into());}
  if mode!="fortress"&&mode!="smart"{return Err("Executable document workflows are local-only (Fortress or Smart).".into());}
  let snapshot=get_capability_snapshot().await?;
@@ -215,6 +233,7 @@ async fn execute_document_workflow(file_name:String,content:String,mode:String,m
 /// Sends one explicitly approved prompt to a user-configured OpenAI-compatible provider.
 /// The supplied API key is used for this invocation only and is never persisted.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
 async fn execute_cloud_ai_task(
  app: AppHandle,
  control: State<'_, TaskControlState>,
@@ -230,16 +249,41 @@ async fn execute_cloud_ai_task(
  if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
   return Err("Invalid task identifier.".into());
  }
- if mode != "smart" {
-  return Err("The BYOK cloud gateway is available in Smart mode only. Worker/Partner peer execution is not implemented; Fortress is local-only.".into());
+ if !external_data_approved {
+  return Err("Cloud transfer was not approved. No request was sent.".into());
  }
+ cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
+ if !validate_model_identifier(&model) {
+  return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+ }
+ let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .map_err(|e| e.to_string())?.as_millis() as u64;
+ let input_digest = sha256_hex(prompt.as_bytes());
+ let receipt_model_id = model.clone();
+ // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
+ let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  let token = CancellationToken::new();
  {
   let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
   if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
   active.insert(task_id.clone(), token.clone());
  }
- emit_task_progress(&app, &task_id, "cloud_starting", "Preparing the user-approved cloud request.", 5);
+ let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
+  Ok(slot) => slot,
+  Err(error) => {
+   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+   return Err(error);
+  }
+ };
+ // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
+ let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
+  Ok(value) => value,
+  Err(error) => {
+   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+   return Err(error);
+  }
+ };
+ emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
  let result = tokio::select! {
@@ -252,8 +296,29 @@ async fn execute_cloud_ai_task(
   }
  };
  if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+ if let Ok(output) = &result {
+  let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+   .map_err(|e| e.to_string())?.as_millis() as u64;
+  let receipt = ExecutionReceipt {
+   schema_version: 1,
+   task_id: task_id.clone(),
+   operation_id: "cloud.ai.generate".into(),
+   location: ReceiptExecutionLocation::ExternalProvider,
+   adapter_id: "byok.cloud-gateway".into(),
+   adapter_version: env!("CARGO_PKG_VERSION").into(),
+   model_id: Some(receipt_model_id),
+    model_version: Some("provider-reported-unverified".into()),
+   input_sha256: input_digest,
+   output_sha256: sha256_hex(output.as_bytes()),
+   started_at_unix_ms,
+   completed_at_unix_ms,
+   user_approval_id: Some(approval_id),
+  };
+  receipt_slot.persist(receipt)
+   .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
+ }
  match &result {
-  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
+  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed and provenance recorded.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
   Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
@@ -275,12 +340,17 @@ async fn pull_ollama_model(
     if mode != "smart" {
         return Err("Model downloads are available only in Smart mode.".into());
     }
-    let approved = app.dialog()
+    if !ollama::valid_pull_model(&model) {
+        return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2.".into());
+    }
+    let (approval_tx, approval_rx) = tokio::sync::oneshot::channel();
+    app.dialog()
         .message(format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry."))
         .title("Approve model download")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+        .show(move |approved| { let _ = approval_tx.send(approved); });
+    let approved = approval_rx.await.unwrap_or(false);
     if !approved {
         return Err("Model download was not approved. No download was started.".into());
     }
@@ -356,6 +426,14 @@ async fn execute_local_ai_task(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
+    if !validate_model_identifier(&model) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
+    let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
+    let input_digest = sha256_hex(prompt.as_bytes());
+    let receipt_model_id = model.clone();
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -375,8 +453,32 @@ async fn execute_local_ai_task(
         }
     };
     if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+    if let Ok(value) = &result {
+        let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?.as_millis() as u64;
+        let receipt = ExecutionReceipt {
+            schema_version: 1,
+            task_id: task_id.clone(),
+            operation_id: "local.ai.generate".into(),
+            location: match ollama::accelerator_observation().await.ok() {
+                Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
+                _ => ReceiptExecutionLocation::LocalUnverified,
+            },
+            adapter_id: "ollama.local".into(),
+            adapter_version: env!("CARGO_PKG_VERSION").into(),
+            model_id: Some(receipt_model_id),
+            model_version: Some("unknown".into()),
+            input_sha256: input_digest,
+            output_sha256: sha256_hex(value.output.as_bytes()),
+            started_at_unix_ms,
+            completed_at_unix_ms,
+            user_approval_id: None,
+        };
+        receipt_slot.persist(receipt)
+            .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
+    }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed and provenance recorded.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
         Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
@@ -404,6 +506,7 @@ fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis,
 /// Summarises explicitly selected text with Ollama on loopback only.
 #[tauri::command]
 async fn summarize_selected_text(file_name: String, content: String, mode: String, model: String) -> Result<String, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("selected-text-summary")?;
     LocalTaskEngine::summarize(file_name, content, mode, model).await
 }
 
@@ -416,6 +519,7 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("selected-document")?;
     LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await
 }
 
@@ -428,6 +532,7 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("selected-pdf")?;
     LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language).await
 }
 
@@ -439,6 +544,7 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("local-translation")?;
     LocalTaskEngine::translate_local(text, target_language, mode, model).await
 }
 
@@ -491,6 +597,7 @@ fn list_local_models() -> Vec<ModelInfo> {
 /// Runs an explicitly selected local adapter. No network or cloud fallback exists.
 #[tauri::command]
 fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
+    let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
     let mut system = System::new();
     system.refresh_cpu();
     run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
@@ -512,20 +619,6 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
         output: format!("Your request contains {word_count} words. This is a deterministic local demonstration, not an AI-generated answer."),
         execution: "Native local runtime".into(),
     })
-}
-
-#[cfg(test)]
-mod ipc_input_tests {
-    use super::valid_command_identifier;
-
-    #[test]
-    fn command_identifiers_are_bounded_and_path_safe() {
-        assert!(valid_command_identifier("task-01", 96));
-        assert!(!valid_command_identifier("", 96));
-        assert!(!valid_command_identifier("../task", 96));
-        assert!(!valid_command_identifier("task\\nadmin", 96));
-        assert!(!valid_command_identifier(&"x".repeat(97), 96));
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -564,8 +657,32 @@ pub fn run() {
             history::save_task_history,
             history::list_task_history,
             history::delete_task_history,
-            history::clear_task_history
+            history::clear_task_history,
+            security_store::verify_execution_receipt_ledger,
+            security_store::list_execution_receipts,
+            security_store::get_cloud_budget_status,
+            security_store::enroll_trusted_peer,
+            security_store::revoke_trusted_peer,
+            security_store::list_trusted_peers,
+            security_store::verify_and_claim_peer_envelope,
+            device_identity::get_or_create_device_identity,
+            device_identity::rotate_device_identity,
+            device_identity::sign_peer_task_envelope
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
+}
+
+#[cfg(test)]
+mod ipc_input_tests {
+    use super::valid_command_identifier;
+
+    #[test]
+    fn command_identifiers_are_bounded_and_path_safe() {
+        assert!(valid_command_identifier("task-01", 96));
+        assert!(!valid_command_identifier("", 96));
+        assert!(!valid_command_identifier("../task", 96));
+        assert!(!valid_command_identifier("task\nadmin", 96));
+        assert!(!valid_command_identifier(&"x".repeat(97), 96));
+    }
 }
