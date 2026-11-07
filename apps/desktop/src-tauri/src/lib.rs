@@ -304,15 +304,13 @@ async fn execute_cloud_ai_task(
  emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
- let result = tokio::select! {
-  _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
-  outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
-   match outcome {
-    Ok(value) => value,
-    Err(_) => Err("Cloud task exceeded the 95-second time budget.".into()),
-   }
-  }
- };
+ let result = await_managed_future(
+  &token,
+  std::time::Duration::from_secs(95),
+  "Cloud task exceeded the 95-second time budget.".into(),
+  "Cloud task cancelled by user.".into(),
+  request,
+ ).await;
  drop(active_task_guard);
  if let Ok(execution) = &result {
   let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
@@ -390,14 +388,18 @@ async fn pull_ollama_model(
     let download = ollama::pull_model(&model, move |message, percent| {
         emit_task_progress(&progress_app, &progress_task, "model_downloading", &message, percent);
     });
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
-        outcome = download => outcome,
-    };
+    let result = await_managed_future(
+        &token,
+        std::time::Duration::from_secs(30 * 60),
+        "Model download exceeded the 30-minute time budget; check the connection and retry.".into(),
+        "Model download cancelled by user. Ollama may need a moment to release the connection.".into(),
+        download,
+    ).await;
     drop(active_task_guard);
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
+        Err(error) if error.contains("30-minute") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
     result
@@ -482,6 +484,28 @@ fn local_receipt_context(
     })
 }
 
+/// Awaits one bounded task future while observing cancellation and returning distinct terminal errors.
+async fn await_managed_future<T, F>(
+    token: &CancellationToken,
+    budget: std::time::Duration,
+    timeout_message: String,
+    cancel_message: String,
+    future: F,
+) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    tokio::select! {
+        _ = token.cancelled() => Err(cancel_message),
+        outcome = tokio::time::timeout(budget, future) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err(timeout_message),
+            }
+        }
+    }
+}
+
 /// Runs a native task with cancellation, a hard wall-clock budget and a
 /// reserved provenance slot. The ledger stores digests and metadata, never content.
 async fn run_managed_task<T, F>(
@@ -517,15 +541,13 @@ where
     }
     let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(240), future) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err(format!("{label} exceeded the 240-second overall time budget.")),
-            }
-        }
-    };
+    let result = await_managed_future(
+        &token,
+        std::time::Duration::from_secs(240),
+        format!("{label} exceeded the 240-second overall time budget."),
+        format!("{label} cancelled by user."),
+        future,
+    ).await;
     drop(active_task_guard);
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
@@ -572,6 +594,59 @@ where
 #[cfg(test)]
 mod local_receipt_context_tests {
     use super::local_receipt_context;
+
+    #[tokio::test]
+    async fn managed_future_preserves_success_and_failure_outcomes() {
+        let token = CancellationToken::new();
+        let success = await_managed_future(
+            &token, std::time::Duration::from_secs(1),
+            "timed out".into(), "cancelled".into(), async { Ok::<_, String>(42_u8) }
+        ).await;
+        assert_eq!(success, Ok(42));
+        let failure = await_managed_future(
+            &token, std::time::Duration::from_secs(1),
+            "timed out".into(), "cancelled".into(), async { Err::<u8, _>("provider failed".into()) }
+        ).await;
+        assert_eq!(failure, Err("provider failed".into()));
+    }
+
+    #[tokio::test]
+    async fn managed_future_enforces_timeout_and_cancellation() {
+        let timeout_token = CancellationToken::new();
+        let timed_out = await_managed_future(
+            &timeout_token, std::time::Duration::from_millis(5),
+            "task timed out".into(), "task cancelled".into(),
+            async { tokio::time::sleep(std::time::Duration::from_secs(1)).await; Ok::<_, String>(()) }
+        ).await;
+        assert_eq!(timed_out, Err("task timed out".into()));
+
+        let cancel_token = CancellationToken::new();
+        let signal = cancel_token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            signal.cancel();
+        });
+        let cancelled = await_managed_future(
+            &cancel_token, std::time::Duration::from_secs(1),
+            "task timed out".into(), "task cancelled".into(),
+            async { tokio::time::sleep(std::time::Duration::from_secs(1)).await; Ok::<_, String>(()) }
+        ).await;
+        assert_eq!(cancelled, Err("task cancelled".into()));
+    }
+
+    #[test]
+    fn active_task_guard_cleans_registry_during_unwind() {
+        use super::{ActiveTaskGuard, TaskControlState};
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        let control = TaskControlState { active: Mutex::new(HashMap::new()) };
+        control.active.lock().unwrap().insert("panic-task".into(), CancellationToken::new());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = ActiveTaskGuard { control: &control, task_id: "panic-task".into() };
+            panic!("simulate a dropped task future");
+        }));
+        assert!(!control.active.lock().unwrap().contains_key("panic-task"));
+    }
 
     #[test]
     fn active_task_guard_cleans_registry_on_scope_exit() {
