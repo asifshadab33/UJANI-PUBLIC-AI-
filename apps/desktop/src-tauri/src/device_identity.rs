@@ -51,6 +51,14 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
 }
 
 /// Load or create the local Ed25519 signing key in the operating-system credential vault.
+async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().message(message).title(title)
+        .kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::YesNo)
+        .show(move |approved| { let _ = tx.send(approved); });
+    rx.await.unwrap_or(false)
+}
+
 #[tauri::command]
 pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, String> {
     let signing = load_or_create_signing_key()?;
@@ -66,12 +74,7 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
 #[tauri::command]
 pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
     let current = get_or_create_device_identity(app.clone())?;
-    let approved = app.dialog()
-        .message(format!("Rotate this device's Ed25519 identity?\n\nCurrent fingerprint: {}\n\nOther devices will need to re-enrol this device before peer tasks can be verified.", current.device_id))
-        .title("Confirm device identity rotation")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+    let approved = confirm_native(&app, "Confirm device identity rotation", format!("Rotate this device's Ed25519 identity?\n\nCurrent fingerprint: {}\n\nOther devices will need to re-enrol this device before peer tasks can be verified.", current.device_id)).await;
     if !approved {
         return Err("Device identity rotation was cancelled.".into());
     }
@@ -123,12 +126,7 @@ pub async fn sign_peer_task_envelope(
     }
     let scopes = requested_scopes.join(", ");
     let digest = ujani_core::sha256_hex(&payload);
-    let approved = app.dialog()
-        .message(format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nRecipient: {recipient_device_id}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len()))
-        .title("Approve peer task consent")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+    let approved = confirm_native(&app, "Approve peer task consent", format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nRecipient: {recipient_device_id}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len())).await;
     if !approved {
         return Err("Peer task signing was not approved. No data was sent.".into());
     }
