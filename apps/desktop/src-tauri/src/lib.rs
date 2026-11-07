@@ -540,21 +540,6 @@ fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration) {
     }
 }
 
-/// Makes one bounded best-effort receipt retry during application shutdown.
-fn flush_one_pending_receipt_on_exit(app: &AppHandle) {
-    let receipt = {
-        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let receipt = state.queued.pop();
-        if receipt.is_some() { state.in_flight = state.in_flight.saturating_add(1); }
-        receipt
-    };
-    let Some(receipt) = receipt else { return; };
-    let persisted = security_store::reserve_execution_receipt_slot(app, &receipt.task_id)
-        .and_then(|slot| slot.persist(receipt.clone()).map(|_| ()));
-    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    state.in_flight = state.in_flight.saturating_sub(1);
-    if persisted.is_err() { state.queued.push(receipt); }
-}
 
 /// Retries pending receipts off the async runtime with a short, bounded time budget.
 async fn flush_pending_receipts(app: &AppHandle) {
@@ -1061,7 +1046,7 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_one_pending_receipt_on_exit(app);
+            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET);
         }
     });
 }
