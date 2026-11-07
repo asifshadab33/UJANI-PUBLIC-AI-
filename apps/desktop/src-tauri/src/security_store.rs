@@ -572,8 +572,11 @@ mod tests {
         let mut db = db();
         let first = receipt("task-idempotent");
         let first_hash = append_receipt_db(&mut db, &first).unwrap();
+        reserve_receipt_slot_db(&mut db, "task-idempotent", 3_000).unwrap();
         let retry_hash = append_receipt_db(&mut db, &first).unwrap();
         assert_eq!(first_hash, retry_hash);
+        let reserved: i64 = db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |row| row.get(0)).unwrap();
+        assert_eq!(reserved, 0);
         let mut changed = receipt("task-idempotent");
         changed.output_sha256 = sha256_hex(b"different-output");
         assert!(append_receipt_db(&mut db, &changed).is_err());
