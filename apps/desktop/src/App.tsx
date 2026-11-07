@@ -371,9 +371,12 @@ export default function App() {
   async function executeValidatedDocumentWorkflow() {
     if (!isTauri() || workflowBusy || !fileText.trim() || !ollamaModel) return;
     if (executionMode !== "fortress" && executionMode !== "smart") { setCapabilityError("This executable workflow is local-only. Select Fortress or Smart."); return; }
+    const taskId = "workflow-" + Date.now().toString(36);
+    setActiveDocumentTaskId(taskId);
     setWorkflowBusy(true); setCapabilityError(""); setWorkflowExecution(null);
     try {
       const execution = await invoke<WorkflowExecution>("execute_document_workflow", {
+        taskId,
         fileName: fileAnalysis?.file_name || "selected-document.txt",
         content: fileText, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
@@ -384,7 +387,7 @@ export default function App() {
       setFileTranslatedSummary(execution.result.translated_summary || "");
       setFilePipelineMeta(`${execution.result.chunks_processed}/${execution.result.total_chunks} sections · validated order: ${execution.plan.ordered_node_ids.join(" → ")}`);
     } catch (error) { setCapabilityError(String(error)); }
-    finally { setWorkflowBusy(false); }
+    finally { setWorkflowBusy(false); setActiveDocumentTaskId(null); }
   }
 
   async function previewRoute() {
