@@ -26,7 +26,7 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
-use ujani_core::{sha256_hex, validate_model_identifier, ReceiptExecutionLocation, ExecutionReceipt};
+use ujani_core::{sha256_hex, validate_model_identifier, NetworkActivity, ReceiptExecutionLocation, ExecutionReceipt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
@@ -284,6 +284,9 @@ async fn execute_cloud_ai_task(
  }
  let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
   .map_err(|e| e.to_string())?.as_millis() as u64;
+ let network_activity = NetworkActivity::inferred(vec![
+  cloud_gateway::endpoint_host(&endpoint).unwrap_or_else(|| "configured-provider-endpoint".into())
+ ]);
  let input_digest = sha256_hex(prompt.as_bytes());
  let receipt_model_id = model.clone();
  // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
@@ -326,7 +329,7 @@ async fn execute_cloud_ai_task(
   let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
    .map_err(|e| e.to_string())?.as_millis() as u64;
   let receipt = ExecutionReceipt {
-   schema_version: 1,
+   schema_version: 2,
    task_id: task_id.clone(),
    operation_id: "cloud.ai.generate".into(),
    location: ReceiptExecutionLocation::ExternalProvider,
@@ -339,6 +342,7 @@ async fn execute_cloud_ai_task(
    started_at_unix_ms,
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
+   network_activity: network_activity.clone(),
   };
   receipt_slot.persist(receipt)
    .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
@@ -549,7 +553,7 @@ where
             _ => ReceiptExecutionLocation::LocalUnverified,
         };
         let receipt = ExecutionReceipt {
-            schema_version: 1,
+            schema_version: 2,
             task_id: task_id.clone(),
             operation_id: receipt_context.operation_id.into(),
             location,
@@ -562,6 +566,11 @@ where
             started_at_unix_ms,
             completed_at_unix_ms,
             user_approval_id: None,
+            network_activity: if receipt_context.model_id == "analysis-only" {
+                NetworkActivity::unknown()
+            } else {
+                NetworkActivity::inferred(vec!["127.0.0.1:11434".into()])
+            },
         };
         if let Err(error) = receipt_slot.persist(receipt) {
             let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
@@ -672,7 +681,7 @@ async fn execute_local_ai_task(
         let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?.as_millis() as u64;
         let receipt = ExecutionReceipt {
-            schema_version: 1,
+            schema_version: 2,
             task_id: task_id.clone(),
             operation_id: "local.ai.generate".into(),
             location: match ollama::accelerator_observation().await.ok() {
@@ -688,6 +697,7 @@ async fn execute_local_ai_task(
             started_at_unix_ms,
             completed_at_unix_ms,
             user_approval_id: None,
+            network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         };
         receipt_slot.persist(receipt)
             .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
