@@ -396,6 +396,22 @@ struct TaskControlState {
     active: Mutex<HashMap<String, CancellationToken>>,
 }
 
+/// Removes a task registration even if its command future is cancelled or unwinds.
+/// Without this guard, an aborted Tauri command could leave a stale task ID in the
+/// process-local registry and make future cancellation/retry behavior inconsistent.
+struct ActiveTaskGuard<'a> {
+    control: &'a TaskControlState,
+    task_id: String,
+}
+
+impl Drop for ActiveTaskGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.control.active.lock() {
+            active.remove(&self.task_id);
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct TaskProgressEvent {
     task_id: String,
@@ -478,6 +494,7 @@ where
         }
         active.insert(task_id.clone(), token.clone());
     }
+    let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
     let result = tokio::select! {
         _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
@@ -488,9 +505,7 @@ where
             }
         }
     };
-    if let Ok(mut active) = control.active.lock() {
-        active.remove(&task_id);
-    }
+    drop(active_task_guard);
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
             .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
@@ -535,6 +550,22 @@ where
 #[cfg(test)]
 mod local_receipt_context_tests {
     use super::local_receipt_context;
+
+    #[test]
+    fn active_task_guard_cleans_registry_on_scope_exit() {
+        use super::{ActiveTaskGuard, TaskControlState};
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        use tokio_util::sync::CancellationToken;
+
+        let control = TaskControlState { active: Mutex::new(HashMap::new()) };
+        control.active.lock().unwrap().insert("cancel-me".into(), CancellationToken::new());
+        {
+            let _guard = ActiveTaskGuard { control: &control, task_id: "cancel-me".into() };
+            assert!(control.active.lock().unwrap().contains_key("cancel-me"));
+        }
+        assert!(!control.active.lock().unwrap().contains_key("cancel-me"));
+    }
 
     #[test]
     fn input_digest_is_deterministic_and_bound_to_operation_model_and_fields() {
