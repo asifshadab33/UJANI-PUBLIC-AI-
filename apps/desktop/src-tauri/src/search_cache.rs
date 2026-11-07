@@ -489,6 +489,137 @@ mod tests {
         assert_ne!(first, request_key("scope-a", "contract", false));
     }
 
+    fn memory_db() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        initialize(&db).unwrap();
+        db
+    }
+
+    fn insert_scope(db: &Connection, scope_id: &str) {
+        db.execute(
+            "INSERT INTO approved_scopes(scope_id,encrypted_path,created_at) VALUES(?1,'ciphertext',1)",
+            params![scope_id],
+        ).unwrap();
+    }
+
+    fn insert_cache_row(
+        db: &Connection,
+        scope_id: &str,
+        request_key: &str,
+        created_at: i64,
+        last_access: i64,
+        is_negative: bool,
+        bytes_per_blob: usize,
+    ) {
+        let blob = "x".repeat(bytes_per_blob);
+        db.execute(
+            "INSERT INTO search_cache(scope_id,request_key,inventory_ciphertext,payload_ciphertext,is_negative,created_at,last_access)
+             VALUES(?1,?2,?3,?3,?4,?5,?6)",
+            params![scope_id,request_key,blob,if is_negative {1} else {0},created_at,last_access],
+        ).unwrap();
+    }
+
+    fn test_settings(retention_days: i64) -> CacheSettings {
+        CacheSettings { enabled: true, retention_days, max_entries: MAX_CACHE_ENTRIES, max_bytes: MAX_CACHE_BYTES }
+    }
+
+    #[test]
+    fn retention_expiry_and_negative_ttl_are_enforced() {
+        let db = memory_db();
+        insert_scope(&db, "scope");
+        let now = 100 * 86_400;
+        insert_cache_row(&db, "scope", "old-positive", now - 31 * 86_400, 1, false, 8);
+        insert_cache_row(&db, "scope", "old-negative", now - 2 * 86_400, 2, true, 8);
+        insert_cache_row(&db, "scope", "fresh-positive", now - 86_400, 3, false, 8);
+        trim_cache(&db, &test_settings(30), now).unwrap();
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let key: String = db.query_row("SELECT request_key FROM search_cache", [], |row| row.get(0)).unwrap();
+        assert_eq!(key, "fresh-positive");
+
+        // Until-cleared keeps positive entries, but negative results still expire.
+        insert_cache_row(&db, "scope", "year-old-positive", now - 365 * 86_400, 4, false, 8);
+        insert_cache_row(&db, "scope", "stale-negative", now - 86_401, 5, true, 8);
+        trim_cache(&db, &test_settings(0), now).unwrap();
+        let year_old: i64 = db.query_row(
+            "SELECT COUNT(*) FROM search_cache WHERE request_key='year-old-positive'", [], |row| row.get(0)
+        ).unwrap();
+        let stale_negative: i64 = db.query_row(
+            "SELECT COUNT(*) FROM search_cache WHERE request_key='stale-negative'", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(year_old, 1);
+        assert_eq!(stale_negative, 0);
+    }
+
+    #[test]
+    fn lru_and_byte_limits_evict_oldest_entries() {
+        let db = memory_db();
+        insert_scope(&db, "scope");
+        let now = 10_000_000;
+        for index in 0..51 {
+            insert_cache_row(&db, "scope", &format!("entry-{index}"), now, index, false, 4);
+        }
+        trim_cache(&db, &test_settings(0), now).unwrap();
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        let oldest: i64 = db.query_row("SELECT MIN(last_access) FROM search_cache", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, MAX_CACHE_ENTRIES);
+        assert_eq!(oldest, 1);
+
+        db.execute("DELETE FROM search_cache", []).unwrap();
+        for index in 0..3 {
+            insert_cache_row(&db, "scope", &format!("large-{index}"), now, index, false, 2 * 1024 * 1024);
+        }
+        trim_cache(&db, &test_settings(0), now).unwrap();
+        let bytes: i64 = db.query_row(
+            "SELECT COALESCE(SUM(length(inventory_ciphertext)+length(payload_ciphertext)),0) FROM search_cache",
+            [], |row| row.get(0)
+        ).unwrap();
+        assert!(bytes <= MAX_CACHE_BYTES);
+        let remaining: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        assert_eq!(remaining, 2);
+    }
+
+    #[test]
+    fn newer_cache_schema_is_not_treated_as_corruption() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA user_version=2;").unwrap();
+        let error = initialize(&db).unwrap_err();
+        assert!(error.contains("newer than this UJANI build"));
+    }
+
+    #[test]
+    fn corrupted_disposable_cache_database_is_rebuilt() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("ujani-cache-corrupt-{unique}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("local-search-cache.sqlite3");
+        fs::write(&path, b"not a sqlite database").unwrap();
+        let db = open_database(&path).unwrap();
+        let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0)).unwrap();
+        assert_eq!(check, "ok");
+        drop(db);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn newer_cache_file_is_preserved_for_forward_compatibility() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("ujani-cache-newer-{unique}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("local-search-cache.sqlite3");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA user_version=2;").unwrap();
+        drop(db);
+        let error = open_database(&path).unwrap_err();
+        assert!(error.contains("newer than this UJANI build"));
+        assert!(path.exists());
+        let db = Connection::open(&path).unwrap();
+        let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, 2);
+        drop(db);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn retention_choices_are_explicit_and_bounded() {
         assert_eq!(ALLOWED_RETENTION_DAYS, [0, 7, 30, 90]);
