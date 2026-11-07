@@ -235,20 +235,29 @@ pub async fn find_local_files(
 /// Stable filesystem identity where the platform exposes it. Unsupported platforms
 /// deliberately return None; size, high-resolution mtime and canonical path remain required.
 #[cfg(unix)]
-fn file_identity(metadata: &fs::Metadata) -> Option<String> {
+fn file_identity(_file: &File, metadata: &fs::Metadata) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
 }
 
 #[cfg(windows)]
-fn file_identity(metadata: &fs::Metadata) -> Option<String> {
-    use std::os::windows::fs::MetadataExt;
-    Some(format!("windows:{}:{}", metadata.volume_serial_number()?, metadata.file_index()?))
+fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
+    let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+    let succeeded = unsafe {
+        GetFileInformationByHandle(file.as_raw_handle() as _, info.as_mut_ptr())
+    };
+    if succeeded == 0 { return None; }
+    let info = unsafe { info.assume_init() };
+    Some(format!(
+        "windows:{}:{}:{}",
+        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+    ))
 }
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity(metadata: &fs::Metadata) -> Option<String> {
-    let _ = metadata;
+fn file_identity(_file: &File, _metadata: &fs::Metadata) -> Option<String> {
     None
 }
 
@@ -276,7 +285,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
         let Ok(metadata) = file.metadata() else { return false; };
         if !metadata.is_file() || metadata.len() != candidate.size
             || modified_unix_ns(&metadata) != candidate.modified_unix_ns
-            || file_identity(&metadata) != candidate.identity {
+            || file_identity(&file, &metadata) != candidate.identity {
             return false;
         }
         #[cfg(windows)] {
@@ -335,7 +344,17 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             scanned_files += 1;
             let path = match fs::canonicalize(item.path()) { Ok(path) => path, Err(_) => { truncated = true; continue; } };
             if !path.starts_with(&root) { truncated = true; continue; }
-            let metadata = match fs::metadata(&path) { Ok(meta) => meta, Err(_) => { truncated = true; continue; } };
+            let file = match open_candidate(&path) { Ok(file) => file, Err(_) => { truncated = true; continue; } };
+            let metadata = match file.metadata() { Ok(meta) => meta, Err(_) => { truncated = true; continue; } };
+            if !metadata.is_file() { truncated = true; continue; }
+            #[cfg(windows)] {
+                use std::os::windows::fs::MetadataExt;
+                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+                if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    truncated = true;
+                    continue;
+                }
+            }
             let name = item.file_name().to_string_lossy().into_owned();
             let extension = path.extension().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
             let modified_unix_ms = metadata.modified().ok()
@@ -344,7 +363,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             let modified_unix_ns = metadata.modified().ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64);
-            let identity = file_identity(&metadata);
+            let identity = file_identity(&file, &metadata);
             candidates.push(Candidate { path, name, extension, size: metadata.len(), modified_unix_ms, modified_unix_ns, identity });
         }
         if entries_seen > MAX_ENTRIES { break; }
