@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
+const MAX_METADATA_SCAN_SECONDS: u64 = 30;
 const MAX_MATCHES: usize = 250;
 const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
 const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
@@ -203,9 +204,11 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
     let mut entries_seen = 0usize;
     let mut scanned_files = 0usize;
     let mut truncated = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MAX_METADATA_SCAN_SECONDS);
 
     while let Some((directory, depth)) = stack.pop() {
         if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+        if std::time::Instant::now() >= deadline { truncated = true; break; }
         if depth > MAX_DEPTH { truncated = true; continue; }
         let directory_meta = match fs::symlink_metadata(&directory) {
             Ok(meta) => meta,
@@ -224,6 +227,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
         };
         for item in iterator {
             if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+            if std::time::Instant::now() >= deadline { truncated = true; break; }
             let item = match item { Ok(entry) => entry, Err(_) => { truncated = true; continue; } };
             entries_seen += 1;
             if entries_seen > MAX_ENTRIES { truncated = true; break; }
