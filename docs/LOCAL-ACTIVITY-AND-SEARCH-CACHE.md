@@ -82,8 +82,8 @@ Before invoking a tool, re-check its current availability, version, permissions,
 ## Observability and user controls
 
 - Mark results as "recent" or "validated just now" with the validation timestamp.
-- Provide Refresh and Clear recent searches controls.
-- Record cache hit/miss, validation outcome and invalidation reason without logging query contents or file names by default.
+- Provide Refresh, encrypted recent-query history and Clear cache controls. Recent query text is encrypted with the same OS-protected key and is shown only while its selected folder still exists.
+- Record cache hit/miss, validation outcome and invalidation reason without logging query contents or file names by default. Recent query history is local, encrypted and covered by the same retention setting.
 - Keep telemetry opt-in and local by default in Public AI.
 - In Enterprise, audit access to organisation-controlled cache entries under tenant-scoped audit policy.
 
