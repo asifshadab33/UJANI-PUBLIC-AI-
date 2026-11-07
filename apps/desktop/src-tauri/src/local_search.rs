@@ -321,7 +321,7 @@ mod tests {
         let mut deep = root.clone();
         for level in 0..=MAX_DEPTH { deep.push(format!("d{level}")); }
         fs::create_dir_all(&deep).unwrap();
-        let (_, _, _, deep_truncated) = collect_candidates(&root).unwrap();
+        let (_, _, _, deep_truncated) = collect_candidates(&root, &CancellationToken::new()).unwrap();
         assert!(deep_truncated);
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
@@ -332,7 +332,7 @@ mod tests {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let file = std::env::temp_dir().join(format!("ujani-search-root-file-{unique}"));
         fs::write(&file, "not a folder").unwrap();
-        assert!(collect_candidates(&file).is_err());
+        assert!(collect_candidates(&file, &CancellationToken::new()).is_err());
         fs::remove_file(file).unwrap();
     }
 
@@ -358,7 +358,7 @@ mod tests {
         let link = root.with_extension("link");
         match std::os::windows::fs::symlink_dir(&root, &link) {
             Ok(()) => {
-                assert!(collect_candidates(&link).is_err());
+                assert!(collect_candidates(&link, &CancellationToken::new()).is_err());
                 fs::remove_dir(&link).unwrap();
             }
             // Standard hosted Windows runners may not grant symlink-creation privilege.
