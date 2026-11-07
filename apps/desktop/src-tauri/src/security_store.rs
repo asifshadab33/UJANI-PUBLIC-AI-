@@ -180,7 +180,10 @@ fn verify_archive_index(
     for row in rows {
         let (archive_file, expected_previous, expected_head, expected_entries) =
             row.map_err(|e| e.to_string())?;
-        if expected_previous != previous || archive_file.contains('/') || archive_file.contains('\\') {
+        if expected_previous != previous
+            || archive_file.contains('/')
+            || archive_file.contains('\\')
+            || Path::new(&archive_file).file_name().and_then(|name| name.to_str()) != Some(archive_file.as_str()) {
             valid = false;
             break;
         }
@@ -381,7 +384,9 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
     ).optional().map_err(|e| e.to_string())?;
     let archive_previous = previous_checkpoint.unwrap_or_else(|| GENESIS_HASH.to_string());
     fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
-    let path = archive_dir.join(format!("receipts-{now}-{count}.jsonl"));
+    let archive_nonce = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos()).unwrap_or(now as u128);
+    let path = archive_dir.join(format!("receipts-{now}-{count}-{archive_nonce}.jsonl"));
     let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&path)
         .map_err(|e| format!("Could not create receipt archive file: {e}"))?;
     let mut head = String::new();
