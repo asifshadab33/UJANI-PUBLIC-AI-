@@ -75,7 +75,7 @@ pub async fn find_local_files(
         });
     };
 
-    let (root, candidates, scanned_files, truncated) = tauri::async_runtime::spawn_blocking(move || {
+    let (root, candidates, scanned_files, mut truncated) = tauri::async_runtime::spawn_blocking(move || {
         collect_candidates(&folder)
     }).await.map_err(|e| format!("File search worker failed: {e}"))??;
 
