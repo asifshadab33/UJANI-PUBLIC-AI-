@@ -225,6 +225,14 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     if !metadata.is_file() || metadata.len() > limit {
         return Err("File is not eligible for bounded reading.".into());
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err("Reparse-point files are not eligible for bounded reading.".into());
+        }
+    }
     let capacity = usize::try_from(metadata.len()).unwrap_or(0);
     let mut bytes = Vec::with_capacity(capacity);
     file.by_ref().take(limit.saturating_add(1)).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
