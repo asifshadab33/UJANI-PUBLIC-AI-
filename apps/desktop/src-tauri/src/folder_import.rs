@@ -11,6 +11,7 @@ use std::{
     path::Path,
 };
 use tauri_plugin_dialog::DialogExt;
+use tokio_util::sync::CancellationToken;
 
 const MAX_FILES: usize = 10;
 const MAX_DIRECTORY_ENTRIES: usize = 5_000;
@@ -59,25 +60,46 @@ pub async fn process_selected_folder(
     if mode != "fortress" && mode != "smart" {
         return Err("Folder processing is local-only. Select Fortress or Smart.".into());
     }
+    if !crate::valid_command_identifier(&task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
     if model.len() > 128 {
         return Err("Invalid local model identifier.".into());
     }
 
+    // Register before the native picker so cancellation during preflight is not lost.
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) {
+            return Err("Task identifier is already active.".into());
+        }
+        active.insert(task_id.clone(), token.clone());
+    }
+    let _preflight_guard = crate::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
     let picker_app = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
+    let collect_token = token.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<Vec<SelectedTextFile>>, String> {
         let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
+        if collect_token.is_cancelled() {
+            return Err("Folder import cancelled by user.".into());
+        }
         let path = folder
             .into_path()
             .map_err(|_| "The selected folder path is not a local filesystem path.".to_string())?;
-        collect_selected_folder(&path).map(Some)
+        collect_selected_folder(&path, &collect_token).map(Some)
     })
     .await
     .map_err(|error| format!("Folder selection worker failed: {error}"))??;
 
+    if token.is_cancelled() {
+        return Err("Folder import cancelled by user.".into());
+    }
     let Some(files) = selected else {
         return Ok(FolderImportResult {
             cancelled: true,
@@ -106,12 +128,13 @@ pub async fn process_selected_folder(
         &receipt_fields,
     )?;
 
-    crate::run_managed_task(
+    crate::run_managed_task_with_token(
         app,
         &control,
         task_id,
         "Folder import",
         receipt,
+        Some(token.clone()),
         async move {
             let total_bytes = files.iter().map(|file| file.size_bytes).sum();
             let ollama_available =
@@ -171,7 +194,7 @@ pub async fn process_selected_folder(
 }
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
-fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
+fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<Vec<SelectedTextFile>, String> {
     let folder_metadata = fs::symlink_metadata(folder)
         .map_err(|error| format!("Cannot inspect the selected folder: {error}"))?;
     if folder_metadata.file_type().is_symlink() || !folder_metadata.is_dir() {
@@ -188,6 +211,9 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MAX_FOLDER_SCAN_SECONDS);
 
     for entry in entries {
+        if token.is_cancelled() {
+            return Err("Folder import cancelled by user.".into());
+        }
         if std::time::Instant::now() >= deadline {
             return Err("Folder inspection exceeded the 15-second time budget; choose a smaller folder.".into());
         }
