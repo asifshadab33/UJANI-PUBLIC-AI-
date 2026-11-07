@@ -407,7 +407,16 @@ fn move_archive_write_through(from: &Path, to: &Path) -> Result<(), String> {
 
 /// Create the archive directory, using a write-through directory rename on Windows.
 fn ensure_receipt_archive_dir(archive_dir: &Path, nonce: u128) -> Result<bool, String> {
-    if archive_dir.exists() { return Ok(false); }
+    match fs::symlink_metadata(archive_dir) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err("Receipt archive path must be a real directory, not a symlink or file.".into());
+            }
+            return Ok(false);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Could not inspect receipt archive directory: {error}")),
+    }
     let parent = archive_dir.parent()
         .ok_or_else(|| "Receipt archive directory has no parent.".to_string())?;
     fs::create_dir_all(parent).map_err(|e| format!("Could not create receipt archive parent: {e}"))?;
