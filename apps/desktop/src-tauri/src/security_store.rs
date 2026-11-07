@@ -853,6 +853,20 @@ mod tests {
     }
 
     #[test]
+    fn receipt_archive_verifier_rejects_path_traversal_names() {
+        let db = db();
+        db.execute(
+            "INSERT INTO receipt_archive_index(archive_file,previous_hash,head_hash,entries,archived_at) VALUES(?1,?2,?3,0,0)",
+            params!["..", GENESIS_HASH, GENESIS_HASH]
+        ).unwrap();
+        let archive_dir = std::env::temp_dir().join("ujani-receipt-archive-path-test");
+        let (valid, count, head) = verify_archive_index(&db, &archive_dir).unwrap();
+        assert!(!valid);
+        assert_eq!(count, 0);
+        assert_eq!(head, GENESIS_HASH);
+    }
+
+    #[test]
     fn receipt_ledger_archives_old_rows_and_verifies_the_checkpoint_chain() {
         #[derive(serde::Deserialize)]
         struct ArchivedReceipt {
