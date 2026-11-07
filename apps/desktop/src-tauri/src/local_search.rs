@@ -47,6 +47,7 @@ struct Candidate {
     modified_unix_ms: Option<u64>,
 }
 
+/// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
 #[tauri::command]
 pub async fn find_local_files(
     app: tauri::AppHandle,
@@ -232,12 +233,14 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(unix)]
+/// Opens without following a final symbolic link or blocking on a FIFO.
 fn open_candidate(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
 }
 
 #[cfg(windows)]
+/// Opens the reparse point itself so metadata validation applies to the handle.
 fn open_candidate(path: &Path) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
     // FILE_FLAG_OPEN_REPARSE_POINT: open the reparse point itself so handle metadata rejects it.
@@ -245,6 +248,7 @@ fn open_candidate(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(not(any(unix, windows)))]
+/// Opens a candidate on platforms without specialized no-follow flags.
 fn open_candidate(path: &Path) -> io::Result<File> {
     File::open(path)
 }
@@ -258,14 +262,28 @@ mod tests {
     fn skips_symlinks_and_limits_directory_depth() {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!("ujani-search-{unique}"));
+        let outside = std::env::temp_dir().join(format!("ujani-search-outside-{unique}"));
         fs::create_dir_all(root.join("sub")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
         fs::write(root.join("sub").join("contract.txt"), "supplier agreement").unwrap();
+        fs::write(outside.join("secret.txt"), "outside secret").unwrap();
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("linked-file.txt")).unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("linked-dir")).unwrap();
+        }
         let (canonical, files, count, truncated) = collect_candidates(&root).unwrap();
         assert_eq!(canonical, fs::canonicalize(&root).unwrap());
         assert_eq!(count, 1);
         assert_eq!(files.len(), 1);
         assert!(!truncated);
+        assert!(files.iter().all(|file| !file.path.starts_with(&outside)));
+        let mut deep = root.clone();
+        for level in 0..=MAX_DEPTH { deep.push(format!("d{level}")); }
+        fs::create_dir_all(&deep).unwrap();
+        let (_, _, _, deep_truncated) = collect_candidates(&root).unwrap();
+        assert!(deep_truncated);
         fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
