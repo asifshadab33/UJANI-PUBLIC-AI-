@@ -6,6 +6,11 @@ license = "GPL-3.0-only"
 authors = ["UJANI contributors"]
 edition = "2021"
 
+[features]
+# Peer identity/envelope IPC remains disabled until a real authenticated transport ships.
+default = []
+peer-preview = []
+
 [lib]
 name = "ujani_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
