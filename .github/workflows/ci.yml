@@ -97,3 +97,30 @@ jobs:
       - name: Type-check and build frontend
         working-directory: apps/desktop
         run: npm run build
+
+  generate-lockfiles:
+    name: Generate dependency lockfiles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Resolve frontend dependencies without running install scripts
+        working-directory: apps/desktop
+        run: npm install --package-lock-only --ignore-scripts
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      - name: Generate Rust workspace lockfiles
+        run: |
+          cargo generate-lockfile --manifest-path Cargo.toml
+          cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ujani-dependency-lockfiles
+          path: |
+            apps/desktop/package-lock.json
+            Cargo.lock
+            apps/desktop/src-tauri/Cargo.lock
+          if-no-files-found: error
+          retention-days: 7
