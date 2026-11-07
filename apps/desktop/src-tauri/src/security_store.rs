@@ -449,7 +449,6 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
         "SELECT head_hash FROM receipt_checkpoint WHERE id=1", [], |r| r.get(0)
     ).optional().map_err(|e| e.to_string())?;
     let archive_previous = previous_checkpoint.unwrap_or_else(|| GENESIS_HASH.to_string());
-    fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
     let archive_nonce = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos()).unwrap_or(now as u128);
     let _archive_dir_created = ensure_receipt_archive_dir(archive_dir, archive_nonce)?;
