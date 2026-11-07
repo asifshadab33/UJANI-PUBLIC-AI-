@@ -46,7 +46,23 @@ fn token_limits(model: &str, preference: &str) -> Result<(Option<u16>, Option<u1
 #[derive(Serialize)] struct ChatMessage<'a>{role:&'static str,content:&'a str}
 #[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>}
 #[derive(Deserialize)] struct Choice{message:Message}
-#[derive(Deserialize)] struct Message{content:String}
+#[derive(Deserialize)] struct Message{content:MessageContent}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MessageContent {
+ Text(String),
+ Parts(Vec<MessageContentPart>),
+}
+#[derive(Deserialize)]
+struct MessageContentPart { #[serde(default)] text: Option<String> }
+impl MessageContent {
+ fn into_text(self) -> String {
+  match self {
+   Self::Text(text) => text,
+   Self::Parts(parts) => parts.into_iter().filter_map(|part| part.text).collect::<Vec<_>>().join("\n"),
+  }
+ }
+}
 fn validate_endpoint(endpoint:&str)->Result<Url,String>{
  if endpoint.len()>512||endpoint.chars().any(char::is_control){return Err("Endpoint must be a valid HTTPS URL of at most 512 characters.".into());}
  let url=Url::parse(endpoint.trim()).map_err(|_|"Enter a valid HTTPS API endpoint.".to_string())?;
@@ -159,9 +175,19 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
   bytes.extend_from_slice(&chunk);
  }
  let parsed:ChatResponse=serde_json::from_slice(&bytes).map_err(|e|format!("Provider response was not valid OpenAI-compatible Chat Completions JSON: {e}"))?;
- parsed.choices.into_iter().next().map(|c|c.message.content).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
+ parsed.choices.into_iter().next().map(|c|c.message.content.into_text()).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
 }
-#[cfg(test)] mod tests{use super::*;#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
+#[cfg(test)] mod tests{use super::*;#[test]fn provider_content_accepts_string_and_text_parts(){
+ let plain: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap();
+ assert_eq!(plain.choices.into_iter().next().unwrap().message.content.into_text(),"hello");
+ let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}}]}"#).unwrap();
+ assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"first\nsecond");
+}
+#[test]fn provider_content_ignores_non_text_parts_without_failing(){
+ let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"image","image_url":"data:image/png;base64,AAAA"},{"type":"text","text":"answer"}]}}]}"#).unwrap();
+ assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"answer");
+}
+#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
 #[test]fn endpoint_requires_safe_https(){assert!(!is_public_ip("10.0.0.1".parse().unwrap()));assert!(!is_public_ip("127.0.0.1".parse().unwrap()));assert!(!is_public_ip("198.51.100.10".parse().unwrap()));assert!(!is_public_ip("224.0.0.1".parse().unwrap()));assert!(!is_public_ip("255.255.255.255".parse().unwrap()));assert!(!is_public_ip("::ffff:127.0.0.1".parse().unwrap()));assert!(is_public_ip("8.8.8.8".parse().unwrap()));assert!(validate_endpoint("http://api.example.com").is_err());assert!(validate_endpoint("https://localhost/a").is_err());assert!(validate_endpoint("https://127.0.0.1/a").is_err());assert!(validate_endpoint("https://user:pass@example.com/a").is_err());assert!(validate_endpoint("https://api.example.com/v1/chat/completions").is_ok());}
 #[test]fn automatic_token_selection_supports_reasoning_models_on_custom_hosts(){
