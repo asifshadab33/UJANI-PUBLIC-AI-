@@ -509,7 +509,7 @@ fn enqueue_pending_receipt(receipt: ExecutionReceipt) -> bool {
 
 /// Retries receipts on a blocking thread. In-flight entries keep their queue capacity
 /// reserved until persisted or requeued; the first store failure stops this bounded batch.
-fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration) {
+fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receipts: usize) {
     let mut batch = {
         let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let batch = std::mem::take(&mut state.queued);
@@ -518,7 +518,7 @@ fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration) {
     };
     let started = Instant::now();
     for index in 0..batch.len() {
-        if started.elapsed() >= budget {
+        if index >= max_receipts || started.elapsed() >= budget {
             let remaining = batch.split_off(index);
             let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             state.in_flight = state.in_flight.saturating_sub(remaining.len());
@@ -544,7 +544,7 @@ fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration) {
 /// Retries pending receipts off the async runtime with a short, bounded time budget.
 async fn flush_pending_receipts(app: &AppHandle) {
     let app = app.clone();
-    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app, RECEIPT_RETRY_BUDGET)).await;
+    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app, RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS)).await;
 }
 
 /// Persists a receipt or returns a warning while preserving the completed task result.
@@ -1046,7 +1046,7 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET);
+            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET, 1);
         }
     });
 }
