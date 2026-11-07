@@ -342,6 +342,15 @@ mod tests {
     }
 
     #[test]
+    fn selected_folder_preflight_observes_cancellation() {
+        let folder = TestFolder::new();
+        fs::write(folder.0.join("report.txt"), "content").unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+        assert!(collect_selected_folder(&folder.0, &token).unwrap_err().contains("cancelled"));
+    }
+
+    #[test]
     fn rejects_oversized_file() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("large.txt"), vec![b'x'; MAX_FILE_BYTES + 1]).unwrap();
