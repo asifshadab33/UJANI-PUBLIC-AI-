@@ -295,15 +295,44 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_regular_file_as_the_selected_root() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let file = std::env::temp_dir().join(format!("ujani-search-root-file-{unique}"));
+        fs::write(&file, "not a folder").unwrap();
+        assert!(collect_candidates(&file).is_err());
+        fs::remove_file(file).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn rejects_a_symlink_as_the_selected_root() {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!("ujani-search-root-{unique}"));
         fs::create_dir_all(&root).unwrap();
         let link = root.with_extension("link");
-        #[cfg(unix)] std::os::unix::fs::symlink(&root, &link).unwrap();
-        #[cfg(windows)] std::os::windows::fs::symlink_dir(&root, &link).unwrap();
-        #[cfg(any(unix, windows))] assert!(collect_candidates(&link).is_err());
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(collect_candidates(&link).is_err());
+        fs::remove_file(link).unwrap();
         fs::remove_dir_all(root).unwrap();
-        #[cfg(any(unix, windows))] fs::remove_file(link).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_a_symlink_as_the_selected_root_when_runner_allows_creation() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-search-root-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let link = root.with_extension("link");
+        match std::os::windows::fs::symlink_dir(&root, &link) {
+            Ok(()) => {
+                assert!(collect_candidates(&link).is_err());
+                fs::remove_dir(&link).unwrap();
+            }
+            // Standard hosted Windows runners may not grant symlink-creation privilege.
+            // The cross-platform regular-file rejection test still runs in that environment.
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("Could not create test symlink: {error}"),
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
