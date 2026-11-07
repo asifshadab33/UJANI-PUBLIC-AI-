@@ -55,6 +55,9 @@ Do not cache raw document text, extracted PDF text, OCR output, video frames, tr
 - Never return a cached path without rechecking that it remains inside the approved scope.
 - Do not follow symlinks or reparse points during validation; validate the opened file handle where content is read.
 - Cache errors must fail open to a fresh bounded search, not fail closed to stale results.
+- Cache only fully completed searches. If any eligible text/PDF file cannot be read or parsed, exceeds a supported content limit, or the worker times out, mark the result partial and do not persist it; the UI explains that some eligible files could not be inspected.
+- Retain at most 20 encrypted recent query phrases, covered by the same retention policy; an empty history must not create or unlock a credential-vault key.
+- Perform SQLite and OS credential-vault operations on Tauri's blocking worker pool, never on the UI thread or async executor workers.
 
 ### Remembering repeated commands
 
