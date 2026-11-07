@@ -706,7 +706,7 @@ mod windows_pdf_worker_job_tests {
         assert_ne!(flags & JOB_OBJECT_LIMIT_PROCESS_TIME, 0);
         assert_ne!(flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS, 0);
         assert_eq!(limits.BasicLimitInformation.ActiveProcessLimit, 1);
-        assert_eq!(limits.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart, 45 * 10_000_000);
+        assert_eq!(limits.BasicLimitInformation.PerProcessUserTimeLimit, 45 * 10_000_000);
         assert_eq!(limits.ProcessMemoryLimit, 768 * 1024 * 1024);
     }
 }
