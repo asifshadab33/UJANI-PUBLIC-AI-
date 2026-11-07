@@ -164,6 +164,7 @@ struct ArchivedReceipt {
     receipt: ExecutionReceipt,
 }
 
+/// Verify indexed archive files in order, including every receipt hash and checkpoint link.
 fn verify_archive_index(
     db: &Connection, archive_dir: &Path,
 ) -> Result<(bool, i64, String), String> {
@@ -226,6 +227,7 @@ fn verify_archive_index(
     Ok((valid, total, previous))
 }
 
+/// Verify the archive checkpoint and retained chain using one consistent SQLite snapshot.
 fn verify_receipts_db_with_archive(
     db: &Connection, archive_dir: Option<&Path>,
 ) -> Result<ReceiptLedgerStatus, String> {
@@ -278,6 +280,7 @@ fn verify_receipts_db_with_archive(
     })
 }
 
+/// Test helper for validating an unarchived in-memory receipt ledger.
 #[cfg(test)]
 fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
     verify_receipts_db_with_archive(db, None)
@@ -402,6 +405,7 @@ fn move_archive_write_through(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Create the archive directory, using a write-through directory rename on Windows.
 fn ensure_receipt_archive_dir(archive_dir: &Path, nonce: u128) -> Result<bool, String> {
     if archive_dir.exists() { return Ok(false); }
     let parent = archive_dir.parent()
@@ -422,6 +426,7 @@ fn ensure_receipt_archive_dir(archive_dir: &Path, nonce: u128) -> Result<bool, S
 }
 
 #[cfg(unix)]
+/// Flush archive directory entries and, when newly created, the parent directory entry.
 fn sync_receipt_archive_directories(archive_dir: &Path, parent: Option<&Path>) -> Result<(), String> {
     fs::File::open(archive_dir).and_then(|directory| directory.sync_all())
         .map_err(|e| format!("Could not fsync receipt archive directory: {e}"))?;
@@ -498,6 +503,7 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
     Ok(n)
 }
 
+/// Reserve one receipt slot, rotating the oldest records before the hard capacity limit.
 fn reserve_receipt_slot_db(
     db: &mut Connection, task_id: &str, now: u64, archive_dir: &Path,
 ) -> Result<(), String> {
@@ -541,6 +547,7 @@ fn release_receipt_slot(app: &AppHandle, task_id: &str) -> Result<(), String> {
     release_receipt_slot_db(&open(app)?, task_id)
 }
 
+/// Resolve the application-local directory used for immutable receipt archive files.
 fn receipt_archive_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let mut archive_dir = app.path().app_data_dir()
         .map_err(|e| format!("Could not locate receipt archive directory: {e}"))?;
