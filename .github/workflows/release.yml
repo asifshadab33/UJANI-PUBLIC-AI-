@@ -191,7 +191,9 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
 
           pubkey_b64="$TAURI_UPDATER_PUBLIC_KEY"
+          app_version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
           test -n "$pubkey_b64"
+          test -n "$app_version"
           printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
 
           mapfile -d '' signatures < <(find release-assets -type f -name '*.sig' -print0)
@@ -209,6 +211,15 @@ jobs:
             fi
             base64 --decode "$signature" > "$tmp/signature.minisig"
             minisign -Vm "$artifact" -p "$tmp/tauri.pub" -x "$tmp/signature.minisig"
+            artifact_name="$(basename "$artifact")"
+            if ! grep -Fq "file:$artifact_name" "$tmp/signature.minisig"; then
+              echo "Verified signature does not bind the expected filename: $signature" >&2
+              exit 1
+            fi
+            if ! grep -Fq "version:$app_version" "$tmp/signature.minisig"; then
+              echo "Verified signature does not bind app version $app_version: $signature" >&2
+              exit 1
+            fi
             verified=$((verified + 1))
           done
           echo "Verified $verified updater signature(s)."
