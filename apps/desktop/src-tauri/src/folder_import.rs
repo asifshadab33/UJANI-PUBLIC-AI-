@@ -44,23 +44,12 @@ pub struct FolderImportResult {
     total_bytes: usize,
 }
 
-/// Opens a native OS folder picker and processes only its immediate text-file children.
-/// The command deliberately accepts no filesystem path from the webview.
-#[tauri::command]
-pub async fn process_selected_folder(
+/// Opens the native OS folder picker and returns bounded file contents.
+/// This preparation step does not start AI processing or accept a path from the webview.
+pub(super) async fn select_folder_files(
     app: tauri::AppHandle,
-    mode: String,
-    model: String,
-) -> Result<FolderImportResult, String> {
-    let _reservation = crate::resource_runtime::MemoryReservation::acquire("folder-import")?;
-    if mode != "fortress" && mode != "smart" {
-        return Err("Folder processing is local-only. Select Fortress or Smart.".into());
-    }
-    if model.len() > 128 {
-        return Err("Invalid local model identifier.".into());
-    }
-
-    let selected = tauri::async_runtime::spawn_blocking(move || {
+) -> Result<Option<Vec<SelectedTextFile>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
         let Some(folder) = app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
@@ -70,11 +59,21 @@ pub async fn process_selected_folder(
         collect_selected_folder(&path).map(Some)
     })
     .await
-    .map_err(|error| format!("Folder selection worker failed: {error}"))??;
+    .map_err(|error| format!("Folder selection worker failed: {error}"))?
+}
 
-    let Some(files) = selected else {
-        return Ok(FolderImportResult { cancelled: true, files: Vec::new(), total_bytes: 0 });
-    };
+/// Processes only the selected, already-bounded file contents using local Ollama.
+pub(super) async fn process_selected_folder_files(
+    files: Vec<SelectedTextFile>,
+    mode: String,
+    model: String,
+) -> Result<FolderImportResult, String> {
+    if mode != "fortress" && mode != "smart" {
+        return Err("Folder processing is local-only. Select Fortress or Smart.".into());
+    }
+    if model.len() > 128 {
+        return Err("Invalid local model identifier.".into());
+    }
 
     let total_bytes = files.iter().map(|file| file.size_bytes).sum();
     let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
