@@ -3,7 +3,7 @@
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Read},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -11,8 +11,6 @@ use std::{
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
-#[cfg(not(any(unix, windows)))]
-use std::fs::File;
 
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
