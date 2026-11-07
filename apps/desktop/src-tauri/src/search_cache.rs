@@ -49,31 +49,36 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
     }
     dir.push("local-search-cache.sqlite3");
-    let db = Connection::open(&dir).map_err(|error| format!("Could not open local search cache: {error}"))?;
+    open_database(&dir)
+}
+
+fn open_database(path: &Path) -> Result<Connection, String> {
+    let db = Connection::open(path).map_err(|error| format!("Could not open local search cache: {error}"))?;
     db.busy_timeout(std::time::Duration::from_secs(3)).map_err(|error| error.to_string())?;
     if let Err(error) = initialize(&db) {
         // Never destroy a cache written by a newer application schema. Recover only
-        // from an explicit integrity/corruption signal; other failures remain misses.
+        // from explicit corruption signals; other failures remain cache misses.
         if error.contains("newer than this UJANI build") {
             return Err(error);
         }
-        if !error.contains("integrity check failed") && !error.contains("malformed") {
-            return Err(error);
-        }
+        let corrupt = error.contains("integrity check failed")
+            || error.contains("malformed")
+            || error.contains("not a database");
+        if !corrupt { return Err(error); }
         drop(db);
-        fs::remove_file(&dir).map_err(|remove_error| format!("Could not recover the local search cache after corruption ({error}): {remove_error}"))?;
-        let recovered = Connection::open(&dir).map_err(|open_error| open_error.to_string())?;
+        fs::remove_file(path).map_err(|remove_error| format!("Could not recover the local search cache after corruption ({error}): {remove_error}"))?;
+        let recovered = Connection::open(path).map_err(|open_error| open_error.to_string())?;
         recovered.busy_timeout(std::time::Duration::from_secs(3)).map_err(|busy_error| busy_error.to_string())?;
         initialize(&recovered)?;
         #[cfg(unix)] {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&dir, fs::Permissions::from_mode(0o600)).map_err(|permission_error| permission_error.to_string())?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|permission_error| permission_error.to_string())?;
         }
         return Ok(recovered);
     }
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
     }
     Ok(db)
 }
