@@ -72,6 +72,11 @@ fn validate_endpoint(endpoint:&str)->Result<Url,String>{
  if let Ok(ip)=host.parse::<IpAddr>(){if !is_public_ip(ip){return Err("Literal IP endpoints must be globally routable public addresses; private, loopback, link-local, multicast, broadcast, and reserved ranges are blocked.".into());}}
  Ok(url)
 }
+/// Returns the validated hostname for provenance without including endpoint paths or credentials.
+pub fn endpoint_host(endpoint: &str) -> Option<String> {
+    validate_endpoint(endpoint).ok()?.host_str().map(str::to_owned)
+}
+
 fn validate_mode(mode:&str)->Result<(),String>{
  if mode == "fortress" { return Err("Fortress mode is local-only; external transfer is blocked.".into()); }
  if mode != "smart" { return Err("The BYOK cloud gateway is available in Smart mode only; Worker/Partner peer execution is not implemented and Fortress is local-only.".into()); }
