@@ -867,6 +867,20 @@ mod tests {
         assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn receipt_archive_directory_rejects_symlink() {
+        use std::os::unix::fs::symlink;
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-receipt-archive-symlink-{unique}"));
+        let real = root.join("real");
+        let archive = root.join("receipt-archive");
+        fs::create_dir_all(&real).unwrap();
+        symlink(&real, &archive).unwrap();
+        assert!(ensure_receipt_archive_dir(&archive, unique).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn receipt_archive_verifier_rejects_path_traversal_names() {
         let db = db();
