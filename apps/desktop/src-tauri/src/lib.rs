@@ -520,6 +520,23 @@ where
     T: Serialize,
     F: std::future::Future<Output = Result<T, String>>,
 {
+    run_managed_task_with_token(app, control, task_id, label, receipt_context, None, future).await
+}
+
+/// Runs a managed task using an existing registration when preflight itself is cancellable.
+pub(crate) async fn run_managed_task_with_token<T, F>(
+    app: AppHandle,
+    control: &TaskControlState,
+    task_id: String,
+    label: &'static str,
+    receipt_context: LocalReceiptContext,
+    existing_token: Option<CancellationToken>,
+    future: F,
+) -> Result<T, String>
+where
+    T: Serialize,
+    F: std::future::Future<Output = Result<T, String>>,
+{
     if !valid_command_identifier(&task_id, 96) {
         return Err("Invalid task identifier.".into());
     }
@@ -531,14 +548,21 @@ where
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis() as u64;
-    let token = CancellationToken::new();
-    {
+    let token = if let Some(token) = existing_token {
+        let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if !active.contains_key(&task_id) {
+            return Err("Preflight task registration was lost before managed execution.".into());
+        }
+        token
+    } else {
+        let token = CancellationToken::new();
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
         if active.contains_key(&task_id) {
             return Err("Task identifier is already active.".into());
         }
         active.insert(task_id.clone(), token.clone());
-    }
+        token
+    };
     let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
     let result = await_managed_future(
