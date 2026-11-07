@@ -1019,7 +1019,7 @@ export default function App() {
             <p>Metadata-only receipts cover local and approved BYOK chat, document/PDF processing, translation, the fixed document workflow and selected-folder import. Prompts and outputs are never stored. Model downloads are not inference receipts and are not included. Network evidence is explicitly measured, inferred or unknown; unknown is never displayed as zero.</p>
             <div className="history-actions">
               <button onClick={refreshExecutionReceipts} disabled={!isTauri() || receiptBusy}>{receiptBusy ? "Verifying…" : "Verify & refresh receipts"}</button>
-              <button onClick={exportExecutionReceipts} disabled={!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid}>Export receipts JSON</button>
+              <button onClick={exportExecutionReceipts} disabled={!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid}>Export latest 50 receipts JSON</button>
             </div>
             {receiptLedgerStatus && <small>Ledger: {receiptLedgerStatus.valid ? "Integrity verified" : "Integrity check failed"} · {receiptLedgerStatus.entries} entries · Head SHA-256: {receiptLedgerStatus.head_sha256.slice(0, 16)}…</small>}
             {receiptError && <p className="error" role="alert">{receiptError}</p>}
