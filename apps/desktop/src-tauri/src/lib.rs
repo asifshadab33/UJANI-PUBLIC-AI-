@@ -220,10 +220,13 @@ async fn process_selected_folder(
     mode: String,
     model: String,
 ) -> Result<folder_import::FolderImportResult, String> {
+    if !valid_command_identifier(&task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
     if mode != "fortress" && mode != "smart" {
         return Err("Folder processing is local-only. Select Fortress or Smart.".into());
     }
-    if model.len() > 128 {
+    if model.len() > 128 || (!model.trim().is_empty() && !validate_model_identifier(&model)) {
         return Err("Invalid local model identifier.".into());
     }
 
