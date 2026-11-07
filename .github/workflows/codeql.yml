@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: ujani-codeql-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('ujani-codeql-schedule-{0}', github.run_id) || format('ujani-codeql-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
