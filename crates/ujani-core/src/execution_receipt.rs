@@ -18,6 +18,41 @@ pub enum ExecutionLocation {
     DeterministicTool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+/// Describes how network activity evidence was obtained.
+pub enum NetworkObservation {
+    /// Bytes and destinations were measured by an explicit trusted counter.
+    Measured,
+    /// A destination is known from the configured adapter, but bytes were not measured.
+    Inferred,
+    /// This application cannot establish the full network activity for the task.
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Network evidence; absent byte counts are unknown, never implied to be zero.
+pub struct NetworkActivity {
+    pub observation: NetworkObservation,
+    #[serde(default)]
+    pub destinations: Vec<String>,
+    #[serde(default)]
+    pub bytes_sent: Option<u64>,
+    #[serde(default)]
+    pub bytes_received: Option<u64>,
+}
+
+impl NetworkActivity {
+    /// Creates an explicit unknown observation without inventing destinations or byte counts.
+    pub fn unknown() -> Self { Self::default() }
+
+    /// Records known adapter destinations without claiming that network bytes were measured.
+    pub fn inferred(destinations: Vec<String>) -> Self {
+        Self { observation: NetworkObservation::Inferred, destinations, bytes_sent: None, bytes_received: None }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Metadata-only record of an inference operation and exact input/output digests.
 pub struct ExecutionReceipt {
@@ -34,6 +69,9 @@ pub struct ExecutionReceipt {
     pub started_at_unix_ms: u64,
     pub completed_at_unix_ms: u64,
     pub user_approval_id: Option<String>,
+    /// Added in schema v2. Missing values in legacy v1 records deserialize as Unknown.
+    #[serde(default)]
+    pub network_activity: NetworkActivity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +84,7 @@ pub enum ReceiptError {
     InvalidTimeRange,
     MissingModelProvenance,
     MissingExternalApproval,
+    InvalidNetworkActivity,
 }
 
 fn valid_identifier(value: &str, max: usize) -> bool {
@@ -83,7 +122,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Validate structural provenance before a trusted adapter persists a receipt.
 pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> {
-    if receipt.schema_version != 1 {
+    if !matches!(receipt.schema_version, 1 | 2) {
         return Err(ReceiptError::UnsupportedSchema);
     }
     if receipt.task_id.trim().is_empty()
@@ -110,6 +149,37 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
         || receipt.completed_at_unix_ms < receipt.started_at_unix_ms
     {
         return Err(ReceiptError::InvalidTimeRange);
+    }
+    match receipt.network_activity.observation {
+        NetworkObservation::Unknown => {
+            if !receipt.network_activity.destinations.is_empty()
+                || receipt.network_activity.bytes_sent.is_some()
+                || receipt.network_activity.bytes_received.is_some() {
+                return Err(ReceiptError::InvalidNetworkActivity);
+            }
+        }
+        NetworkObservation::Inferred => {
+            if receipt.network_activity.destinations.is_empty()
+                || receipt.network_activity.bytes_sent.is_some()
+                || receipt.network_activity.bytes_received.is_some() {
+                return Err(ReceiptError::InvalidNetworkActivity);
+            }
+        }
+        NetworkObservation::Measured => {
+            if receipt.network_activity.destinations.is_empty()
+                || receipt.network_activity.bytes_sent.is_none()
+                || receipt.network_activity.bytes_received.is_none() {
+                return Err(ReceiptError::InvalidNetworkActivity);
+            }
+        }
+    }
+    if receipt.network_activity.destinations.len() > 16
+        || receipt.network_activity.destinations.iter().any(|destination| {
+            destination.is_empty() || destination.len() > 320
+                || destination.chars().any(|c| c.is_control() || c.is_whitespace())
+                || destination.contains('/') || destination.contains('@')
+        }) {
+        return Err(ReceiptError::InvalidNetworkActivity);
     }
     if matches!(receipt.location, ExecutionLocation::LocalCpu | ExecutionLocation::LocalGpu | ExecutionLocation::LocalUnverified)
         && receipt.model_id.is_some() != receipt.model_version.is_some()
@@ -143,6 +213,7 @@ mod tests {
             started_at_unix_ms: 100,
             completed_at_unix_ms: 200,
             user_approval_id: None,
+            network_activity: NetworkActivity::unknown(),
         }
     }
 
@@ -174,6 +245,34 @@ mod tests {
         r = receipt();
         r.completed_at_unix_ms = 99;
         assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidTimeRange));
+    }
+
+    #[test]
+    fn network_activity_never_conflates_unknown_or_inferred_with_zero_bytes() {
+        let mut r = receipt();
+        r.schema_version = 2;
+        r.network_activity = NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]);
+        assert_eq!(validate_receipt(&r), Ok(()));
+        assert_eq!(r.network_activity.bytes_sent, None);
+        assert_eq!(r.network_activity.bytes_received, None);
+
+        r.network_activity.observation = NetworkObservation::Measured;
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkActivity));
+        r.network_activity.bytes_sent = Some(0);
+        r.network_activity.bytes_received = Some(0);
+        assert_eq!(validate_receipt(&r), Ok(()));
+
+        r.network_activity = NetworkActivity::unknown();
+        r.network_activity.bytes_sent = Some(0);
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkActivity));
+    }
+
+    #[test]
+    fn legacy_v1_receipts_without_network_fields_remain_valid() {
+        let legacy_json = r#"{"schema_version":1,"task_id":"task-1","operation_id":"document.summarize","location":"local_cpu","adapter_id":"ollama.local","adapter_version":"1.0.0","model_id":"qwen2.5","model_version":"sha256:abc123","input_sha256":"c96c1c3f8f1a1c6d5d6e6f7a8b9c0d1e2f3a4b5c6d7e8f901234567890abcdef","output_sha256":"c96c1c3f8f1a1c6d5d6e6f7a8b9c0d1e2f3a4b5c6d7e8f901234567890abcdef","started_at_unix_ms":100,"completed_at_unix_ms":200,"user_approval_id":null}"#;
+        let parsed: ExecutionReceipt = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(parsed.network_activity, NetworkActivity::unknown());
+        assert_eq!(validate_receipt(&parsed), Ok(()));
     }
 
     #[test]
