@@ -73,6 +73,11 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
 }
 
 fn initialize(db: &Connection) -> Result<(), String> {
+    let current_schema: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
+    if current_schema > 1 {
+        return Err("Local search cache schema is newer than this UJANI build.".into());
+    }
     db.execute_batch(
         "PRAGMA foreign_keys=ON;
          PRAGMA secure_delete=ON;
@@ -112,6 +117,8 @@ fn initialize(db: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_recent_searches_lru ON recent_searches(created_at DESC);"
     ).map_err(|error| format!("Could not initialise local search cache: {error}"))?;
+    db.execute_batch("PRAGMA user_version=1;")
+        .map_err(|error| format!("Could not update local search cache schema version: {error}"))?;
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| format!("Could not verify local search cache: {error}"))?;
     if check != "ok" {
@@ -281,6 +288,7 @@ pub fn load(
     let mut db = open(app)?;
     let settings = settings_from_db(&db)?;
     if !settings.enabled { return Ok(None); }
+    trim_cache(&db, &settings, now_seconds()?)?;
     let key = cache_key()?;
     let scope_id = match scope_for_path(&mut db, &key, root) {
         Ok(value) => value,
@@ -455,6 +463,18 @@ mod tests {
         assert_eq!(decrypt(&key, &encrypted, &aad).unwrap(), b"private file metadata");
         assert!(decrypt(&key, &encrypted, &entry_aad("scope-b", "request-a", "payload")).is_err());
         assert!(decrypt(&key, &encrypted, &entry_aad("scope-a", "request-a", "inventory")).is_err());
+        let query_aad = entry_aad("scope-a", "request-a", "query");
+        let encrypted_query = encrypt(&key, b"private search phrase", &query_aad).unwrap();
+        assert_eq!(decrypt(&key, &encrypted_query, &query_aad).unwrap(), b"private search phrase");
+        assert!(decrypt(&key, &encrypted_query, &entry_aad("scope-b", "request-a", "query")).is_err());
+    }
+
+    #[test]
+    fn cache_keys_are_isolated_by_scope_and_search_preferences() {
+        let first = request_key("scope-a", "invoice", false);
+        assert_ne!(first, request_key("scope-b", "invoice", false));
+        assert_ne!(first, request_key("scope-a", "invoice", true));
+        assert_ne!(first, request_key("scope-a", "contract", false));
     }
 
     #[test]
