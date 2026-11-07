@@ -552,6 +552,11 @@ where
             Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
             _ => ReceiptExecutionLocation::LocalUnverified,
         };
+        let network_activity = if receipt_context.model_id == "analysis-only" {
+            NetworkActivity::unknown()
+        } else {
+            NetworkActivity::inferred(vec!["127.0.0.1:11434".into()])
+        };
         let receipt = ExecutionReceipt {
             schema_version: 2,
             task_id: task_id.clone(),
@@ -566,11 +571,7 @@ where
             started_at_unix_ms,
             completed_at_unix_ms,
             user_approval_id: None,
-            network_activity: if receipt_context.model_id == "analysis-only" {
-                NetworkActivity::unknown()
-            } else {
-                NetworkActivity::inferred(vec!["127.0.0.1:11434".into()])
-            },
+            network_activity,
         };
         if let Err(error) = receipt_slot.persist(receipt) {
             let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
