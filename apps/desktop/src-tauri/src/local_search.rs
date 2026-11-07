@@ -262,6 +262,8 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
     for (item, cached_identity) in cached.matches.iter().zip(cached_identities) {
         let path = PathBuf::from(&item.path);
         if !path.starts_with(root) { return false; }
+        let Ok(rechecked_path) = fs::canonicalize(&path) else { return false; };
+        if rechecked_path != path || !rechecked_path.starts_with(root) { return false; }
         let Some(candidate) = candidates.iter().find(|candidate| candidate.path == path) else { return false; };
         if candidate.size != item.size_bytes || candidate.modified_unix_ms != item.modified_unix_ms
             || candidate.identity.as_ref() != cached_identity.as_ref() {
