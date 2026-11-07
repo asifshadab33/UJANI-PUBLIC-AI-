@@ -232,7 +232,7 @@ async fn execute_document_workflow(
   &model,
   &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
  )?;
- run_managed_task(app, &control, task_id, "Document workflow", receipt, async move {
+ run_managed_task(app, &control, task_id, "Document workflow", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]), async move {
   if content.len() > 256 * 1024 {
    return Err("Workflow input exceeds the 256 KiB document limit.".into());
   }
@@ -504,6 +504,7 @@ async fn run_managed_task<T, F>(
     task_id: String,
     label: &'static str,
     receipt_context: LocalReceiptContext,
+    network_activity: NetworkActivity,
     future: F,
 ) -> Result<T, String>
 where
@@ -551,11 +552,6 @@ where
         let location = match ollama::accelerator_observation().await.ok() {
             Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
             _ => ReceiptExecutionLocation::LocalUnverified,
-        };
-        let network_activity = if receipt_context.model_id == "analysis-only" {
-            NetworkActivity::unknown()
-        } else {
-            NetworkActivity::inferred(vec!["127.0.0.1:11434".into()])
         };
         let receipt = ExecutionReceipt {
             schema_version: 2,
@@ -745,7 +741,7 @@ async fn summarize_selected_text(
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Text summary", receipt,
+    run_managed_task(app, &control, task_id, "Text summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::summarize(file_name, content, mode, model)).await
 }
 
@@ -769,7 +765,7 @@ async fn process_selected_document(
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Document pipeline", receipt,
+    run_managed_task(app, &control, task_id, "Document pipeline", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
 }
 
@@ -793,7 +789,7 @@ async fn process_selected_pdf(
         &model,
         &[file_name.as_bytes(), data.as_slice(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "PDF extraction and summary", receipt,
+    run_managed_task(app, &control, task_id, "PDF extraction and summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language)).await
 }
 
@@ -813,7 +809,7 @@ async fn translate_text_local(
         &model,
         &[text.as_bytes(), target_language.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Local translation", receipt,
+    run_managed_task(app, &control, task_id, "Local translation", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::translate_local(text, target_language, mode, model)).await
 }
 
