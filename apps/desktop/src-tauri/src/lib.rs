@@ -592,7 +592,7 @@ where
     // Keep document, PDF, summary and translation tasks under the same native
     // single-task / 1 GiB admission gate as interactive inference.
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
-    flush_pending_receipts(&app);
+    flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -725,7 +725,7 @@ async fn execute_local_ai_task(
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
-    flush_pending_receipts(&app);
+    flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
