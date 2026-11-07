@@ -502,7 +502,9 @@ fn flush_pending_receipts(app: &AppHandle) {
         Ok(mut pending) => std::mem::take(&mut *pending), Err(_) => return,
     };
     for receipt in batch {
-        if security_store::append_execution_receipt(app.clone(), receipt.clone()).is_err() {
+        let persisted = security_store::reserve_execution_receipt_slot(app, &receipt.task_id)
+            .and_then(|slot| slot.persist(receipt.clone()).map(|_| ()));
+        if persisted.is_err() {
             if let Ok(mut pending) = pending_receipts().lock() {
                 if pending.len() < MAX_PENDING_RECEIPTS { pending.push(receipt); }
             }
