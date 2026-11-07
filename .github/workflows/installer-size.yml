@@ -49,7 +49,7 @@ jobs:
         run: node -e "const fs=require('fs');const p='tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(p,JSON.stringify(c,null,2));"
       - name: Verify desktop dependency resolution with the committed lockfile
         shell: bash
-        run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --format-version 1 --no-deps --locked
+        run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --format-version 1 --locked
       - name: Build native installer bundles
         working-directory: apps/desktop
         run: npm run tauri build -- --bundles ${{ matrix.bundles }}
@@ -136,7 +136,7 @@ jobs:
             fs.writeFileSync(path.join(output, 'README.txt'), [
               'UJANI unsigned preview installers',
               'These builds are for controlled testing only and are not publisher-signed.',
-              'Verify SHA256SUMS with sha256sum (Linux), shasum -a 256 -c SHA256SUMS (macOS), or Get-FileHash (Windows).',
+              'Verify SHA256SUMS with sha256sum -c SHA256SUMS (Linux), shasum -a 256 -c SHA256SUMS (macOS), or compare each file with Get-FileHash -Algorithm SHA256 (Windows).',
               'Linux AppImage is packaged as .tar.gz to preserve its executable permission; extract it before running.'
             ].join(String.fromCharCode(10)) + String.fromCharCode(10));
             console.log('Collected ' + names.length + ' installer package(s) with streaming SHA-256 checksums.');
