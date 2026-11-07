@@ -522,7 +522,7 @@ pub fn verify_and_claim_peer_envelope(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ujani_core::{ReceiptExecutionLocation, ExecutionReceipt};
+    use ujani_core::{NetworkTelemetry, ReceiptExecutionLocation, ExecutionReceipt};
 
     fn db() -> Connection { let c = Connection::open_in_memory().unwrap(); initialize(&c).unwrap(); c }
     fn receipt(task_id: &str) -> ExecutionReceipt {
@@ -533,6 +533,7 @@ mod tests {
             model_version: Some("local-runtime".into()), input_sha256: sha256_hex(b"input"),
             output_sha256: sha256_hex(b"output"), started_at_unix_ms: 1_000,
             completed_at_unix_ms: 2_000, user_approval_id: None,
+            network: NetworkTelemetry::default(),
         }
     }
 
