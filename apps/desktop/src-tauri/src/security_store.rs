@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ed25519_dalek::VerifyingKey;
 use std::{fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use crate::native_consent::confirm_native;
 use std::collections::HashSet;
 use ujani_core::peer_protocol::{ReplayGuard, SignedTaskEnvelope};
 use ujani_core::registered_operations;
@@ -708,12 +708,7 @@ pub async fn enroll_trusted_peer(
         return Err("Peer identifier does not match the supplied public key.".into());
     }
     let label = label.trim().to_string();
-    let approved = app.dialog()
-        .message(format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}"))
-        .title("Approve trusted device enrollment")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+    let approved = confirm_native(&app, "Approve trusted device enrollment", format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}")).await;
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
@@ -748,12 +743,7 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer identifier.".into());
     }
-    let approved = app.dialog()
-        .message(format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"))
-        .title("Confirm device revocation")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+    let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}")).await;
     if !approved { return Err("Peer revocation was cancelled.".into()); }
     let changed = open(&app)?.execute(
         "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
@@ -860,7 +850,8 @@ mod tests {
     #[test]
     fn persistent_replay_nonce_rejects_duplicate_and_prunes_expired() {
         let mut db = db();
-        let nonce = "0123456789abcdef0123456789abcdef";
+        let nonce_owned = format!("{:032x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+        let nonce = nonce_owned.as_str();
         let peer_a = "a".repeat(64);
         let peer_b = "b".repeat(64);
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_ok());
