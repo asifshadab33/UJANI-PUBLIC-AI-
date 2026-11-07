@@ -178,6 +178,51 @@ jobs:
           set -euo pipefail
           mkdir release-assets
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
+
+      - name: Verify every Tauri updater signature before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          pubkey_b64="$(node -e "const config = require('./apps/desktop/src-tauri/tauri.conf.json'); process.stdout.write(config.plugins.updater.pubkey);")"
+          test -n "$pubkey_b64"
+          printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
+
+          mapfile -d '' signatures < <(find release-assets -type f -name '*.sig' -print0)
+          if [[ "${#signatures[@]}" -eq 0 ]]; then
+            echo "No Tauri updater signature files were downloaded; refusing to publish." >&2
+            exit 1
+          fi
+
+          verified=0
+          for signature in "${signatures[@]}"; do
+            artifact="${signature%.sig}"
+            if [[ ! -f "$artifact" ]]; then
+              echo "Signature has no matching artifact: $signature" >&2
+              exit 1
+            fi
+            base64 --decode "$signature" > "$tmp/signature.minisig"
+            minisign -Vm "$artifact" -p "$tmp/tauri.pub" -x "$tmp/signature.minisig"
+            verified=$((verified + 1))
+          done
+          echo "Verified $verified updater signature(s)."
+
+          require_signature() {
+            if ! find release-assets -type f -iname "$1" -print -quit | grep -q .; then
+              echo "Missing required platform updater signature: $1" >&2
+              exit 1
+            fi
+          }
+          require_signature '*.AppImage.sig'
+          require_signature '*.app.tar.gz.sig'
+          if ! find release-assets -type f \( -iname '*.msi.sig' -o -iname '*.exe.sig' -o -iname '*.zip.sig' \) -print -quit | grep -q .; then
+            echo "Missing Windows updater signature (.msi.sig, .exe.sig or .zip.sig)." >&2
+            exit 1
+          fi
           rm -f release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS
           node <<'NODE'
           const fs = require('fs');
