@@ -131,3 +131,12 @@ This records implementation already present on `main`; it does not claim that al
 - [x] Add native tests for size ordering and Unix symbolic-link exclusion.
 - [ ] Validate Windows/macOS/Linux native builds and tests in CI; add real-device filesystem race and Windows reparse-point validation.
 - [ ] Continue with preview-only sorting plans, archive safety, image metadata and large-folder search after platform validation.
+
+
+## Receipt ledger archival (2026-11)
+
+- The active receipt table rotates before its 10,000-entry ceiling: older rows are written to immutable JSONL archives under the application data directory, then the checkpoint and archive index are committed with the row deletion.
+- Archive files and directory entries are flushed before the SQLite transaction removes the archived rows. The Windows path uses write-through file/directory moves; Unix also fsyncs the archive directory and its parent when created.
+- Receipt verification checks indexed archive files from the genesis hash through the current checkpoint, then checks the retained database chain.
+- **Security boundary:** the chain remains unkeyed SHA-256. A local attacker able to rewrite the database and archives can recompute it; this is not a signed audit log and has no external anti-rollback anchor.
+- Archive export/retention controls and an independently protected chain head remain future work.
