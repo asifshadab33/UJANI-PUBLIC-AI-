@@ -220,7 +220,7 @@ fn entry_aad(scope_id: &str, request_key: &str, kind: &str) -> Vec<u8> {
 }
 
 /// Resolves a user-selected canonical folder to a native-generated opaque scope ID.
-fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path) -> Result<String, String> {
+fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path, create: bool) -> Result<Option<String>, String> {
     let canonical = fs::canonicalize(root).map_err(|error| format!("Could not resolve selected folder: {error}"))?;
     let canonical_text = canonical.to_str().ok_or_else(|| "This folder path cannot be safely represented for encrypted caching; search will run without cache.".to_string())?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
@@ -241,7 +241,11 @@ fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path) -> Result<St
     drop(statement);
     if let Some(scope_id) = found {
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(scope_id);
+        return Ok(Some(scope_id));
+    }
+    if !create {
+        tx.commit().map_err(|error| error.to_string())?;
+        return Ok(None);
     }
     let mut random = [0_u8; 16];
     OsRng.fill_bytes(&mut random);
@@ -252,7 +256,7 @@ fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path) -> Result<St
         params![scope_id, encrypted_path, now_seconds()?],
     ).map_err(|error| error.to_string())?;
     tx.commit().map_err(|error| error.to_string())?;
-    Ok(scope_id)
+    Ok(Some(scope_id))
 }
 
 /// Hashes normalized search inputs and the provider/parser versions into a non-reversible key.
@@ -330,8 +334,9 @@ pub fn load(
     if !settings.enabled { return Ok(None); }
     trim_cache(&db, &settings, now_seconds()?)?;
     let key = cache_key()?;
-    let scope_id = match scope_for_path(&mut db, &key, root) {
-        Ok(value) => value,
+    let scope_id = match scope_for_path(&mut db, &key, root, false) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Ok(None),
         Err(error) if error.contains("cannot be safely represented") => return Ok(None),
         Err(error) => return Err(error),
     };
@@ -381,7 +386,8 @@ pub fn store(
     let settings = settings_from_db(&db)?;
     if !settings.enabled { return Ok(()); }
     let key = cache_key()?;
-    let scope_id = scope_for_path(&mut db, &key, root)?;
+    let scope_id = scope_for_path(&mut db, &key, root, true)?
+        .ok_or_else(|| "Could not register the selected local search scope.".to_string())?;
     let request_key = request_key(&scope_id, query, search_pdf_text);
     let encrypted_inventory = encrypt(&key, inventory_json.as_bytes(), &entry_aad(&scope_id, &request_key, "inventory"))?;
     let encrypted_payload = encrypt(&key, payload_json.as_bytes(), &entry_aad(&scope_id, &request_key, "payload"))?;
