@@ -181,13 +181,23 @@ fn verify_archive_index(
         let (archive_file, expected_previous, expected_head, expected_entries) =
             row.map_err(|e| e.to_string())?;
         if expected_previous != previous
-            || archive_file.contains('/')
-            || archive_file.contains('\\')
+            || !archive_file.starts_with("receipts-")
+            || !archive_file.ends_with(".jsonl")
+            || archive_file.contains("..")
+            || !archive_file.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.')
             || Path::new(&archive_file).file_name().and_then(|name| name.to_str()) != Some(archive_file.as_str()) {
             valid = false;
             break;
         }
-        let file = match fs::File::open(archive_dir.join(&archive_file)) {
+        let archive_path = archive_dir.join(&archive_file);
+        let metadata = match fs::symlink_metadata(&archive_path) {
+            Ok(metadata) => metadata, Err(_) => { valid = false; break; }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
+            valid = false;
+            break;
+        }
+        let file = match fs::File::open(&archive_path) {
             Ok(file) => file, Err(_) => { valid = false; break; }
         };
         let mut count = 0_i64;
