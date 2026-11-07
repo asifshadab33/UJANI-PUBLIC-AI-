@@ -3,6 +3,7 @@ mod device_identity;
 mod everyday_tools;
 mod folder_import;
 mod local_search;
+mod search_cache;
 mod history;
 mod model_runtime;
 mod ollama;
@@ -906,6 +907,9 @@ pub fn run() {
             inspect_image_file,
             folder_import::process_selected_folder,
             local_search::find_local_files,
+            search_cache::get_local_search_cache_settings,
+            search_cache::set_local_search_cache_settings,
+            search_cache::clear_local_search_cache,
             everyday_tools::get_local_clock,
             everyday_tools::find_duplicate_files,
             history::get_task_history_settings,
