@@ -213,6 +213,7 @@ struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::Docum
 
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
 async fn execute_document_workflow(
     app: AppHandle,
     control: State<'_, TaskControlState>,
