@@ -778,11 +778,24 @@ async fn process_selected_pdf(
     control: State<'_, TaskControlState>,
     task_id: String,
     file_name: String,
-    data: Vec<u8>,
+    data_base64: String,
     mode: String,
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    const MAX_PDF_BYTES: usize = 10 * 1024 * 1024;
+    const MAX_BASE64_BYTES: usize = MAX_PDF_BYTES.div_ceil(3) * 4;
+    if data_base64.len() > MAX_BASE64_BYTES {
+        return Err("PDF upload exceeds the 10 MiB limit.".into());
+    }
+    let data = STANDARD.decode(data_base64.as_bytes())
+        .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
+    if data.is_empty() || data.len() > MAX_PDF_BYTES {
+        return Err("PDF files must be non-empty and no larger than 10 MiB.".into());
+    }
+
     let language = translation_language.as_deref().unwrap_or("");
     let receipt = local_receipt_context(
         "pdf.extract_and_summarize",
