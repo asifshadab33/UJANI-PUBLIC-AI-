@@ -371,6 +371,54 @@ impl Drop for ReceiptSlotReservation {
     }
 }
 
+#[cfg(windows)]
+fn move_archive_write_through(from: &Path, to: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    let from_wide: Vec<u16> = from.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let to_wide: Vec<u16> = to.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+    #[link(name = "Kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(existing: *const u16, new_name: *const u16, flags: u32) -> i32;
+    }
+    // SAFETY: both paths are NUL-terminated UTF-16 buffers that remain alive for the call.
+    let moved = unsafe { MoveFileExW(from_wide.as_ptr(), to_wide.as_ptr(), MOVEFILE_WRITE_THROUGH) };
+    if moved == 0 {
+        return Err(format!("Could not durably publish receipt archive: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+fn ensure_receipt_archive_dir(archive_dir: &Path, nonce: u128) -> Result<bool, String> {
+    if archive_dir.exists() { return Ok(false); }
+    let parent = archive_dir.parent()
+        .ok_or_else(|| "Receipt archive directory has no parent.".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| format!("Could not create receipt archive parent: {e}"))?;
+    #[cfg(windows)]
+    {
+        let temporary = parent.join(format!(".receipt-archive-{nonce}.tmp"));
+        fs::create_dir(&temporary).map_err(|e| format!("Could not create temporary receipt archive directory: {e}"))?;
+        if let Err(error) = move_archive_write_through(&temporary, archive_dir) {
+            let _ = fs::remove_dir(&temporary);
+            if !archive_dir.exists() { return Err(error); }
+        }
+    }
+    #[cfg(not(windows))]
+    fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn sync_receipt_archive_directories(archive_dir: &Path, parent: Option<&Path>) -> Result<(), String> {
+    fs::File::open(archive_dir).and_then(|directory| directory.sync_all())
+        .map_err(|e| format!("Could not fsync receipt archive directory: {e}"))?;
+    if let Some(parent) = parent {
+        fs::File::open(parent).and_then(|directory| directory.sync_all())
+            .map_err(|e| format!("Could not fsync receipt archive parent directory: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Archive the oldest rows to a fsynced JSONL file before deleting them. The
 /// checkpoint keeps the retained chain verifiable across archive rotations.
 fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Result<i64, String> {
@@ -386,9 +434,12 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
     fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
     let archive_nonce = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos()).unwrap_or(now as u128);
-    let path = archive_dir.join(format!("receipts-{now}-{count}-{archive_nonce}.jsonl"));
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&path)
-        .map_err(|e| format!("Could not create receipt archive file: {e}"))?;
+    let archive_dir_created = ensure_receipt_archive_dir(archive_dir, archive_nonce)?;
+    let archive_name = format!("receipts-{now}-{count}-{archive_nonce}.jsonl");
+    let path = archive_dir.join(&archive_name);
+    let temporary_path = archive_dir.join(format!(".{archive_name}.tmp"));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary_path)
+        .map_err(|e| format!("Could not create temporary receipt archive file: {e}"))?;
     let mut head = String::new();
     {
         let mut query = tx.prepare(
@@ -405,6 +456,13 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
         }
     }
     file.sync_all().map_err(|e| format!("Could not fsync receipt archive: {e}"))?;
+    drop(file);
+    #[cfg(windows)]
+    move_archive_write_through(&temporary_path, &path)?;
+    #[cfg(not(windows))]
+    fs::rename(&temporary_path, &path).map_err(|e| format!("Could not publish receipt archive: {e}"))?;
+    #[cfg(unix)]
+    sync_receipt_archive_directories(archive_dir, if archive_dir_created { archive_dir.parent() } else { None })?;
     let archive_file = path.file_name().and_then(|name| name.to_str())
         .ok_or_else(|| "Receipt archive filename is not valid UTF-8.".to_string())?
         .to_string();
