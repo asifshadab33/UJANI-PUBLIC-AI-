@@ -524,7 +524,7 @@ where
 }
 
 /// Runs a managed task using an existing registration when preflight itself is cancellable.
-pub(crate) async fn run_managed_task_with_token<T, F>(
+async fn run_managed_task_with_token<T, F>(
     app: AppHandle,
     control: &TaskControlState,
     task_id: String,
