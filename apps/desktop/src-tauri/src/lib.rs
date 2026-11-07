@@ -17,7 +17,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::{Mutex, OnceLock}};
+use std::{collections::{BTreeSet, HashMap}, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
@@ -485,67 +485,81 @@ async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
     rx.await.unwrap_or(false)
 }
 
-static PENDING_RECEIPTS: OnceLock<Mutex<Vec<ExecutionReceipt>>> = OnceLock::new();
+struct PendingReceiptState {
+    queued: Vec<ExecutionReceipt>,
+    in_flight: usize,
+}
+
+static PENDING_RECEIPTS: OnceLock<Mutex<PendingReceiptState>> = OnceLock::new();
 const MAX_PENDING_RECEIPTS: usize = 100;
+const RECEIPT_RETRY_BUDGET: Duration = Duration::from_secs(3);
 
-/// Returns the process-local bounded queue used for receipt retry after transient failures.
-fn pending_receipts() -> &'static Mutex<Vec<ExecutionReceipt>> {
-    PENDING_RECEIPTS.get_or_init(|| Mutex::new(Vec::new()))
+/// Returns the process-local bounded queue and its in-flight capacity accounting.
+fn pending_receipts() -> &'static Mutex<PendingReceiptState> {
+    PENDING_RECEIPTS.get_or_init(|| Mutex::new(PendingReceiptState { queued: Vec::new(), in_flight: 0 }))
 }
 
-/// Adds one failed receipt to the retry queue without allowing unbounded memory growth.
+/// Adds a failed receipt without exceeding the combined queued and in-flight bound.
 fn enqueue_pending_receipt(receipt: ExecutionReceipt) -> bool {
-    let Ok(mut pending) = pending_receipts().lock() else { return false; };
-    if pending.len() >= MAX_PENDING_RECEIPTS { return false; }
-    pending.push(receipt); true
+    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if state.queued.len().saturating_add(state.in_flight) >= MAX_PENDING_RECEIPTS { return false; }
+    state.queued.push(receipt);
+    true
 }
 
-/// Performs receipt retry I/O on a blocking thread; the queue lock is never held during storage work.
-fn flush_pending_receipts_blocking(app: &AppHandle) {
-    let batch = match pending_receipts().lock() {
-        Ok(mut pending) => std::mem::take(&mut *pending), Err(_) => return,
+/// Retries receipts on a blocking thread. In-flight entries keep their queue capacity
+/// reserved until persisted or requeued; the first store failure stops this bounded batch.
+fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration) {
+    let mut batch = {
+        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let batch = std::mem::take(&mut state.queued);
+        state.in_flight = state.in_flight.saturating_add(batch.len());
+        batch
     };
-    let mut receipts = batch.into_iter();
-    while let Some(receipt) = receipts.next() {
+    let started = Instant::now();
+    for index in 0..batch.len() {
+        if started.elapsed() >= budget {
+            let remaining = batch.split_off(index);
+            let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.in_flight = state.in_flight.saturating_sub(remaining.len());
+            state.queued.extend(remaining);
+            break;
+        }
+        let receipt = batch[index].clone();
         let persisted = security_store::reserve_execution_receipt_slot(app, &receipt.task_id)
             .and_then(|slot| slot.persist(receipt.clone()).map(|_| ()));
+        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.in_flight = state.in_flight.saturating_sub(1);
         if persisted.is_err() {
-            // A store-unavailable error is unlikely to improve on the next row.
-            // Requeue the failed item and the untouched tail, then stop this retry pass.
-            if let Ok(mut pending) = pending_receipts().lock() {
-                for item in std::iter::once(receipt).chain(receipts) {
-                    if pending.len() < MAX_PENDING_RECEIPTS { pending.push(item); }
-                }
-            }
+            state.queued.push(receipt);
+            let remaining = batch.split_off(index + 1);
+            state.in_flight = state.in_flight.saturating_sub(remaining.len());
+            state.queued.extend(remaining);
             break;
         }
     }
 }
 
 /// Makes one bounded best-effort receipt retry during application shutdown.
-/// A failed write is requeued and remaining entries stay untouched for the next launch.
 fn flush_one_pending_receipt_on_exit(app: &AppHandle) {
-    let receipt = match pending_receipts().lock() {
-        Ok(mut pending) => pending.pop(),
-        Err(_) => None,
+    let receipt = {
+        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let receipt = state.queued.pop();
+        if receipt.is_some() { state.in_flight = state.in_flight.saturating_add(1); }
+        receipt
     };
     let Some(receipt) = receipt else { return; };
     let persisted = security_store::reserve_execution_receipt_slot(app, &receipt.task_id)
         .and_then(|slot| slot.persist(receipt.clone()).map(|_| ()));
-    if persisted.is_err() {
-        if let Ok(mut pending) = pending_receipts().lock() {
-            if pending.len() < MAX_PENDING_RECEIPTS {
-                pending.push(receipt);
-            }
-        }
-    }
+    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.in_flight = state.in_flight.saturating_sub(1);
+    if persisted.is_err() { state.queued.push(receipt); }
 }
 
-/// Retries pending receipts without blocking the async runtime. The bounded queue is
-/// process-local and is not durable recovery if the application is forcibly terminated.
+/// Retries pending receipts off the async runtime with a short, bounded time budget.
 async fn flush_pending_receipts(app: &AppHandle) {
     let app = app.clone();
-    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app)).await;
+    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app, RECEIPT_RETRY_BUDGET)).await;
 }
 
 /// Persists a receipt or returns a warning while preserving the completed task result.
