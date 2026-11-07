@@ -413,16 +413,50 @@ fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str
     });
 }
 
-/// Runs a native task with a registered cancellation token and a hard wall-clock budget.
-/// Dropping the future aborts the active HTTP request; PDF worker children are kill-on-drop.
+#[derive(Debug)]
+struct LocalReceiptContext {
+    operation_id: &'static str,
+    model_id: String,
+    input_sha256: String,
+}
+
+/// Hash a domain-separated, length-prefixed description of the exact user task
+/// inputs. Source bytes are never copied into the receipt ledger.
+fn local_receipt_context(
+    operation_id: &'static str,
+    model_id: &str,
+    fields: &[&[u8]],
+) -> Result<LocalReceiptContext, String> {
+    if !validate_model_identifier(model_id) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
+    let mut material = b"UJANI-LOCAL-TASK-INPUT-V1".to_vec();
+    for field in [operation_id.as_bytes(), model_id.as_bytes()]
+        .into_iter()
+        .chain(fields.iter().copied())
+    {
+        material.extend_from_slice(&(field.len() as u64).to_be_bytes());
+        material.extend_from_slice(field);
+    }
+    Ok(LocalReceiptContext {
+        operation_id,
+        model_id: model_id.to_string(),
+        input_sha256: sha256_hex(&material),
+    })
+}
+
+/// Runs a native task with cancellation, a hard wall-clock budget and a
+/// reserved provenance slot. The ledger stores digests and metadata, never content.
 async fn run_managed_task<T, F>(
     app: AppHandle,
     control: &TaskControlState,
     task_id: String,
     label: &'static str,
+    receipt_context: LocalReceiptContext,
     future: F,
 ) -> Result<T, String>
 where
+    T: Serialize,
     F: std::future::Future<Output = Result<T, String>>,
 {
     if !valid_command_identifier(&task_id, 96) {
@@ -431,6 +465,11 @@ where
     // Keep document, PDF, summary and translation tasks under the same native
     // single-task / 1 GiB admission gate as interactive inference.
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    let started_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64;
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -452,13 +491,79 @@ where
     if let Ok(mut active) = control.active.lock() {
         active.remove(&task_id);
     }
+    if let Ok(value) = &result {
+        let output_bytes = serde_json::to_vec(value)
+            .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
+        let completed_at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis() as u64;
+        let location = match ollama::accelerator_observation().await.ok() {
+            Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
+            _ => ReceiptExecutionLocation::LocalUnverified,
+        };
+        let receipt = ExecutionReceipt {
+            schema_version: 1,
+            task_id: task_id.clone(),
+            operation_id: receipt_context.operation_id.into(),
+            location,
+            adapter_id: "ollama.local".into(),
+            adapter_version: env!("CARGO_PKG_VERSION").into(),
+            model_id: Some(receipt_context.model_id),
+            model_version: Some("unknown".into()),
+            input_sha256: receipt_context.input_sha256,
+            output_sha256: sha256_hex(&output_bytes),
+            started_at_unix_ms,
+            completed_at_unix_ms,
+            user_approval_id: None,
+        };
+        if let Err(error) = receipt_slot.persist(receipt) {
+            let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
+            emit_task_progress(&app, &task_id, "failed", &message, 0);
+            return Err(message);
+        }
+    }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed and provenance recorded."), 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
         Err(error) if error.contains("240-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
     result
+}
+
+#[cfg(test)]
+mod local_receipt_context_tests {
+    use super::local_receipt_context;
+
+    #[test]
+    fn input_digest_is_deterministic_and_bound_to_operation_model_and_fields() {
+        let first = local_receipt_context(
+            "document.summarize",
+            "llama3.2",
+            &[&b"report.txt"[..], &b"private source text"[..]],
+        ).unwrap();
+        let same = local_receipt_context(
+            "document.summarize",
+            "llama3.2",
+            &[&b"report.txt"[..], &b"private source text"[..]],
+        ).unwrap();
+        let different_operation = local_receipt_context(
+            "translate.text",
+            "llama3.2",
+            &[&b"report.txt"[..], &b"private source text"[..]],
+        ).unwrap();
+        let different_model = local_receipt_context(
+            "document.summarize",
+            "qwen2.5",
+            &[&b"report.txt"[..], &b"private source text"[..]],
+        ).unwrap();
+
+        assert_eq!(first.input_sha256, same.input_sha256);
+        assert_ne!(first.input_sha256, different_operation.input_sha256);
+        assert_ne!(first.input_sha256, different_model.input_sha256);
+        assert_eq!(first.input_sha256.len(), 64);
+    }
 }
 
 /// Interactive local chat with a cancellation token and an overall time budget.
@@ -562,7 +667,12 @@ async fn summarize_selected_text(
     mode: String,
     model: String,
 ) -> Result<String, String> {
-    run_managed_task(app, &control, task_id, "Text summary",
+    let receipt = local_receipt_context(
+        "document.summarize",
+        &model,
+        &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes()],
+    )?;
+    run_managed_task(app, &control, task_id, "Text summary", receipt,
         LocalTaskEngine::summarize(file_name, content, mode, model)).await
 }
 
@@ -580,7 +690,13 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    run_managed_task(app, &control, task_id, "Document pipeline",
+    let language = translation_language.as_deref().unwrap_or("");
+    let receipt = local_receipt_context(
+        "document.summarize",
+        &model,
+        &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
+    )?;
+    run_managed_task(app, &control, task_id, "Document pipeline", receipt,
         LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
 }
 
@@ -598,7 +714,13 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    run_managed_task(app, &control, task_id, "PDF extraction and summary",
+    let language = translation_language.as_deref().unwrap_or("");
+    let receipt = local_receipt_context(
+        "pdf.extract_and_summarize",
+        &model,
+        &[file_name.as_bytes(), data.as_slice(), mode.as_bytes(), language.as_bytes()],
+    )?;
+    run_managed_task(app, &control, task_id, "PDF extraction and summary", receipt,
         LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language)).await
 }
 
@@ -613,7 +735,12 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
-    run_managed_task(app, &control, task_id, "Local translation",
+    let receipt = local_receipt_context(
+        "translate.text",
+        &model,
+        &[text.as_bytes(), target_language.as_bytes(), mode.as_bytes()],
+    )?;
+    run_managed_task(app, &control, task_id, "Local translation", receipt,
         LocalTaskEngine::translate_local(text, target_language, mode, model)).await
 }
 
