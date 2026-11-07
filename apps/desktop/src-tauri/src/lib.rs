@@ -552,7 +552,8 @@ fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receip
                     100,
                 );
             }
-            Err((slot, _error)) => {
+            Err(error) => {
+                let (slot, _error) = *error;
                 let failed = PendingReceipt { receipt: pending.receipt, slot };
                 let remaining = std::iter::once(failed).chain(iter).collect::<Vec<_>>();
                 let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
