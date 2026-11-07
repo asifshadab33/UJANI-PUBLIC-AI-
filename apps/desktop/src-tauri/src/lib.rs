@@ -953,6 +953,19 @@ mod active_task_registration_tests {
     }
 
     #[test]
+    fn registration_is_removed_when_managed_future_unwinds() {
+        let control = control();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _registration = ActiveTaskRegistration::register(
+                &control, "managed-task-panic", CancellationToken::new()
+            ).unwrap();
+            panic!("simulated managed task panic");
+        }));
+        assert!(result.is_err());
+        assert!(!control.active.lock().unwrap().contains_key("managed-task-panic"));
+    }
+
+    #[test]
     fn duplicate_registration_is_rejected_without_replacing_token() {
         let control = control();
         let original = CancellationToken::new();
