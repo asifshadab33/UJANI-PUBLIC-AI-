@@ -294,6 +294,7 @@ async fn execute_cloud_ai_task(
   if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
   active.insert(task_id.clone(), token.clone());
  }
+ let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
@@ -321,7 +322,6 @@ async fn execute_cloud_ai_task(
    }
   }
  };
- if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
  if let Ok(output) = &result {
   let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
    .map_err(|e| e.to_string())?.as_millis() as u64;
@@ -389,6 +389,7 @@ async fn pull_ollama_model(
         if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
         active.insert(task_id.clone(), token.clone());
     }
+    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
@@ -397,9 +398,13 @@ async fn pull_ollama_model(
     });
     let result = tokio::select! {
         _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
-        outcome = download => outcome,
+        outcome = tokio::time::timeout(std::time::Duration::from_secs(20 * 60), download) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err("Model download exceeded the 20-minute task time budget.".into()),
+            }
+        },
     };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
@@ -650,6 +655,7 @@ async fn execute_local_ai_task(
         if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
         active.insert(task_id.clone(), token.clone());
     }
+    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
     emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
     let execution = LocalTaskEngine::execute(prompt, mode, model);
@@ -662,7 +668,6 @@ async fn execute_local_ai_task(
             }
         }
     };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     if let Ok(value) = &result {
         let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?.as_millis() as u64;
