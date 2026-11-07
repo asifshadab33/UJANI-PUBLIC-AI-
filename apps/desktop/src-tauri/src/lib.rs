@@ -951,16 +951,11 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(TaskControlState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .on_event(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                flush_pending_receipts(app);
-            }
-        })
         .invoke_handler(tauri::generate_handler![
             execute_cloud_ai_task,
             get_device_info,
@@ -1010,8 +1005,13 @@ pub fn run() {
             device_identity::rotate_device_identity,
             device_identity::sign_peer_task_envelope
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running UJANI Public AI");
+        .build(tauri::generate_context!())
+        .expect("error while building UJANI Public AI");
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            flush_pending_receipts(app);
+        }
+    });
 }
 
 #[cfg(test)]
