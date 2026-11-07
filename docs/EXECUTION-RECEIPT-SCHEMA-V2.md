@@ -23,7 +23,7 @@ A null byte count means **not measured / unknown**, not zero. UJANI currently re
 ## Receipt coverage
 
 - Interactive local chat and the fixed local document workflow use the managed task lifecycle and create receipts on successful completion.
-- Selected text/PDF processing, local translation and selected-folder import use the same managed task wrapper. Analysis-only folder import records unknown network activity.
+- Selected text/PDF processing, local translation and selected-folder import use the same managed task wrapper. Folder import records unknown network activity because local Ollama use is conditional on the user's selected options and runtime availability.
 - Approved BYOK cloud chat records the configured provider hostname as inferred. The exact provider transfer byte count is not measured.
 - Model downloads are user-approved and task-progress tracked, but are not currently represented as inference receipts.
 - Failed, timed-out and cancelled operations do not create success receipts. Receipt-slot reservations are released by RAII when the command exits or is dropped.
