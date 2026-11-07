@@ -301,7 +301,6 @@ async fn execute_cloud_ai_task(
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
-   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
    return Err(error);
   }
  };
@@ -309,7 +308,6 @@ async fn execute_cloud_ai_task(
  let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
   Err(error) => {
-   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
    return Err(error);
   }
  };
