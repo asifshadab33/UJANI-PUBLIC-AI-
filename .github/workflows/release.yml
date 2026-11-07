@@ -149,11 +149,27 @@ jobs:
   publish-release:
     name: Publish completed multi-platform release
     needs: build-and-upload
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
-      - name: Generate size report and checksums before publishing
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 1
+      - name: Generate source dependency SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
+        with:
+          path: .
+          format: spdx-json
+          output-file: /tmp/ujani-source-sbom.spdx.json
+          syft-version: v1.57.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Download release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -162,6 +178,74 @@ jobs:
           set -euo pipefail
           mkdir release-assets
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
+
+      - name: Verify every Tauri updater signature before publishing
+        shell: bash
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          pubkey_b64="$TAURI_UPDATER_PUBLIC_KEY"
+          app_version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          test -n "$pubkey_b64"
+          test -n "$app_version"
+          printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
+
+          mapfile -d '' signatures < <(find release-assets -type f -name '*.sig' -print0)
+          if [[ "${#signatures[@]}" -eq 0 ]]; then
+            echo "No Tauri updater signature files were downloaded; refusing to publish." >&2
+            exit 1
+          fi
+
+          verified=0
+          for signature in "${signatures[@]}"; do
+            artifact="${signature%.sig}"
+            if [[ ! -f "$artifact" ]]; then
+              echo "Signature has no matching artifact: $signature" >&2
+              exit 1
+            fi
+            base64 --decode "$signature" > "$tmp/signature.minisig"
+            minisign -Vm "$artifact" -p "$tmp/tauri.pub" -x "$tmp/signature.minisig"
+            artifact_name="$(basename "$artifact")"
+            trusted_comment="$(sed -n 's/^trusted comment: //p' "$tmp/signature.minisig")"
+            if [[ "$trusted_comment" != timestamp:* ]]; then
+              echo "Verified signature has no authenticated Tauri trusted comment: $signature" >&2
+              exit 1
+            fi
+            timestamp_field="$(printf '%s\n' "$trusted_comment" | cut -f1)"
+            file_field="$(printf '%s\n' "$trusted_comment" | cut -f2)"
+            version_field="$(printf '%s\n' "$trusted_comment" | cut -f3)"
+            extra_field="$(printf '%s\n' "$trusted_comment" | cut -f4)"
+            if [[ "$timestamp_field" != timestamp:* || "$file_field" != "file:$artifact_name" || "$version_field" != "version:$app_version" || -n "$extra_field" ]]; then
+              echo "Verified signature does not bind the exact filename and app version $app_version: $signature" >&2
+              exit 1
+            fi
+            verified=$((verified + 1))
+          done
+          echo "Verified $verified updater signature(s)."
+
+          require_signature() {
+            if ! find release-assets -type f -iname "$1" -print -quit | grep -q .; then
+              echo "Missing required platform updater signature: $1" >&2
+              exit 1
+            fi
+          }
+          require_signature '*.AppImage.sig'
+          require_signature '*.app.tar.gz.sig'
+          if ! find release-assets -type f \( -iname '*.msi.sig' -o -iname '*.exe.sig' -o -iname '*.zip.sig' \) -print -quit | grep -q .; then
+            echo "Missing Windows updater signature (.msi.sig, .exe.sig or .zip.sig)." >&2
+            exit 1
+          fi
+
+
+      - name: Generate installer size report and stage SBOM
+        run: |
+          set -euo pipefail
           rm -f release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS
           node <<'NODE'
           const fs = require('fs');
@@ -190,7 +274,26 @@ jobs:
           fs.writeFileSync('INSTALLER_SIZES.txt', lines.join('\n') + '\n');
           NODE
           cp INSTALLER_SIZES.txt release-assets/INSTALLER_SIZES.txt
-          (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
-          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt --clobber --repo "$REPOSITORY"
-          gh release upload "$TAG" release-assets/SHA256SUMS --clobber --repo "$REPOSITORY"
+          cp /tmp/ujani-source-sbom.spdx.json release-assets/ujani-source-sbom.spdx.json
+
+      - name: Generate SHA-256 checksums for release assets
+        run: |
+          set -euo pipefail
+          (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z > /tmp/ujani-release-files.list)
+          (cd release-assets && xargs -0 sha256sum < /tmp/ujani-release-files.list > SHA256SUMS)
+
+      - name: Attest release assets and SBOM
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-path: release-assets/*
+          show-summary: true
+
+      - name: Upload release evidence and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS release-assets/ujani-source-sbom.spdx.json --clobber --repo "$REPOSITORY"
           gh release edit "$TAG" --draft=false --repo "$REPOSITORY"

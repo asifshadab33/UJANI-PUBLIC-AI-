@@ -83,6 +83,20 @@ jobs:
       - name: Lint desktop
         run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
 
+  workflow-lint:
+    name: GitHub Actions workflow lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Require version-bound updater signatures
+        run: grep -Eq '"requireSignedVersion"[[:space:]]*:[[:space:]]*true' apps/desktop/src-tauri/tauri.conf.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.25.0"
+          cache: false
+      - name: Lint all GitHub Actions workflow files
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
   frontend-build:
     name: React TypeScript build
     runs-on: ubuntu-latest

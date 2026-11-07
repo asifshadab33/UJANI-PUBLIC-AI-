@@ -50,6 +50,7 @@
       "endpoints": [
         "https://github.com/asifshadab33/UJANI-PUBLIC-AI-/releases/latest/download/latest.json"
       ],
+      "requireSignedVersion": true,
       "windows": {
         "installMode": "passive"
       }
