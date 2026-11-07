@@ -2,7 +2,7 @@
 //! Folder selection is performed by the native OS dialog; no path is accepted from the webview.
 //! Search is read-only. PDF text is extracted only in the existing resource-limited worker.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read},
@@ -21,7 +21,7 @@ const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct LocalSearchMatch {
     path: String,
     file_name: String,
@@ -29,9 +29,10 @@ pub struct LocalSearchMatch {
     size_bytes: u64,
     modified_unix_ms: Option<u64>,
     matched_in: Vec<String>,
+    file_identity: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct LocalSearchResult {
     cancelled: bool,
     root_name: Option<String>,
@@ -39,14 +40,18 @@ pub struct LocalSearchResult {
     matches: Vec<LocalSearchMatch>,
     truncated: bool,
     note: String,
+    cache_hit: bool,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Candidate {
     path: PathBuf,
     name: String,
     extension: String,
     size: u64,
     modified_unix_ms: Option<u64>,
+    modified_unix_ns: Option<u64>,
+    identity: Option<String>,
 }
 
 /// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
@@ -93,7 +98,7 @@ pub async fn find_local_files(
     let Some(folder) = selected else {
         return Ok(LocalSearchResult {
             cancelled: true, root_name: None, scanned_files: 0, matches: Vec::new(),
-            truncated: false, note: "Folder selection cancelled. Nothing was searched.".into(),
+            truncated: false, note: "Folder selection cancelled. Nothing was searched.".into(), cache_hit: false,
         });
     };
 
@@ -105,6 +110,21 @@ pub async fn find_local_files(
 
     let root_name = root.file_name().map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_else(|| root.display().to_string());
+    let inventory_json = serde_json::to_string(&candidates)
+        .map_err(|error| format!("Could not fingerprint the selected folder inventory: {error}"))?;
+    if !truncated {
+        if let Ok(Some(cached_json)) = crate::search_cache::load(&app, &root, &query, search_pdf_text, &inventory_json) {
+            if let Ok(mut cached) = serde_json::from_str::<LocalSearchResult>(&cached_json) {
+                if validate_cached_matches(&root, &candidates, &cached) {
+                    cached.scanned_files = scanned_files;
+                    cached.cache_hit = true;
+                    cached.note = format!("{} Cached metadata was revalidated against the selected folder just now; no document contents were retained.", cached.note);
+                    super::emit_task_progress(&app, &task_id, "completed", "Validated recent local search results.", 100);
+                    return Ok(cached);
+                }
+            }
+        }
+    }
     let mut matches = Vec::new();
     let mut text_bytes = 0u64;
     let mut pdf_count = 0usize;
@@ -171,23 +191,84 @@ pub async fn find_local_files(
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in,
+                file_identity: candidate.identity.clone(),
             });
         }
     }
 
     super::emit_task_progress(&app, &task_id, "completed", "File search completed.", 100);
-    Ok(LocalSearchResult {
+    let result = LocalSearchResult {
         cancelled: false,
         root_name: Some(root_name),
         scanned_files,
         matches,
         truncated,
+        cache_hit: false,
         note: if search_pdf_text {
             "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs and 180 seconds.".into()
         } else {
             "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included.".into()
         },
-    })
+    };
+    if !result.truncated {
+        if let Ok(payload) = serde_json::to_string(&result) {
+            let _ = crate::search_cache::store(
+                &app, &root, &query, search_pdf_text, &inventory_json, &payload, result.matches.is_empty()
+            );
+        }
+    }
+    Ok(result)
+}
+
+
+/// Stable filesystem identity where the platform exposes it. Unsupported platforms
+/// deliberately return None; size, high-resolution mtime and canonical path remain required.
+fn file_identity(metadata: &fs::Metadata) -> Option<String> {
+    #[cfg(unix)] {
+        use std::os::unix::fs::MetadataExt;
+        return Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()));
+    }
+    #[cfg(windows)] {
+        use std::os::windows::fs::MetadataExt;
+        return Some(format!("windows:{}:{}", metadata.volume_serial_number()?, metadata.file_index()?));
+    }
+    #[cfg(not(any(unix, windows)))] {
+        let _ = metadata;
+        None
+    }
+}
+
+fn modified_unix_ns(metadata: &fs::Metadata) -> Option<u64> {
+    metadata.modified().ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64)
+}
+
+/// A cache hit is accepted only when the entire current inventory matched and each
+/// cached result can be re-opened without following a symlink/reparse point.
+fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &LocalSearchResult) -> bool {
+    for item in &cached.matches {
+        let path = PathBuf::from(&item.path);
+        if !path.starts_with(root) { return false; }
+        let Some(candidate) = candidates.iter().find(|candidate| candidate.path == path) else { return false; };
+        if candidate.size != item.size_bytes || candidate.modified_unix_ms != item.modified_unix_ms
+            || candidate.identity != item.file_identity {
+            return false;
+        }
+        let Ok(file) = open_candidate(&path) else { return false; };
+        let Ok(metadata) = file.metadata() else { return false; };
+        if !metadata.is_file() || metadata.len() != candidate.size
+            || modified_unix_ns(&metadata) != candidate.modified_unix_ns
+            || file_identity(&metadata) != candidate.identity {
+            return false;
+        }
+        #[cfg(windows)] {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 { return false; }
+        }
+    }
+    true
 }
 
 /// Collects bounded file metadata beneath the folder selected through the native picker.
@@ -243,7 +324,11 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             let modified_unix_ms = metadata.modified().ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
-            candidates.push(Candidate { path, name, extension, size: metadata.len(), modified_unix_ms });
+            let modified_unix_ns = metadata.modified().ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64);
+            let identity = file_identity(&metadata);
+            candidates.push(Candidate { path, name, extension, size: metadata.len(), modified_unix_ms, modified_unix_ns, identity });
         }
         if entries_seen > MAX_ENTRIES { break; }
     }
