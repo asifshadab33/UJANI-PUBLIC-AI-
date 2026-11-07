@@ -11,6 +11,7 @@ pub struct CloudExecutionResult {
     pub network: NetworkTelemetry,
 }
 const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize=64*1024;
+const MAX_RESOLVED_ADDRESSES: usize = 16;
 #[derive(Serialize)]
 struct ChatRequest<'a> {
  model: &'a str,
@@ -125,11 +126,16 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
   if !is_public_ip(ip) { return Err("Cloud endpoint resolves to a private or reserved address.".into()); }
   return Ok(vec![SocketAddr::new(ip, port)]);
  }
- let resolved = tokio::net::lookup_host((raw_host, port)).await
+ let mut resolved = tokio::net::lookup_host((raw_host, port)).await
   .map_err(|_| "Could not resolve the cloud provider hostname.".to_string())?
   .collect::<Vec<_>>();
  if resolved.is_empty() || resolved.iter().any(|address| !is_public_ip(address.ip())) {
   return Err("Cloud hostname resolved to a private, local, or reserved address; request blocked.".into());
+ }
+ resolved.sort_unstable();
+ resolved.dedup();
+ if resolved.len() > MAX_RESOLVED_ADDRESSES {
+  return Err("Cloud hostname resolved to more than 16 addresses; request blocked.".into());
  }
  Ok(resolved)
 }
