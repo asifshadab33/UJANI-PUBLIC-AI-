@@ -516,6 +516,25 @@ fn flush_pending_receipts_blocking(app: &AppHandle) {
     }
 }
 
+/// Makes one bounded best-effort receipt retry during application shutdown.
+/// A failed write is requeued and remaining entries stay untouched for the next launch.
+fn flush_one_pending_receipt_on_exit(app: &AppHandle) {
+    let receipt = match pending_receipts().lock() {
+        Ok(mut pending) => pending.pop(),
+        Err(_) => None,
+    };
+    let Some(receipt) = receipt else { return; };
+    let persisted = security_store::reserve_execution_receipt_slot(app, &receipt.task_id)
+        .and_then(|slot| slot.persist(receipt.clone()).map(|_| ()));
+    if persisted.is_err() {
+        if let Ok(mut pending) = pending_receipts().lock() {
+            if pending.len() < MAX_PENDING_RECEIPTS {
+                pending.push(receipt);
+            }
+        }
+    }
+}
+
 /// Retries pending receipts without blocking the async runtime. The bounded queue is
 /// process-local and is not durable recovery if the application is forcibly terminated.
 async fn flush_pending_receipts(app: &AppHandle) {
@@ -1022,7 +1041,7 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_pending_receipts_blocking(app);
+            flush_one_pending_receipt_on_exit(app);
         }
     });
 }
