@@ -5,7 +5,7 @@ use serde::Serialize;
 use ed25519_dalek::VerifyingKey;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use crate::native_consent::confirm_native;
 use std::collections::HashSet;
 use ujani_core::peer_protocol::{ReplayGuard, SignedTaskEnvelope};
 use ujani_core::registered_operations;
@@ -384,14 +384,6 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
         bytes[index] = u8::from_str_radix(pair, 16).map_err(|_| "Invalid public key encoding.")?;
     }
     Ok(bytes)
-}
-
-async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().message(message).title(title)
-        .kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::YesNo)
-        .show(move |approved| { let _ = tx.send(approved); });
-    rx.await.unwrap_or(false)
 }
 
 /// Enrol an Ed25519 peer key only after native device-owner confirmation.
