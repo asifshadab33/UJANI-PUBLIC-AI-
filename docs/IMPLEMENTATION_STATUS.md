@@ -114,6 +114,11 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 - **Installer size:** a cross-platform installer-size workflow now builds Windows MSI/NSIS, macOS DMG and Linux DEB/AppImage packages and records exact bytes/MiB in GitHub Actions summaries. Exact package sizes are not yet available until that workflow completes on the current code.
 
 
+## Saved history export
+
+The saved-history panel can export the currently loaded entries (up to the 100-entry retention limit) as a versioned JSON file after an explicit confirmation warning. The export contains decrypted prompts and results in plaintext; users must protect the downloaded file themselves. Deleting or clearing in-app history does not delete previously exported copies.
+
+
 ## Privacy receipt UI update
 
 The desktop UI can verify the local receipt hash chain and display up to 10 of the latest 50 metadata-only records. Receipt creation is wired to supported local chat, approved cloud chat, selected-text summaries, document/PDF pipelines and local translation. Model-download operations do not yet create receipts. Local document-task receipts bind the operation, selected model and task inputs in a domain-separated digest; the result digest covers the serialized native result. The listing command refuses to return entries if full ledger verification fails. It displays adapter/model/location, timestamps, input/output SHA-256 digests and ledger record hashes; it does not expose prompts or outputs. The chain is not digitally signed or externally anchored, so it must not be described as a tamper-proof independent audit log.
