@@ -1091,7 +1091,7 @@ export default function App() {
           </div>
         </div>
         <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
-          <div className="history" id="activity-panel" tabIndex={-1} role="region" aria-labelledby="recent-tasks-title"><h3 id="recent-tasks-title">Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
+          <div className="history" id="activity-panel" tabIndex={-1} role="region" aria-labelledby="recent-tasks-title"><h3 id="recent-tasks-title">Browser demo task previews</h3><p>These temporary word-count previews are not AI chat history. Completed local AI tasks appear in Saved task history below only when optional history recording is enabled.</p>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>No browser demo previews in this session.</small>}<button className="activity-history-link" onClick={() => { const target = document.getElementById("saved-task-history"); target?.scrollIntoView({ behavior: "smooth", block: "start" }); target?.focus({ preventScroll: true }); }}>View saved task history</button></div>
           <div className="history receipt-history">
             <h3>Privacy & execution receipts</h3>
             <p>Metadata-only receipts cover local chat, the fixed document workflow, selected documents/PDFs, local translation, selected-folder import and approved cloud chat. Model downloads are not receipt-backed yet. Prompts and outputs are never stored in this ledger.</p>
@@ -1120,7 +1120,7 @@ export default function App() {
             {!executionReceipts.length && !receiptError && <small>No execution receipts recorded yet. Run a supported AI task, then refresh this panel.</small>}
             <small>The ledger is hash-chained and tamper-evident, not digitally signed or independently anchored. A local administrator with database access may still replace the entire store.</small>
           </div>
-          <div className="history persistent-history">
+          <div className="history persistent-history" id="saved-task-history" tabIndex={-1}>
             <h3>Saved task history</h3>
             <p>Optional local history. Saved prompts and outputs are encrypted on this device using AES-256-GCM with a key held in the operating-system credential vault.</p>
             {historySettings && <label className="consent-row"><input type="checkbox" checked={historySettings.enabled} disabled={historyBusy} onChange={(event) => togglePersistentHistory(event.target.checked)}/> Save future task prompts and results on this device</label>}
