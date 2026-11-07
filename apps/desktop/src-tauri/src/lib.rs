@@ -593,7 +593,8 @@ where
 
 #[cfg(test)]
 mod local_receipt_context_tests {
-    use super::local_receipt_context;
+    use super::{await_managed_future, local_receipt_context};
+    use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
     async fn managed_future_preserves_success_and_failure_outcomes() {
