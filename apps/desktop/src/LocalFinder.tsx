@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Search, FolderSearch, FileVideo, FileText, Trash2, RefreshCw, Clock3 } from "lucide-react";
 
@@ -21,6 +21,7 @@ export default function LocalFinder() {
   const [cacheMessage, setCacheMessage] = useState("Search caching is off until you opt in.");
   const [cacheBusy, setCacheBusy] = useState(false);
   const [cacheSettingsAvailable, setCacheSettingsAvailable] = useState(false);
+  const cacheSettingsRequest = useRef(0);
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
 
   async function refreshRecentSearches() {
@@ -30,26 +31,35 @@ export default function LocalFinder() {
 
   useEffect(() => {
     // Preferences and recent-query metadata load asynchronously; they never delay the launcher.
+    const requestId = ++cacheSettingsRequest.current;
+    let active = true;
     invoke<CacheSettings>("get_local_search_cache_settings")
       .then((settings) => {
+        if (!active || cacheSettingsRequest.current !== requestId) return;
         setCacheSettings(settings);
         setCacheSettingsAvailable(true);
         setCacheMessage(settings.enabled ? "Encrypted local search cache is on." : "Search cache is off; searches will always run fresh.");
       })
       .catch(() => {
+        if (!active || cacheSettingsRequest.current !== requestId) return;
         setCacheSettingsAvailable(false);
         setCacheMessage("Cache settings unavailable. Caching controls are disabled; searches may use the cache.");
       });
-    invoke<RecentSearch[]>("list_recent_local_searches").then(setRecentSearches).catch(() => setRecentSearches([]));
+    invoke<RecentSearch[]>("list_recent_local_searches").then((items) => {
+      if (active) setRecentSearches(items);
+    }).catch(() => { if (active) setRecentSearches([]); });
+    return () => { active = false; };
   }, []);
 
   async function updateCacheSettings(enabled: boolean, retention_days: number) {
+    const requestId = ++cacheSettingsRequest.current;
     const previous = cacheSettings;
     setCacheSettings({ ...previous, enabled, retention_days });
     setCacheBusy(true);
     setCacheMessage("Saving cache preference…");
     try {
       const saved = await invoke<CacheSettings>("set_local_search_cache_settings", { enabled, retentionDays: retention_days });
+      if (cacheSettingsRequest.current !== requestId) return;
       setCacheSettings(saved);
       setCacheMessage(saved.enabled
         ? (saved.retention_days === 0 ? "Cache retained until cleared; storage remains bounded." : `Cache retained for ${saved.retention_days} days.`)
@@ -57,9 +67,12 @@ export default function LocalFinder() {
       if (!saved.enabled) setRecentSearches([]);
       else await refreshRecentSearches();
     } catch (e) {
+      if (cacheSettingsRequest.current !== requestId) return;
       setCacheSettings(previous);
       setCacheMessage(`Could not save cache preference: ${String(e)}`);
-    } finally { setCacheBusy(false); }
+    } finally {
+      if (cacheSettingsRequest.current === requestId) setCacheBusy(false);
+    }
   }
 
   async function clearCache() {
@@ -111,7 +124,7 @@ export default function LocalFinder() {
     </form>
     <div className="local-cache-controls">
       <div className="section-heading"><div><h3>Recent search cache</h3><p>Encrypted metadata only; document contents are never cached.</p></div></div>
-      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={!cacheSettingsAvailable || cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results and recent search phrases (opt-in)</label>
+      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={!cacheSettingsAvailable || cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results and recent search phrases, including no-match searches (opt-in)</label>
       <label className="model-select">Delete cached results after
         <select value={String(cacheSettings.retention_days)} disabled={!cacheSettingsAvailable || cacheBusy || busy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
           <option value="7">7 days</option>
