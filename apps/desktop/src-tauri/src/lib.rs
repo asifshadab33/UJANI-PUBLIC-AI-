@@ -297,7 +297,7 @@ async fn execute_cloud_ai_task(
   active.insert(task_id.clone(), token.clone());
  }
  // Drop removes the registration even if this Tauri command future is aborted.
- let active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+ let active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone(), token: token.clone() };
  let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
  let budget = security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192)?;
@@ -381,7 +381,7 @@ async fn pull_ollama_model(
         active.insert(task_id.clone(), token.clone());
     }
     // Drop removes the active ID even if the command future is cancelled while downloading.
-    let active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone(), token: token.clone() };
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
@@ -425,10 +425,14 @@ struct TaskControlState {
 struct ActiveTaskGuard<'a> {
     control: &'a TaskControlState,
     task_id: String,
+    token: CancellationToken,
 }
 
 impl Drop for ActiveTaskGuard<'_> {
     fn drop(&mut self) {
+        // Also stop any spawn_blocking worker still observing this token when the
+        // Tauri command future itself is dropped, not only on explicit UI cancel.
+        self.token.cancel();
         if let Ok(mut active) = self.control.active.lock() {
             active.remove(&self.task_id);
         }
@@ -573,7 +577,7 @@ where
         active.insert(task_id.clone(), token.clone());
         token
     };
-    let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
+    let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone(), token: token.clone() };
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
     let result = await_managed_future(
         &token,
@@ -675,12 +679,14 @@ mod local_receipt_context_tests {
         use std::collections::HashMap;
         use std::sync::Mutex;
         let control = TaskControlState { active: Mutex::new(HashMap::new()) };
-        control.active.lock().unwrap().insert("panic-task".into(), CancellationToken::new());
+        let panic_token = CancellationToken::new();
+        control.active.lock().unwrap().insert("panic-task".into(), panic_token.clone());
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = ActiveTaskGuard { control: &control, task_id: "panic-task".into() };
+            let _guard = ActiveTaskGuard { control: &control, task_id: "panic-task".into(), token: panic_token.clone() };
             panic!("simulate a dropped task future");
         }));
         assert!(!control.active.lock().unwrap().contains_key("panic-task"));
+        assert!(panic_token.is_cancelled());
     }
 
     #[test]
@@ -691,12 +697,14 @@ mod local_receipt_context_tests {
         use tokio_util::sync::CancellationToken;
 
         let control = TaskControlState { active: Mutex::new(HashMap::new()) };
-        control.active.lock().unwrap().insert("cancel-me".into(), CancellationToken::new());
+        let cancel_token = CancellationToken::new();
+        control.active.lock().unwrap().insert("cancel-me".into(), cancel_token.clone());
         {
-            let _guard = ActiveTaskGuard { control: &control, task_id: "cancel-me".into() };
+            let _guard = ActiveTaskGuard { control: &control, task_id: "cancel-me".into(), token: cancel_token.clone() };
             assert!(control.active.lock().unwrap().contains_key("cancel-me"));
         }
         assert!(!control.active.lock().unwrap().contains_key("cancel-me"));
+        assert!(cancel_token.is_cancelled());
     }
 
     #[test]
