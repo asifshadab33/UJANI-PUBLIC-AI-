@@ -264,6 +264,39 @@ impl LocalTaskEngine {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
+    // The worker receives its input only after the parent has installed limits.
+    // Deny sockets plus process/thread creation and namespace changes so a parser
+    // compromise cannot create a helper process or move into another namespace.
+    let mut denied = vec![
+        libc::SYS_socket,
+        libc::SYS_socketpair,
+        libc::SYS_connect,
+        libc::SYS_bind,
+        libc::SYS_listen,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+        libc::SYS_sendto,
+        libc::SYS_recvfrom,
+        libc::SYS_sendmsg,
+        libc::SYS_recvmsg,
+        libc::SYS_sendmmsg,
+        libc::SYS_recvmmsg,
+        libc::SYS_getsockopt,
+        libc::SYS_setsockopt,
+        libc::SYS_shutdown,
+        libc::SYS_clone,
+        libc::SYS_clone3,
+        libc::SYS_unshare,
+        libc::SYS_setns,
+    ];
+    // The x86_64 ABI exposes fork/vfork syscalls; arm64 uses clone/clone3.
+    #[cfg(target_arch = "x86_64")]
+    denied.extend([libc::SYS_fork, libc::SYS_vfork]);
+    denied
+}
+
 async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -278,7 +311,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
             CreateJobObjectW, SetInformationJobObject,
             JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
-            JOB_OBJECT_LIMIT_PROCESS_TIME,
+            JOB_OBJECT_LIMIT_PROCESS_TIME, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
         };
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() { return Err(format!("Could not create PDF worker Job Object: {}", std::io::Error::last_os_error())); }
@@ -286,7 +319,12 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
         let job = unsafe { OwnedHandle::from_raw_handle(handle as _) };
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         limits.BasicLimitInformation.LimitFlags =
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_PROCESS_TIME;
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+                | JOB_OBJECT_LIMIT_PROCESS_TIME
+                | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+        // The worker has no legitimate need to spawn helper processes.
+        limits.BasicLimitInformation.ActiveProcessLimit = 1;
         limits.BasicLimitInformation.PerProcessUserTimeLimit = 45 * 10_000_000;
         limits.ProcessMemoryLimit = 768 * 1024 * 1024;
         let configured = unsafe {
@@ -316,7 +354,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
         .kill_on_drop(true);
 
     #[cfg(target_os = "linux")]
-    let network_syscall_filter = {
+    let worker_syscall_filter = {
         // Fail closed on unknown syscall ABIs. x32 shares AUDIT_ARCH_X86_64,
         // so its syscall-number bit must be rejected separately.
         let expected_arch: u32 = if cfg!(target_arch = "x86_64") {
@@ -326,12 +364,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
         } else {
             0
         };
-        let denied = [
-            libc::SYS_socket, libc::SYS_socketpair, libc::SYS_connect, libc::SYS_bind,
-            libc::SYS_listen, libc::SYS_accept, libc::SYS_accept4, libc::SYS_sendto,
-            libc::SYS_recvfrom, libc::SYS_sendmsg, libc::SYS_recvmsg, libc::SYS_sendmmsg,
-            libc::SYS_recvmmsg, libc::SYS_getsockopt, libc::SYS_setsockopt, libc::SYS_shutdown,
-        ];
+        let denied = denied_pdf_worker_syscalls();
         let mut filter = Vec::<libc::sock_filter>::with_capacity(denied.len() * 2 + 7);
         // seccomp_data.arch is at byte offset 4.
         filter.push(libc::sock_filter { code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16, jt: 0, jf: 0, k: 4 });
@@ -356,7 +389,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     unsafe {
         use std::os::unix::process::CommandExt;
         #[cfg(target_os = "linux")]
-        let mut network_syscall_filter = network_syscall_filter;
+        let mut worker_syscall_filter = worker_syscall_filter;
         command.as_std_mut().pre_exec(move || {
             let limits = [
                 (libc::RLIMIT_CPU, 45_u64, 45_u64),
@@ -374,7 +407,7 @@ async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
                 if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
-                let program = libc::sock_fprog { len: network_syscall_filter.len() as u16, filter: network_syscall_filter.as_mut_ptr() };
+                let program = libc::sock_fprog { len: worker_syscall_filter.len() as u16, filter: worker_syscall_filter.as_mut_ptr() };
                 if libc::prctl(
                     libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER,
                     &program as *const _ as libc::c_ulong, 0, 0
@@ -622,5 +655,30 @@ mod local_capability_tests {
         assert!(validate_translation_input(" ", "Arabic", "smart").is_err());
         assert!(validate_translation_input("hello", "", "smart").is_err());
         assert!(validate_translation_input(&"x".repeat(16 * 1024 + 1), "Arabic", "smart").is_err());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod pdf_worker_seccomp_tests {
+    use super::denied_pdf_worker_syscalls;
+
+    #[test]
+    fn linux_pdf_worker_blocks_network_process_creation_and_namespace_changes() {
+        let denied = denied_pdf_worker_syscalls();
+        for syscall in [
+            libc::SYS_socket,
+            libc::SYS_connect,
+            libc::SYS_clone,
+            libc::SYS_clone3,
+            libc::SYS_unshare,
+            libc::SYS_setns,
+        ] {
+            assert!(denied.contains(&syscall), "missing denied syscall {syscall}");
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(denied.contains(&libc::SYS_fork));
+            assert!(denied.contains(&libc::SYS_vfork));
+        }
     }
 }
