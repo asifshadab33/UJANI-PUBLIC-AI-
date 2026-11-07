@@ -217,7 +217,15 @@ jobs:
               echo "Verified signature has no authenticated Tauri trusted comment: $signature" >&2
               exit 1
             fi
-            IFS=
+            timestamp_field="$(printf '%s\n' "$trusted_comment" | cut -f1)"
+            file_field="$(printf '%s\n' "$trusted_comment" | cut -f2)"
+            version_field="$(printf '%s\n' "$trusted_comment" | cut -f3)"
+            extra_field="$(printf '%s\n' "$trusted_comment" | cut -f4)"
+            if [[ "$timestamp_field" != timestamp:* || "$file_field" != "file:$artifact_name" || "$version_field" != "version:$app_version" || -n "$extra_field" ]]; then
+              echo "Verified signature does not bind the exact filename and app version $app_version: $signature" >&2
+              exit 1
+            fi
+            verified=$((verified + 1))
           done
           echo "Verified $verified updater signature(s)."
 
