@@ -604,6 +604,7 @@ export default function App() {
     if (!file) return;
     input.value = ""; // Clear before early returns so the same PDF can be retried.
     setFileError(""); setFileAnalysis(null); setFileSummary(""); setFilePipelineMeta(""); setFileTranslatedSummary("");
+    if (file.size === 0) { setFileError("The selected PDF is empty."); return; }
     if (file.size > 10 * 1024 * 1024) { setFileError("PDF files are limited to 10 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
