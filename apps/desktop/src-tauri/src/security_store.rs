@@ -549,6 +549,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_v1_hash_chain_rows_without_network_fields_still_verify() {
+        let mut db = db();
+        let mut legacy = serde_json::to_value(receipt("legacy-task")).unwrap();
+        legacy.as_object_mut().unwrap().remove("network");
+        let receipt_json = serde_json::to_string(&legacy).unwrap();
+        let previous_hash = GENESIS_HASH.to_string();
+        let record_hash = sha256_hex(format!("{previous_hash}:{receipt_json}").as_bytes());
+        db.execute(
+            "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
+            params!["legacy-task", receipt_json, previous_hash, record_hash],
+        ).unwrap();
+        let status = verify_receipts_db(&db).unwrap();
+        assert!(status.valid);
+        assert_eq!(status.entries, 1);
+    }
+
+    #[test]
     fn receipt_ledger_detects_row_tampering() {
         let mut db = db();
         append_receipt_db(&mut db, &receipt("task-1")).unwrap();
