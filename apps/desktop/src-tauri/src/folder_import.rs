@@ -63,7 +63,7 @@ pub async fn process_selected_folder(
     if !crate::valid_command_identifier(&task_id, 96) {
         return Err("Invalid task identifier.".into());
     }
-    if model.len() > 128 {
+    if model.len() > 128 || (!model.trim().is_empty() && !crate::validate_model_identifier(&model)) {
         return Err("Invalid local model identifier.".into());
     }
 
