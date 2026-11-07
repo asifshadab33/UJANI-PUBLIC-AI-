@@ -124,6 +124,7 @@ pub async fn sign_peer_task_envelope(
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?.as_secs();
+    // codeql[rust/hard-coded-cryptographic-value] // False positive: this buffer is fully overwritten by OsRng before use.
     let mut nonce_bytes = [0_u8; 16];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = hex(&nonce_bytes);
