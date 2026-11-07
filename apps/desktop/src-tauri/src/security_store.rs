@@ -243,7 +243,7 @@ fn verify_receipts_db_with_archive(
     } else {
         let archive_count: i64 = db.query_row("SELECT COUNT(*) FROM receipt_archive_index", [], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        if archive_count != 0 { valid = false; }
+        if archive_count != 0 || checkpoint_head != GENESIS_HASH { valid = false; }
     }
     let mut entries = 0_i64;
     for row in rows {
