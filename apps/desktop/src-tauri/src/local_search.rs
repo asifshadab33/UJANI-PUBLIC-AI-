@@ -49,7 +49,7 @@ struct Candidate {
     extension: String,
     size: u64,
     modified_unix_ms: Option<u64>,
-    modified_unix_ns: Option<u64>,
+    modified_unix_ns: Option<i64>,
     identity: Option<String>,
 }
 
@@ -120,24 +120,33 @@ pub async fn find_local_files(
     let inventory_json = serde_json::to_string(&candidates).ok();
     if !force_refresh && !truncated {
         if let Some(inventory_json) = inventory_json.as_deref() {
-        if let Ok(Some(cached_json)) = crate::search_cache::load(&app, &root, &query, search_pdf_text, inventory_json) {
-            if let Ok(cached) = serde_json::from_str::<CachedSearchPayload>(&cached_json) {
-                if validate_cached_matches(&root, &candidates, &cached.result, &cached.file_identities) {
-                    let mut cached_result = cached.result;
-                    cached_result.scanned_files = scanned_files;
-                    cached_result.cache_hit = true;
-                    cached_result.note = format!("{} Cached metadata was revalidated against the selected folder just now; no document contents were retained.", cached_result.note);
-                    super::emit_task_progress(&app, &task_id, "completed", "Validated recent local search results.", 100);
-                    return Ok(cached_result);
+            let load_app = app.clone();
+            let load_root = root.clone();
+            let load_query = query.clone();
+            let load_inventory = inventory_json.to_owned();
+            // Credential-vault and SQLite work must not block an async runtime worker.
+            let cached = tauri::async_runtime::spawn_blocking(move || {
+                crate::search_cache::load(&load_app, &load_root, &load_query, search_pdf_text, &load_inventory)
+            }).await.ok().and_then(Result::ok).flatten();
+            if let Some(cached_json) = cached {
+                if let Ok(cached) = serde_json::from_str::<CachedSearchPayload>(&cached_json) {
+                    if validate_cached_matches(&root, &candidates, &cached.result, &cached.file_identities) {
+                        let mut cached_result = cached.result;
+                        cached_result.scanned_files = scanned_files;
+                        cached_result.cache_hit = true;
+                        cached_result.note = format!("{} Cached metadata was revalidated against the selected folder just now; no document contents were retained.", cached_result.note);
+                        super::emit_task_progress(&app, &task_id, "completed", "Validated recent local search results.", 100);
+                        return Ok(cached_result);
+                    }
                 }
             }
-        }
         }
     }
     let mut matches = Vec::new();
     let mut cached_file_identities = Vec::new();
     let mut text_bytes = 0u64;
     let mut pdf_count = 0usize;
+    let mut incomplete = false;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
 
     for candidate in candidates {
@@ -155,26 +164,33 @@ pub async fn find_local_files(
             && text_bytes.saturating_add(candidate.size) <= MAX_TEXT_TOTAL_BYTES
         {
             let read_path = candidate.path.clone();
-            if let Ok(Ok(bytes)) = tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
-                text_bytes = text_bytes.saturating_add(bytes.len() as u64);
-                if let Ok(content) = String::from_utf8(bytes) {
-                    if content.to_lowercase().contains(&query) {
-                        matched_in.push("text content".to_string());
+            match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
+                Ok(Ok(bytes)) => {
+                    text_bytes = text_bytes.saturating_add(bytes.len() as u64);
+                    match String::from_utf8(bytes) {
+                        Ok(content) if content.to_lowercase().contains(&query) => matched_in.push("text content".to_string()),
+                        Ok(_) => {},
+                        Err(_) => incomplete = true,
                     }
                 }
+                _ => incomplete = true,
             }
         }
 
-        if matched_in.is_empty() && candidate.extension == "pdf" && search_pdf_text
-            && candidate.size <= MAX_PDF_BYTES && pdf_count < MAX_PDF_FILES
-            && tokio::time::Instant::now() < deadline
-        {
+        if matched_in.is_empty() && candidate.extension == "pdf" && search_pdf_text {
+            if candidate.size > MAX_PDF_BYTES || pdf_count >= MAX_PDF_FILES {
+                incomplete = true;
+                continue;
+            }
+            if tokio::time::Instant::now() >= deadline { truncated = true; break; }
             pdf_count += 1;
             let read_path = candidate.path.clone();
-            if let Ok(Ok(bytes)) = tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
-                if bytes.starts_with(b"%PDF-") {
+            match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
+                Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                    if !remaining.is_zero() {
+                    if remaining.is_zero() {
+                        incomplete = true;
+                    } else {
                         let extraction = tokio::time::timeout(
                             remaining.min(std::time::Duration::from_secs(45)),
                             crate::task_engine::extract_pdf_isolated(bytes)
@@ -183,13 +199,13 @@ pub async fn find_local_files(
                             _ = token.cancelled() => return Err("File search cancelled by user.".into()),
                             result = extraction => result,
                         } {
-                            Ok(Ok(text)) if text.to_lowercase().contains(&query) => {
-                                matched_in.push("PDF text (isolated worker)".to_string());
-                            }
-                            _ => {}
+                            Ok(Ok(text)) if text.to_lowercase().contains(&query) => matched_in.push("PDF text (isolated worker)".to_string()),
+                            Ok(Ok(_)) => {},
+                            _ => incomplete = true,
                         }
                     }
                 }
+                _ => incomplete = true,
             }
         }
 
@@ -220,12 +236,21 @@ pub async fn find_local_files(
             "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included.".into()
         },
     };
-    if !result.truncated {
+    if !result.truncated && !incomplete {
         let cached_payload = CachedSearchPayload { result: result.clone(), file_identities: cached_file_identities };
         if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&cached_payload)) {
-            let _ = crate::search_cache::store(
-                &app, &root, &query, search_pdf_text, inventory_json, &payload, result.matches.is_empty()
-            );
+            let store_app = app.clone();
+            let store_root = root.clone();
+            let store_query = query.clone();
+            let store_inventory = inventory_json.to_owned();
+            let store_payload = payload;
+            let negative = result.matches.is_empty();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                crate::search_cache::store(
+                    &store_app, &store_root, &store_query, search_pdf_text,
+                    &store_inventory, &store_payload, negative
+                )
+            }).await;
         }
     }
     Ok(result)
@@ -235,12 +260,14 @@ pub async fn find_local_files(
 /// Stable filesystem identity where the platform exposes it. Unsupported platforms
 /// deliberately return None; size, high-resolution mtime and canonical path remain required.
 #[cfg(unix)]
+/// Returns the device and inode identity for an opened Unix file handle.
 fn file_identity(_file: &File, metadata: &fs::Metadata) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
 }
 
 #[cfg(windows)]
+/// Returns the volume and file-index identity from an opened Windows file handle.
 fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
@@ -257,18 +284,24 @@ fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
 }
 
 #[cfg(not(any(unix, windows)))]
+/// Returns no stable file identity on platforms without a supported handle API.
 fn file_identity(_file: &File, _metadata: &fs::Metadata) -> Option<String> {
     None
 }
 
-fn modified_unix_ns(metadata: &fs::Metadata) -> Option<u64> {
-    metadata.modified().ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64)
+/// Returns a signed nanosecond modification timestamp, including pre-epoch files.
+fn modified_unix_ns(metadata: &fs::Metadata) -> Option<i64> {
+    let time = metadata.modified().ok()?;
+    let nanos = match time.duration_since(UNIX_EPOCH) {
+        Ok(after) => after.as_nanos().min(i64::MAX as u128) as i64,
+        Err(before) => -(before.duration().as_nanos().min(i64::MAX as u128) as i64),
+    };
+    Some(nanos)
 }
 
 /// A cache hit is accepted only when the entire current inventory matched and each
 /// cached result can be re-opened without following a symlink/reparse point.
+/// Rejects a cached result unless every match still resolves inside the selected scope.
 fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &LocalSearchResult, cached_identities: &[Option<String>]) -> bool {
     if cached.matches.len() != cached_identities.len() { return false; }
     for (item, cached_identity) in cached.matches.iter().zip(cached_identities) {
@@ -360,9 +393,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             let modified_unix_ms = metadata.modified().ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
-            let modified_unix_ns = metadata.modified().ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_nanos().min(u64::MAX as u128) as u64);
+            let modified_unix_ns = modified_unix_ns(&metadata);
             let identity = file_identity(&file, &metadata);
             candidates.push(Candidate { path, name, extension, size: metadata.len(), modified_unix_ms, modified_unix_ns, identity });
         }
