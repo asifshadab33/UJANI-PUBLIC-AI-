@@ -156,11 +156,13 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     listen<TaskProgressEvent>("ujani-task-progress", (event) => {
       const progress = event.payload;
+      if (progress.stage === "receipt_recovered") {
+        setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
+        return;
+      }
       setTaskProgress(progress);
       if (progress.stage === "receipt_warning") {
         setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress].slice(-5));
-      } else if (progress.stage === "receipt_recovered") {
-        setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
       }
     }).then((stop) => { unlisten = stop; })
       .catch((error) => setOllamaError(String(error)));
