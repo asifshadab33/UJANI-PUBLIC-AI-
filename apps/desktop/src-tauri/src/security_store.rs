@@ -386,6 +386,14 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
+async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().message(message).title(title)
+        .kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::YesNo)
+        .show(move |approved| { let _ = tx.send(approved); });
+    rx.await.unwrap_or(false)
+}
+
 /// Enrol an Ed25519 peer key only after native device-owner confirmation.
 #[tauri::command]
 pub async fn enroll_trusted_peer(
@@ -407,12 +415,7 @@ pub async fn enroll_trusted_peer(
         return Err("Peer identifier does not match the supplied public key.".into());
     }
     let label = label.trim().to_string();
-    let approved = app.dialog()
-        .message(format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}"))
-        .title("Approve trusted device enrollment")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+    let approved = confirm_native(&app, "Approve trusted device enrollment", format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}")).await;
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
@@ -447,12 +450,7 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer identifier.".into());
     }
-    let approved = app.dialog()
-        .message(format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"))
-        .title("Confirm device revocation")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .blocking_show();
+    let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}")).await;
     if !approved { return Err("Peer revocation was cancelled.".into()); }
     let changed = open(&app)?.execute(
         "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
