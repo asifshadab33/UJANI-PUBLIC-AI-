@@ -102,6 +102,7 @@ export default function App() {
   const [fileError, setFileError] = useState("");
   const [folderResults, setFolderResults] = useState<FolderFileResult[]>([]);
   const [folderBusy, setFolderBusy] = useState(false);
+  const [activeFolderTaskId, setActiveFolderTaskId] = useState<string | null>(null);
   const [folderError, setFolderError] = useState("");
   const [translationText, setTranslationText] = useState("");
   const [targetLanguage, setTargetLanguage] = useState("English");
@@ -475,9 +476,12 @@ export default function App() {
       setFolderError("Folder processing is local-only. Select Fortress or Smart.");
       return;
     }
+    const taskId = `folder-import-${crypto.randomUUID()}`;
+    setActiveFolderTaskId(taskId);
     setFolderBusy(true);
     try {
       const result = await invoke<FolderImportResult>("process_selected_folder", {
+        taskId,
         mode: executionMode,
         model: ollamaStatus?.available ? ollamaModel : ""
       });
@@ -495,7 +499,14 @@ export default function App() {
       setFolderError(String(error));
     } finally {
       setFolderBusy(false);
+      setActiveFolderTaskId(null);
     }
+  }
+
+  async function cancelFolderImport() {
+    if (!activeFolderTaskId) return;
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeFolderTaskId }); }
+    catch (error) { setFolderError("Could not cancel folder import: " + String(error)); }
   }
 
   async function summarizeFile() {
@@ -881,7 +892,7 @@ export default function App() {
               </button>
             </div>
             <small className="muted">The native OS dialog grants this one-time selection. UJANI reads only direct child TXT, MD, CSV, JSON, RS, PY, JS, TS, HTML, XML and LOG files: maximum 10 files, 256 KiB each, 1 MiB total. No recursive traversal or persistent folder permission. Summaries use local Ollama only; without it, analysis still works.</small>
-            {folderBusy && <p className="progress" role="status">Processing selected folder locally…</p>}
+            {folderBusy && <><p className="progress" role="status">Processing selected folder locally…</p><button type="button" className="model-run" onClick={cancelFolderImport} disabled={!activeFolderTaskId}>Cancel folder import</button></>}
             {folderError && <p className="error" role="alert">{folderError}</p>}
             {folderResults.map((item) => <div className="result" key={item.file_name}>
               <div className="result-title">{item.file_name}<span>{item.word_count} words · {item.line_count} lines · {item.size_bytes} bytes</span></div>
