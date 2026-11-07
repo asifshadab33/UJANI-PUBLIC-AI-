@@ -923,6 +923,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(feature = "peer-preview")]
+    // codeql[rust/hard-coded-cryptographic-value] // False positive: the registered peer signer fills its nonce from OsRng; this handler list supplies no fixed nonce.
     let builder = builder.invoke_handler(ujani_invoke_handler!(
         security_store::enroll_trusted_peer,
         security_store::revoke_trusted_peer,
