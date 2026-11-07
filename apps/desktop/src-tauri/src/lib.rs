@@ -309,7 +309,7 @@ async fn execute_cloud_ai_task(
   active.insert(task_id.clone(), token.clone());
  }
  let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
- flush_pending_receipts(&app);
+ flush_pending_receipts(&app).await;
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
@@ -487,17 +487,21 @@ async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
 
 static PENDING_RECEIPTS: OnceLock<Mutex<Vec<ExecutionReceipt>>> = OnceLock::new();
 const MAX_PENDING_RECEIPTS: usize = 100;
+
+/// Returns the process-local bounded queue used for receipt retry after transient failures.
 fn pending_receipts() -> &'static Mutex<Vec<ExecutionReceipt>> {
     PENDING_RECEIPTS.get_or_init(|| Mutex::new(Vec::new()))
 }
+
+/// Adds one failed receipt to the retry queue without allowing unbounded memory growth.
 fn enqueue_pending_receipt(receipt: ExecutionReceipt) -> bool {
     let Ok(mut pending) = pending_receipts().lock() else { return false; };
     if pending.len() >= MAX_PENDING_RECEIPTS { return false; }
     pending.push(receipt); true
 }
-/// Retry process-local receipts before the next inference. This is bounded and
-/// deliberately not described as durable recovery across an application crash.
-fn flush_pending_receipts(app: &AppHandle) {
+
+/// Performs receipt retry I/O on a blocking thread; the queue lock is never held during storage work.
+fn flush_pending_receipts_blocking(app: &AppHandle) {
     let batch = match pending_receipts().lock() {
         Ok(mut pending) => std::mem::take(&mut *pending), Err(_) => return,
     };
@@ -511,6 +515,15 @@ fn flush_pending_receipts(app: &AppHandle) {
         }
     }
 }
+
+/// Retries pending receipts without blocking the async runtime. The bounded queue is
+/// process-local and is not durable recovery if the application is forcibly terminated.
+async fn flush_pending_receipts(app: &AppHandle) {
+    let app = app.clone();
+    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app)).await;
+}
+
+/// Persists a receipt or returns a warning while preserving the completed task result.
 fn persist_receipt_or_warn(
     label: &str,
     slot: security_store::ReceiptSlotReservation,
@@ -1009,7 +1022,7 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_pending_receipts(app);
+            flush_pending_receipts_blocking(app);
         }
     });
 }
