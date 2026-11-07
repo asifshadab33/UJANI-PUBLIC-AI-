@@ -28,6 +28,12 @@ pub struct CacheSettings {
     pub max_bytes: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RecentSearch {
+    pub query: String,
+    pub created_at: i64,
+}
+
 fn now_seconds() -> Result<i64, String> {
     SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
@@ -92,7 +98,19 @@ fn initialize(db: &Connection) -> Result<(), String> {
            FOREIGN KEY(scope_id) REFERENCES approved_scopes(scope_id) ON DELETE CASCADE
          );
          CREATE INDEX IF NOT EXISTS idx_search_cache_lru ON search_cache(last_access ASC);
-         CREATE INDEX IF NOT EXISTS idx_search_cache_scope ON search_cache(scope_id);"
+         CREATE INDEX IF NOT EXISTS idx_search_cache_scope ON search_cache(scope_id);
+         CREATE TABLE IF NOT EXISTS recent_searches(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           scope_id TEXT NOT NULL,
+           request_key TEXT NOT NULL,
+           encrypted_query TEXT NOT NULL,
+           is_negative INTEGER NOT NULL CHECK(is_negative IN (0,1)),
+           created_at INTEGER NOT NULL,
+           last_access INTEGER NOT NULL,
+           UNIQUE(scope_id,request_key),
+           FOREIGN KEY(scope_id) REFERENCES approved_scopes(scope_id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_recent_searches_lru ON recent_searches(created_at DESC);"
     ).map_err(|error| format!("Could not initialise local search cache: {error}"))?;
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| format!("Could not verify local search cache: {error}"))?;
@@ -219,6 +237,15 @@ fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(),
     }
     db.execute("DELETE FROM search_cache WHERE is_negative=1 AND created_at < ?1",
         params![now.saturating_sub(NEGATIVE_TTL_SECONDS)]).map_err(|error| error.to_string())?;
+    if settings.retention_days > 0 {
+        let cutoff = now.saturating_sub(settings.retention_days.saturating_mul(86_400));
+        db.execute("DELETE FROM recent_searches WHERE created_at < ?1", params![cutoff])
+            .map_err(|error| error.to_string())?;
+    }
+    db.execute("DELETE FROM recent_searches WHERE is_negative=1 AND created_at < ?1",
+        params![now.saturating_sub(NEGATIVE_TTL_SECONDS)]).map_err(|error| error.to_string())?;
+    db.execute("DELETE FROM recent_searches WHERE id NOT IN (SELECT id FROM recent_searches ORDER BY created_at DESC,id DESC LIMIT 20)", [])
+        .map_err(|error| error.to_string())?;
     loop {
         let count: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0))
             .map_err(|error| error.to_string())?;
@@ -236,7 +263,7 @@ fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(),
             None => break,
         }
     }
-    db.execute("DELETE FROM approved_scopes WHERE scope_id NOT IN (SELECT DISTINCT scope_id FROM search_cache)", [])
+    db.execute("DELETE FROM approved_scopes WHERE scope_id NOT IN (SELECT DISTINCT scope_id FROM search_cache UNION SELECT DISTINCT scope_id FROM recent_searches)", [])
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -311,6 +338,7 @@ pub fn store(
     let encrypted_inventory = encrypt(&key, inventory_json.as_bytes(), &entry_aad(&scope_id, &request_key, "inventory"))?;
     let encrypted_payload = encrypt(&key, payload_json.as_bytes(), &entry_aad(&scope_id, &request_key, "payload"))?;
     let now = now_seconds()?;
+    let encrypted_query = encrypt(&key, query.as_bytes(), &entry_aad(&scope_id, &request_key, "query"))?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
     tx.execute(
         "INSERT INTO search_cache(scope_id,request_key,inventory_ciphertext,payload_ciphertext,is_negative,created_at,last_access)
@@ -323,13 +351,58 @@ pub fn store(
            last_access=excluded.last_access",
         params![scope_id,request_key,encrypted_inventory,encrypted_payload,if is_negative {1} else {0},now]
     ).map_err(|error| error.to_string())?;
+    tx.execute(
+        "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+         VALUES(?1,?2,?3,?4,?5,?5)
+         ON CONFLICT(scope_id,request_key) DO UPDATE SET
+           encrypted_query=excluded.encrypted_query,
+           is_negative=excluded.is_negative,
+           created_at=excluded.created_at,
+           last_access=excluded.last_access",
+        params![scope_id,request_key,encrypted_query,if is_negative {1} else {0},now]
+    ).map_err(|error| error.to_string())?;
     tx.commit().map_err(|error| error.to_string())?;
     trim_cache(&db, &settings, now)
 }
 
 #[tauri::command]
 pub fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSettings, String> {
-    settings_from_db(&open(&app)?)
+    let db = open(&app)?;
+    let settings = settings_from_db(&db)?;
+    trim_cache(&db, &settings, now_seconds()?)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
+    let db = open(&app)?;
+    let settings = settings_from_db(&db)?;
+    if !settings.enabled { return Ok(Vec::new()); }
+    trim_cache(&db, &settings, now_seconds()?)?;
+    let key = cache_key()?;
+    let mut statement = db.prepare(
+        "SELECT r.scope_id,r.request_key,r.encrypted_query,r.created_at,s.encrypted_path
+         FROM recent_searches r JOIN approved_scopes s ON s.scope_id=r.scope_id
+         ORDER BY r.created_at DESC,r.id DESC LIMIT 20"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| Ok((
+        row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?,
+        row.get::<_,i64>(3)?, row.get::<_,String>(4)?
+    ))).map_err(|error| error.to_string())?;
+    let mut recent = Vec::new();
+    for row in rows {
+        let (scope_id, request_key, encrypted_query, created_at, encrypted_path) = row.map_err(|error| error.to_string())?;
+        let Some(path) = decrypt(&key, &encrypted_path, &scope_aad(&scope_id)).ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok()) else { continue; };
+        let path = PathBuf::from(path);
+        if !path.is_dir() || fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) { continue; }
+        let query = decrypt(&key, &encrypted_query, &entry_aad(&scope_id, &request_key, "query"))
+            .ok().and_then(|bytes| String::from_utf8(bytes).ok());
+        if let Some(query) = query {
+            recent.push(RecentSearch { query, created_at });
+        }
+    }
+    Ok(recent)
 }
 
 #[tauri::command]
@@ -348,6 +421,7 @@ pub fn set_local_search_cache_settings(
         .map_err(|error| error.to_string())?;
     if !enabled {
         db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
+        db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
         db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
     } else {
         let settings = settings_from_db(&db)?;
@@ -360,6 +434,7 @@ pub fn set_local_search_cache_settings(
 pub fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
     let db = open(&app)?;
     db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
+    db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
     db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
     Ok(())
 }
