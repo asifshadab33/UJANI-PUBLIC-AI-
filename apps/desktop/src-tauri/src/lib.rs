@@ -515,6 +515,7 @@ where
             }
         }
     };
+    drop(_active_registration);
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
             .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
