@@ -503,10 +503,17 @@ export default function App() {
     }
   }
 
+  /** Requests cancellation of the active folder import and reports if it has not started yet. */
   async function cancelFolderImport() {
     if (!activeFolderTaskId) return;
-    try { await invoke<boolean>("cancel_active_task", { taskId: activeFolderTaskId }); }
-    catch (error) { setFolderError("Could not cancel folder import: " + String(error)); }
+    try {
+      const cancelled = await invoke<boolean>("cancel_active_task", { taskId: activeFolderTaskId });
+      if (!cancelled) {
+        setFolderError("Folder import is not active yet. Please wait briefly and try cancelling again.");
+      }
+    } catch (error) {
+      setFolderError("Could not cancel folder import: " + String(error));
+    }
   }
 
   async function summarizeFile() {
