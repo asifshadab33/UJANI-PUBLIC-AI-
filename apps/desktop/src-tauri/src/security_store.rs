@@ -106,6 +106,8 @@ fn initialize(db: &Connection) -> Result<(), String> {
     ).map_err(|e| format!("Could not initialise UJANI security store: {e}"))
 }
 
+/// Append one validated receipt in an immediate transaction. A retry with the
+/// same task ID and identical receipt is idempotent; conflicting task data is rejected.
 fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<String, String> {
     validate_receipt(receipt).map_err(|e| format!("Execution receipt rejected: {e:?}"))?;
     let receipt_json = serde_json::to_string(receipt)
