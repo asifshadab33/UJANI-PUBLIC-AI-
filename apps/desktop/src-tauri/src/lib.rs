@@ -954,6 +954,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_event(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                flush_pending_receipts(app);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             execute_cloud_ai_task,
             get_device_info,
