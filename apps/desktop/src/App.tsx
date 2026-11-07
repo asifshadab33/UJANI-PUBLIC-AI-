@@ -51,6 +51,29 @@ const CLOUD_PROVIDER_PRESETS = [
 ] as const;
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/// Read a selected file using the browser's native encoder rather than expanding
+/// binary bytes into millions of JSON numbers for Tauri IPC.
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the selected file."));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("The selected file could not be encoded."));
+        return;
+      }
+      const separator = result.indexOf(",");
+      if (separator < 0) {
+        reject(new Error("The selected file could not be encoded as base64."));
+        return;
+      }
+      resolve(result.slice(separator + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
   const [deviceError, setDeviceError] = useState("");
@@ -480,8 +503,10 @@ export default function App() {
   }
 
   async function handleTextFile(event: import("react").ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
+    input.value = ""; // Permit selecting the same file again after an error or retry.
     setFileError(""); setFileAnalysis(null); setFileText(""); setFileSummary(""); setFilePipelineMeta(""); setFileTranslatedSummary("");
     if (file.size > 1024 * 1024) { setFileError("Text files are limited to 1 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to process files."); return; }
@@ -564,8 +589,10 @@ export default function App() {
   }
 
   async function handlePdfFile(event: import("react").ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
+    input.value = ""; // Clear before early returns so the same PDF can be retried.
     setFileError(""); setFileAnalysis(null); setFileSummary(""); setFilePipelineMeta(""); setFileTranslatedSummary("");
     if (file.size > 10 * 1024 * 1024) { setFileError("PDF files are limited to 10 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
@@ -575,9 +602,9 @@ export default function App() {
     setActiveDocumentTaskId(taskId);
     setSummaryBusy(true);
     try {
-      const data = Array.from(new Uint8Array(await file.arrayBuffer()));
+      const dataBase64 = await readFileAsBase64(file);
       const result = await invoke<DocumentPipelineResult>("process_selected_pdf", {
-        taskId, fileName: file.name, data, mode: executionMode, model: ollamaModel,
+        taskId, fileName: file.name, dataBase64, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
       });
       setFileAnalysis(result.analysis);
@@ -587,7 +614,7 @@ export default function App() {
       await saveToPersistentHistory("PDF: " + file.name, result.summary, "pdf", result.model);
       setFileText("");
     } catch (error) { setFileError(String(error)); }
-    finally { setSummaryBusy(false); setActiveDocumentTaskId(null); event.target.value = ""; }
+    finally { setSummaryBusy(false); setActiveDocumentTaskId(null); }
   }
 
   async function cancelDocumentTask() {
@@ -620,8 +647,10 @@ export default function App() {
   }
 
   async function handleImageFile(event: import("react").ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
+    input.value = ""; // Permit selecting the same screenshot again after a failed attempt.
     setFileError(""); setImageInfo(null);
     if (file.size > 20 * 1024 * 1024) { setFileError("Images are limited to 20 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to inspect images."); return; }
@@ -936,12 +965,12 @@ export default function App() {
             {summaryBusy && <button type="button" className="model-run" onClick={cancelDocumentTask} disabled={!activeDocumentTaskId}>Cancel document processing</button>}
             {fileSummary && <div className="result"><div className="result-title">Document pipeline result <span>{ollamaModel}</span></div><p>{fileSummary}</p><small>Text analysis + AI summary completed by local Ollama. {filePipelineMeta || (fileAnalysis ? "Source size: " + fileAnalysis.size_bytes.toLocaleString() + " bytes." : "")} No cloud transfer.</small></div>}
             {fileTranslatedSummary && <div className="result"><div className="result-title">Translated summary <span>{targetLanguage}</span></div><p>{fileTranslatedSummary}</p><small>Second local Ollama step; no browser or cloud provider contacted.</small></div>}
-            <label className="file-picker">Inspect image metadata (max 20 MiB)
+            <label className="file-picker">Inspect image metadata only (max 20 MiB)
               <input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp" onChange={handleImageFile}/>
             </label>
             {imageInfo && <div className="result"><div className="result-title">Image information <span>{imageInfo.file_name}</span></div><p>{imageInfo.description}</p></div>}
             {fileError && <p className="error" role="alert">{fileError}</p>}
-            <small className="muted">Image inspection reads basic headers only. It does not perform OCR or visual recognition.</small>
+            <small className="muted">Image inspection reads basic headers only. It does not attach screenshots to chat, perform OCR, or send images to an AI model.</small>
           </div>
           <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Translation workspace</h2><p>Choose local AI or a browser translation service.</p></div><span className="muted">USER CONTROL</span></div>
