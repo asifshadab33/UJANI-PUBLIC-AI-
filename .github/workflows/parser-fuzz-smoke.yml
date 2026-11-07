@@ -3,7 +3,7 @@ name: UJANI parser fuzz smoke
 on:
   workflow_dispatch:
   schedule:
-    - cron: "41 3 * * 2"
+    - cron: "*/30 * * * *"
 
 permissions:
   contents: read
