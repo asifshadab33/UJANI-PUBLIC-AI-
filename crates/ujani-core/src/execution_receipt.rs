@@ -272,6 +272,7 @@ mod tests {
         let legacy_json = r#"{"schema_version":1,"task_id":"task-1","operation_id":"document.summarize","location":"local_cpu","adapter_id":"ollama.local","adapter_version":"1.0.0","model_id":"qwen2.5","model_version":"sha256:abc123","input_sha256":"c96c1c3f8f1a1c6d5d6e6f7a8b9c0d1e2f3a4b5c6d7e8f901234567890abcdef","output_sha256":"c96c1c3f8f1a1c6d5d6e6f7a8b9c0d1e2f3a4b5c6d7e8f901234567890abcdef","started_at_unix_ms":100,"completed_at_unix_ms":200,"user_approval_id":null}"#;
         let parsed: ExecutionReceipt = serde_json::from_str(legacy_json).unwrap();
         assert_eq!(parsed.network_activity, NetworkActivity::unknown());
+        assert_eq!(validate_receipt(&parsed), Ok(()));
     }
 
     #[test]
