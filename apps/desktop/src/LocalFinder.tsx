@@ -13,14 +13,22 @@ export default function LocalFinder() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SearchResult | null>(null);
+  const [taskId, setTaskId] = useState("");
 
   async function search() {
     if (!query.trim() || busy) return;
-    setBusy(true); setError(""); setResult(null);
+    const id = `finder-${Date.now()}`;
+    setTaskId(id); setBusy(true); setError(""); setResult(null);
     try {
-      setResult(await invoke<SearchResult>("find_local_files", { query, searchPdfText: pdfText }));
+      setResult(await invoke<SearchResult>("find_local_files", { query, searchPdfText: pdfText, taskId: id }));
     } catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setTaskId(""); }
+  }
+
+  async function cancelSearch() {
+    if (!taskId) return;
+    try { await invoke<boolean>("cancel_active_task", { taskId }); }
+    catch (e) { setError(`Could not cancel search: ${String(e)}`); }
   }
 
   return <section className="model-box local-finder" id="everyday-tools">
@@ -32,6 +40,7 @@ export default function LocalFinder() {
       <label className="consent-row"><input type="checkbox" checked={pdfText} onChange={(event) => setPdfText(event.target.checked)}/> Search inside text-based PDFs as well as filenames</label>
       <button className="model-run" type="submit" disabled={!query.trim() || busy}>{busy ? "Searching selected folder…" : "Choose folder and search"} <Search size={15}/></button>
     </form>
+    {busy && <button className="model-run" type="button" onClick={cancelSearch} disabled={!taskId}>Cancel search</button>}
     <small className="muted">UJANI opens a native folder picker. It does not scan the whole disk, upload files, move or delete anything. Search is bounded to 5,000 entries, six directory levels, 20 PDFs and 180 seconds. Scanned PDFs need OCR, which is not included.</small>
     {error && <p className="error" role="alert">{error}</p>}
     {result && !result.cancelled && <div className="result">
