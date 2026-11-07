@@ -3,6 +3,13 @@ use reqwest::{header, redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
 use std::{net::{IpAddr, SocketAddr}, time::Duration};
 use zeroize::{Zeroize, Zeroizing};
+use ujani_core::{NetworkObservation, NetworkTelemetry};
+
+/// Successful BYOK output with application-boundary network evidence.
+pub struct CloudExecutionResult {
+    pub output: String,
+    pub network: NetworkTelemetry,
+}
 const MAX_PROMPT:usize=32*1024; const MAX_KEY:usize=4096; const MAX_OUTPUT:usize=64*1024;
 #[derive(Serialize)]
 struct ChatRequest<'a> {
@@ -143,7 +150,8 @@ pub fn validate_request(
     Ok(())
 }
 
-pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String)->Result<String,String>{
+/// Executes an explicitly approved request and reports only the network values observed at this application boundary.
+pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String)->Result<CloudExecutionResult,String>{
  let api_key = Zeroizing::new(api_key);
  validate_request(&endpoint,&model,api_key.as_str(),&prompt,&mode,approved,&token_parameter)?;
  let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
@@ -163,7 +171,9 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
   max_completion_tokens,
   stream:false,
  };
- let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
+ let request_bytes = serde_json::to_vec(&body).map_err(|e| format!("Could not encode cloud request body: {e}"))?;
+ let request_body_bytes = request_bytes.len() as u64;
+ let response=client.post(url).body(request_bytes).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
  let mut response = response;
@@ -175,7 +185,17 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
   bytes.extend_from_slice(&chunk);
  }
  let parsed:ChatResponse=serde_json::from_slice(&bytes).map_err(|e|format!("Provider response was not valid OpenAI-compatible Chat Completions JSON: {e}"))?;
- parsed.choices.into_iter().next().map(|c|c.message.content.into_text()).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
+ let output = parsed.choices.into_iter().next().map(|c|c.message.content.into_text()).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".to_string())?;
+ let network = NetworkTelemetry {
+  destinations: NetworkObservation::Inferred { value: vec![host] },
+  resolved_addresses: NetworkObservation::Inferred {
+   value: addresses.iter().map(ToString::to_string).collect(),
+  },
+  application_request_body_bytes: NetworkObservation::Measured { value: request_body_bytes },
+  application_response_body_bytes: NetworkObservation::Measured { value: bytes.len() as u64 },
+  note: "Request/response body lengths are measured by UJANI. Destination host and resolver answers are inferred, not proof of the connected peer. Counts exclude HTTP headers, TLS, transport framing, DNS traffic and other process/system traffic.".into(),
+ };
+ Ok(CloudExecutionResult { output, network })
 }
 #[cfg(test)] mod tests{use super::*;#[test]fn provider_content_accepts_string_and_text_parts(){
  let plain: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap();
