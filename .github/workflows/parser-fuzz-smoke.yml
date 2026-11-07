@@ -3,13 +3,13 @@ name: UJANI parser fuzz smoke
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "19,49 * * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ujani-parser-fuzz
+  group: ${{ github.event_name == 'schedule' && format('ujani-parser-fuzz-schedule-{0}', github.run_id) || format('ujani-parser-fuzz-{0}-{1}', github.event_name, github.ref) }}
   cancel-in-progress: true
 
 jobs:
