@@ -776,58 +776,48 @@ async fn process_selected_document(
 
 const MAX_PDF_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
-/// Decode bounded PDF IPC data without allocating beyond the configured payload limit.
-fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
+/// Decode base64 IPC data with an encoded and decoded size bound.
+fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    let max_base64_bytes = MAX_PDF_UPLOAD_BYTES.div_ceil(3) * 4;
+    let max_base64_bytes = max_bytes.div_ceil(3) * 4;
     if data_base64.len() > max_base64_bytes {
         return Err("PDF upload exceeds the 10 MiB limit.".into());
     }
     let data = STANDARD.decode(data_base64.as_bytes())
         .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
-    if data.is_empty() || data.len() > MAX_PDF_UPLOAD_BYTES {
+    if data.is_empty() || data.len() > max_bytes {
         return Err("PDF files must be non-empty and no larger than 10 MiB.".into());
     }
     Ok(data)
 }
 
+fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
+    decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)
+}
+
 #[cfg(test)]
 mod pdf_upload_tests {
-    use super::decode_pdf_upload;
+    use super::decode_bounded_pdf_payload;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    fn decode_with_limit(encoded: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        let max_encoded = max_bytes.div_ceil(3) * 4;
-        if encoded.len() > max_encoded {
-            return Err("PDF upload exceeds the 10 MiB limit.".into());
-        }
-        let bytes = STANDARD.decode(encoded.as_bytes())
-            .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
-        if bytes.is_empty() || bytes.len() > max_bytes {
-            return Err("PDF files must be non-empty and no larger than 10 MiB.".into());
-        }
-        Ok(bytes)
-    }
 
     #[test]
     fn pdf_upload_decoder_accepts_exact_limit_and_rejects_over_limit() {
         let exact = STANDARD.encode(b"12345678");
-        assert_eq!(decode_with_limit(&exact, 8).unwrap(), b"12345678");
+        assert_eq!(decode_bounded_pdf_payload(&exact, 8).unwrap(), b"12345678");
         let oversized = STANDARD.encode(b"123456789");
-        assert!(decode_with_limit(&oversized, 8).is_err());
+        assert!(decode_bounded_pdf_payload(&oversized, 8).is_err());
     }
 
     #[test]
     fn pdf_upload_decoder_rejects_empty_and_malformed_payloads() {
-        assert!(decode_with_limit("", 8).is_err());
-        assert!(decode_with_limit("not base64!", 8).is_err());
+        assert!(decode_bounded_pdf_payload("", 8).is_err());
+        assert!(decode_bounded_pdf_payload("not base64!", 8).is_err());
     }
 
     #[test]
-    fn production_pdf_upload_limit_is_ten_mib_and_decoder_is_callable() {
-        let _ = decode_pdf_upload;
-        assert_eq!(super::MAX_PDF_UPLOAD_BYTES, 10 * 1024 * 1024);
+    fn pdf_upload_decoder_rejects_encoded_payloads_over_the_predecode_bound() {
+        let too_large = "A".repeat(16);
+        assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
     }
 }
 
