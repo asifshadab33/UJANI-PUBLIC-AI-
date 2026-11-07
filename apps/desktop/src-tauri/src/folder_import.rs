@@ -166,6 +166,7 @@ pub async fn process_selected_folder(
     .await
 }
 
+/// Reads a bounded, sorted set of supported direct-child text files without following links.
 fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
     let folder_metadata = fs::symlink_metadata(folder)
         .map_err(|error| format!("Cannot inspect the selected folder: {error}"))?;
