@@ -309,7 +309,7 @@ async fn execute_cloud_ai_task(
   active.insert(task_id.clone(), token.clone());
  }
  let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
- flush_pending_receipts().await;
+ flush_pending_receipts(&app).await;
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
@@ -519,7 +519,7 @@ fn enqueue_pending_receipt(receipt: ExecutionReceipt, slot: security_store::Rece
 
 /// Retries receipts on a blocking thread. In-flight entries keep their queue capacity
 /// reserved until persisted or requeued; the first store failure stops this bounded batch.
-fn flush_pending_receipts_blocking(budget: Duration, max_receipts: usize) {
+fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receipts: usize) {
     let batch = {
         let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let batch = std::mem::take(&mut state.queued);
@@ -540,8 +540,17 @@ fn flush_pending_receipts_blocking(budget: Duration, max_receipts: usize) {
         processed += 1;
         match pending.slot.persist_recoverable(pending.receipt.clone()) {
             Ok(_) => {
+                let task_id = pending.receipt.task_id.clone();
                 let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 state.in_flight = state.in_flight.saturating_sub(1);
+                drop(state);
+                emit_task_progress(
+                    app,
+                    &task_id,
+                    "receipt_recovered",
+                    "The previously pending provenance receipt has now been stored.",
+                    100,
+                );
             }
             Err((slot, _error)) => {
                 let failed = PendingReceipt { receipt: pending.receipt, slot };
@@ -556,8 +565,9 @@ fn flush_pending_receipts_blocking(budget: Duration, max_receipts: usize) {
 }
 
 /// Retries pending receipts off the async runtime with a short, bounded time budget.
-async fn flush_pending_receipts() {
-    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS)).await;
+async fn flush_pending_receipts(app: &AppHandle) {
+    let app = app.clone();
+    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app, RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS)).await;
 }
 
 /// Persists a receipt or returns a warning while preserving the completed task result.
@@ -1059,7 +1069,7 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_pending_receipts_blocking(RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS);
+            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS);
         }
     });
 }
