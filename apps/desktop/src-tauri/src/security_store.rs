@@ -3,7 +3,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
 use ed25519_dalek::VerifyingKey;
-use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, io::Write, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use std::collections::HashSet;
@@ -12,6 +12,8 @@ use ujani_core::registered_operations;
 use ujani_core::{sha256_hex, validate_receipt, ExecutionReceipt};
 
 const MAX_RECEIPTS: i64 = 10_000;
+const KEEP_AFTER_ARCHIVE: i64 = 5_000;
+const ARCHIVE_TRIGGER: i64 = MAX_RECEIPTS - 100;
 const RECEIPT_SLOT_TTL_SECONDS: u64 = 900;
 const MAX_REPLAY_ENTRIES: i64 = 4_096;
 const MAX_NONCE_TTL_SECONDS: u64 = 300;
@@ -81,6 +83,12 @@ fn initialize(db: &Connection) -> Result<(), String> {
            record_hash TEXT NOT NULL
          );
          CREATE INDEX IF NOT EXISTS idx_receipts_task ON execution_receipts(task_id);
+         CREATE TABLE IF NOT EXISTS receipt_checkpoint(
+           id INTEGER PRIMARY KEY CHECK(id = 1),
+           head_hash TEXT NOT NULL,
+           archived_entries INTEGER NOT NULL,
+           archived_at INTEGER NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS receipt_slots(
            task_id TEXT PRIMARY KEY,
            reserved_at INTEGER NOT NULL
@@ -126,7 +134,10 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
     let previous: Option<String> = tx.query_row(
         "SELECT record_hash FROM execution_receipts ORDER BY id DESC LIMIT 1", [], |r| r.get(0)
     ).optional().map_err(|e| e.to_string())?;
-    let previous_hash = previous.unwrap_or_else(|| GENESIS_HASH.to_string());
+    let checkpoint: Option<String> = tx.query_row(
+        "SELECT head_hash FROM receipt_checkpoint WHERE id=1", [], |r| r.get(0)
+    ).optional().map_err(|e| e.to_string())?;
+    let previous_hash = previous.or(checkpoint).unwrap_or_else(|| GENESIS_HASH.to_string());
     let record_hash = sha256_hex(format!("{previous_hash}:{receipt_json}").as_bytes());
     tx.execute(
         "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
@@ -145,7 +156,13 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
     let rows = statement.query_map([], |r| Ok((
         r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?
     ))).map_err(|e| e.to_string())?;
-    let mut previous = GENESIS_HASH.to_string();
+    let checkpoint: Option<(String, i64)> = db.query_row(
+        "SELECT head_hash,archived_entries FROM receipt_checkpoint WHERE id=1", [],
+        |r| Ok((r.get(0)?, r.get(1)?))
+    ).optional().map_err(|e| e.to_string())?;
+    let (mut previous, archived_entries) = checkpoint
+        .map(|(head, count)| (head, count))
+        .unwrap_or_else(|| (GENESIS_HASH.to_string(), 0));
     let mut entries = 0_i64;
     let mut valid = true;
     for row in rows {
@@ -162,7 +179,7 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
         previous = record_hash;
         entries += 1;
     }
-    Ok(ReceiptLedgerStatus { entries, valid, head_sha256: previous })
+    Ok(ReceiptLedgerStatus { entries: entries.saturating_add(archived_entries), valid, head_sha256: previous })
 }
 
 fn claim_nonce_tx(
@@ -266,21 +283,80 @@ impl Drop for ReceiptSlotReservation {
     }
 }
 
-fn reserve_receipt_slot_db(db: &mut Connection, task_id: &str, now: u64) -> Result<(), String> {
+/// Archive the oldest rows to a fsynced JSONL file before deleting them. The
+/// checkpoint keeps the retained chain verifiable across archive rotations.
+fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Result<i64, String> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM receipt_slots WHERE reserved_at <= ?1", params![now.saturating_sub(RECEIPT_SLOT_TTL_SECONDS) as i64])
+    let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
+    if count <= KEEP_AFTER_ARCHIVE { return Ok(0); }
+    let n = count - KEEP_AFTER_ARCHIVE;
+    fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
+    let path = archive_dir.join(format!("receipts-{now}-{count}.jsonl"));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&path)
+        .map_err(|e| format!("Could not create receipt archive file: {e}"))?;
+    let mut head = String::new();
+    {
+        let mut query = tx.prepare(
+            "SELECT receipt_json,previous_hash,record_hash FROM execution_receipts ORDER BY id ASC LIMIT ?1"
+        ).map_err(|e| e.to_string())?;
+        let rows = query.query_map(params![n], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?
+        ))).map_err(|e| e.to_string())?;
+        for row in rows {
+            let (json, previous_hash, record_hash) = row.map_err(|e| e.to_string())?;
+            writeln!(file, "{{\\"previous_hash\\":\\"{previous_hash}\\",\\"record_hash\\":\\"{record_hash}\\",\\"receipt\\":{json}}}")
+                .map_err(|e| format!("Could not write receipt archive: {e}"))?;
+            head = record_hash;
+        }
+    }
+    file.sync_all().map_err(|e| format!("Could not fsync receipt archive: {e}"))?;
+    tx.execute(
+        "DELETE FROM execution_receipts WHERE id IN (SELECT id FROM execution_receipts ORDER BY id ASC LIMIT ?1)",
+        params![n]
+    ).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO receipt_checkpoint(id,head_hash,archived_entries,archived_at) VALUES(1,?1,?2,?3)
+         ON CONFLICT(id) DO UPDATE SET head_hash=excluded.head_hash,
+         archived_entries=receipt_checkpoint.archived_entries+excluded.archived_entries,
+         archived_at=excluded.archived_at",
+        params![head, n, now as i64]
+    ).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+fn reserve_receipt_slot_db(
+    db: &mut Connection, task_id: &str, now: u64, archive_dir: &Path,
+) -> Result<(), String> {
+    {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM receipt_slots WHERE reserved_at <= ?1",
+            params![now.saturating_sub(RECEIPT_SLOT_TTL_SECONDS) as i64])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+    let (count, reserved): (i64, i64) = {
+        let count = db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        let reserved = db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        (count, reserved)
+    };
+    if count.saturating_add(reserved) >= ARCHIVE_TRIGGER {
+        archive_old_receipts(db, archive_dir, now)?;
+    }
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     if count.saturating_add(reserved) >= MAX_RECEIPTS {
-        return Err("Execution receipt ledger is full; new inference is blocked until receipts can be archived.".into());
+        return Err("Receipt archive did not free enough capacity; inference is paused to avoid losing provenance.".into());
     }
-    tx.execute(
-        "INSERT INTO receipt_slots(task_id,reserved_at) VALUES(?1,?2)",
-        params![task_id, now as i64]
-    ).map_err(|e| format!("Could not reserve execution receipt capacity: {e}"))?;
+    tx.execute("INSERT INTO receipt_slots(task_id,reserved_at) VALUES(?1,?2)",
+        params![task_id, now as i64])
+        .map_err(|e| format!("Could not reserve execution receipt capacity: {e}"))?;
     tx.commit().map_err(|e| e.to_string())
 }
 
@@ -305,7 +381,10 @@ pub fn reserve_execution_receipt_slot(
     }
     let now = now_seconds()?;
     let mut db = open(app)?;
-    reserve_receipt_slot_db(&mut db, task_id, now)?;
+    let mut archive_dir = app.path().app_data_dir()
+        .map_err(|e| format!("Could not locate receipt archive directory: {e}"))?;
+    archive_dir.push("receipt-archive");
+    reserve_receipt_slot_db(&mut db, task_id, now, &archive_dir)?;
     Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
 }
 
