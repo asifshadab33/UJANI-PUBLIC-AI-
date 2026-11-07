@@ -450,6 +450,30 @@ fn sync_receipt_archive_directories(archive_dir: &Path, parent: Option<&Path>) -
 
 /// Archive the oldest rows to a fsynced JSONL file before deleting them. The
 /// checkpoint keeps the retained chain verifiable across archive rotations.
+/// Remove files left behind by a crash before the SQLite archive-index transaction
+/// committed. Only unindexed archive files and stale temporary files are eligible.
+fn cleanup_orphan_receipt_archives(db: &Connection, archive_dir: &Path) -> Result<(), String> {
+    let indexed: HashSet<String> = {
+        let mut statement = db.prepare("SELECT archive_file FROM receipt_archive_index")
+            .map_err(|e| e.to_string())?;
+        let rows = statement.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
+        rows.collect::<Result<HashSet<_>, _>>().map_err(|e| e.to_string())?
+    };
+    for entry in fs::read_dir(archive_dir).map_err(|e| format!("Could not inspect receipt archive directory: {e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue; };
+        let is_temp = name.starts_with(".receipts-") && name.ends_with(".jsonl.tmp");
+        let is_unindexed_archive = name.starts_with("receipts-")
+            && name.ends_with(".jsonl")
+            && !indexed.contains(&name);
+        if !is_temp && !is_unindexed_archive { continue; }
+        let metadata = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() { continue; }
+        fs::remove_file(entry.path()).map_err(|e| format!("Could not remove orphaned receipt archive: {e}"))?;
+    }
+    Ok(())
+}
+
 fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Result<i64, String> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
@@ -463,6 +487,7 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
     let archive_nonce = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos()).unwrap_or(now as u128);
     let _archive_dir_created = ensure_receipt_archive_dir(archive_dir, archive_nonce)?;
+    cleanup_orphan_receipt_archives(&tx, archive_dir)?;
     let archive_name = format!("receipts-{now}-{count}-{archive_nonce}.jsonl");
     let path = archive_dir.join(&archive_name);
     let temporary_path = archive_dir.join(format!(".{archive_name}.tmp"));
@@ -867,6 +892,29 @@ mod tests {
         assert!(reserve_receipt_slot_db(&mut db, "task-two", 2_000, &archive_dir).is_ok());
         assert!(reserve_receipt_slot_db(&mut db, "task-three", 2_901, &archive_dir).is_ok());
         assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn receipt_archive_cleanup_removes_only_unindexed_or_temporary_files() {
+        let db = db();
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let archive_dir = std::env::temp_dir().join(format!("ujani-receipt-cleanup-{unique}"));
+        fs::create_dir_all(&archive_dir).unwrap();
+        let indexed = "receipts-indexed.jsonl";
+        let orphan = "receipts-orphan.jsonl";
+        let temporary = ".receipts-interrupted.jsonl.tmp";
+        for name in [indexed, orphan, temporary] {
+            fs::write(archive_dir.join(name), b"test").unwrap();
+        }
+        db.execute(
+            "INSERT INTO receipt_archive_index(archive_file,previous_hash,head_hash,entries,archived_at) VALUES(?1,?2,?3,0,0)",
+            params![indexed, GENESIS_HASH, GENESIS_HASH]
+        ).unwrap();
+        cleanup_orphan_receipt_archives(&db, &archive_dir).unwrap();
+        assert!(archive_dir.join(indexed).exists());
+        assert!(!archive_dir.join(orphan).exists());
+        assert!(!archive_dir.join(temporary).exists());
+        fs::remove_dir_all(archive_dir).unwrap();
     }
 
     #[cfg(unix)]
