@@ -587,6 +587,14 @@ fn reserve_receipt_slot_db(
         archive_old_receipts(db, archive_dir, now)?;
     }
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let already_recorded: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM execution_receipts WHERE task_id=?1)",
+        params![task_id],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    if already_recorded {
+        return Err("Task identifier already has a persisted execution receipt.".into());
+    }
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
@@ -860,7 +868,7 @@ mod tests {
         let mut db = db();
         let first = receipt("task-idempotent");
         let first_hash = append_receipt_db(&mut db, &first).unwrap();
-        reserve_receipt_slot_db(&mut db, "task-idempotent", 3_000, &std::env::temp_dir()).unwrap();
+        assert!(reserve_receipt_slot_db(&mut db, "task-idempotent", 3_000, &std::env::temp_dir()).is_err());
         let retry_hash = append_receipt_db(&mut db, &first).unwrap();
         assert_eq!(first_hash, retry_hash);
         let reserved: i64 = db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |row| row.get(0)).unwrap();
