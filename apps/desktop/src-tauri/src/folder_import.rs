@@ -91,7 +91,9 @@ pub async fn process_selected_folder(
     } else {
         model.as_str()
     };
-    // Preserve the caller-supplied model value separately so an actual model named\n    // "analysis-only" cannot collide with the empty-model fallback above.\n    let mut receipt_fields: Vec<&[u8]> = vec![mode.as_bytes(), model.as_bytes()];
+    // Preserve the caller-supplied model value separately so an actual model named
+    // "analysis-only" cannot collide with the empty-model fallback above.
+    let mut receipt_fields: Vec<&[u8]> = vec![mode.as_bytes(), model.as_bytes()];
     for file in &files {
         receipt_fields.push(file.name.as_bytes());
         receipt_fields.push(file.content.as_bytes());
