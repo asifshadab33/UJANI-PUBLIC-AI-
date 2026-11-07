@@ -477,6 +477,7 @@ fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str
 
 /// Native confirmation is required for every cloud data transfer. A renderer-supplied
 /// boolean is only an input guard; it is not proof of user consent.
+/// Show an asynchronous native warning dialog and return false if the user declines or the dialog fails.
 async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog().message(message).title(title)
@@ -485,6 +486,7 @@ async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
     rx.await.unwrap_or(false)
 }
 
+/// Tracks queued and currently retrying provenance receipts for bounded capacity accounting.
 struct PendingReceiptState {
     queued: Vec<ExecutionReceipt>,
     in_flight: usize,
