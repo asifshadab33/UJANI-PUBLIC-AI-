@@ -223,7 +223,7 @@ export default function App() {
     if (!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid) return;
     const exportedAt = new Date();
     const payload = JSON.stringify({
-      schema_version: 1,
+      export_schema_version: 1,
       exported_at: exportedAt.toISOString(),
       ledger_status: receiptLedgerStatus,
       entries: executionReceipts,
