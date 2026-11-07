@@ -237,6 +237,25 @@ export default function App() {
     catch (error) { setHistoryError(String(error)); }
   }
 
+  function exportPersistentHistory() {
+    if (!persistentHistory.length || historyBusy) return;
+    if (!window.confirm("Export saved prompts and results as readable, unencrypted JSON? Anyone with access to the exported file can read this history.")) return;
+    const exportedAt = new Date();
+    const payload = JSON.stringify({
+      schema_version: 1,
+      exported_at: exportedAt.toISOString(),
+      entries: persistentHistory,
+    }, null, 2);
+    const objectUrl = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `ujani-history-${exportedAt.toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+
   async function clearPersistentHistory() {
     if (!window.confirm("Delete all saved UJANI task history? This does not securely erase storage media.")) return;
     try { await invoke("clear_task_history"); setPersistentHistory([]); }
@@ -955,7 +974,7 @@ export default function App() {
             <p>Optional local history. Saved prompts and outputs are encrypted on this device using AES-256-GCM with a key held in the operating-system credential vault.</p>
             {historySettings && <label className="consent-row"><input type="checkbox" checked={historySettings.enabled} disabled={historyBusy} onChange={(event) => togglePersistentHistory(event.target.checked)}/> Save future task prompts and results on this device</label>}
             <small>Retention: {historySettings?.retention_days ?? 30} days · Maximum: {historySettings?.max_entries ?? 100} entries. Recording is off by default.</small>
-            <div className="history-actions"><button onClick={refreshPersistentHistory} disabled={historyBusy}>{historyBusy ? "Refreshing…" : "Refresh"}</button><button onClick={clearPersistentHistory} disabled={!persistentHistory.length || historyBusy}>Delete all</button></div>
+            <div className="history-actions"><button onClick={refreshPersistentHistory} disabled={historyBusy}>{historyBusy ? "Refreshing…" : "Refresh"}</button><button onClick={exportPersistentHistory} disabled={!persistentHistory.length || historyBusy}>Export JSON</button><button onClick={clearPersistentHistory} disabled={!persistentHistory.length || historyBusy}>Delete all</button></div>
             {historyError && <p className="error" role="alert">{historyError}</p>}
             {persistentHistory.length ? persistentHistory.map((entry) => <div className="saved-history-item" key={entry.id}>
               <button className="saved-history-prompt" onClick={() => setRequest(entry.prompt)} title="Reuse saved prompt">{entry.prompt}</button>
