@@ -37,7 +37,7 @@ export default function LocalFinder() {
     {result && !result.cancelled && <div className="result">
       <div className="result-title">Search results <span>{result.matches.length} matches · {result.scanned_files} files checked</span></div>
       <p>{result.note}</p>
-      {result.truncated && <p className="muted">Search limits reached; choose a narrower folder to search the remaining files.</p>}
+      {result.truncated && <p className="muted">Some entries were skipped or search limits were reached; choose a narrower folder to search the remaining files.</p>}
       {result.matches.length ? result.matches.map((item) => <div className="saved-history-item" key={item.path}>
         <b>{item.extension === "mp4" || item.extension === "mov" || item.extension === "mkv" ? <FileVideo size={14}/> : <FileText size={14}/>} {item.file_name}</b>
         <small>{item.path}</small>
