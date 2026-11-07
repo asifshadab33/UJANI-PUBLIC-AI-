@@ -1048,7 +1048,7 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET, 1);
+            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS);
         }
     });
 }
