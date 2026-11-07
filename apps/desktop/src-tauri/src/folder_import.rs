@@ -83,6 +83,9 @@ pub async fn process_selected_folder(
     let picker_app = app.clone();
     let collect_token = token.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<Vec<SelectedTextFile>>, String> {
+        if collect_token.is_cancelled() {
+            return Err("Folder import cancelled by user.".into());
+        }
         let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
