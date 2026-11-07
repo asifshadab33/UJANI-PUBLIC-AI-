@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/desktop/package.json
+          cache-dependency-path: apps/desktop/package-lock.json
 
       - name: Install Linux native build prerequisites
         if: runner.os == 'Linux'
@@ -61,7 +61,10 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
+
+      - name: Verify desktop dependency graph with the committed lockfile
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 
       - name: Disable updater artifacts for unsigned preview builds
         shell: node {0}

@@ -25,7 +25,7 @@ jobs:
       - name: Check documentation claims against protocol version
         run: bash scripts/check-doc-claims.sh
       - name: Run workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   desktop-native-check:
     name: Tauri native tests (${{ matrix.os }})
@@ -41,7 +41,7 @@ jobs:
           node-version: 22
       - name: Install frontend and Tauri CLI dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
       - name: Generate Tauri platform icons from the checked-in SVG
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
@@ -53,9 +53,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
       - name: Check desktop Rust application
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
       - name: Run desktop native unit tests
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
 
   rust-quality:
     name: Rust lint checks
@@ -67,7 +67,7 @@ jobs:
           node-version: 22
       - name: Install frontend and Tauri CLI dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
       - name: Generate Tauri platform icons from the checked-in SVG
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
@@ -79,9 +79,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
       - name: Lint core
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Lint desktop
-        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
 
   frontend-build:
     name: React TypeScript build
@@ -93,7 +93,7 @@ jobs:
           node-version: 22
       - name: Install frontend dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
       - name: Type-check and build frontend
         working-directory: apps/desktop
         run: npm run build
