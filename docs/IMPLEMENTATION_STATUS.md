@@ -117,3 +117,7 @@ Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux
 ## Privacy receipt UI update
 
 The desktop UI can now verify the local receipt hash chain and display up to 10 of the latest 50 metadata-only records. Receipt creation is currently wired to supported local chat and approved cloud chat only; document, PDF, translation and model-download flows do not yet create receipts. The listing command refuses to return entries if full ledger verification fails. It displays adapter/model/location, timestamps, input/output SHA-256 digests and ledger record hashes; it does not expose prompts or outputs. The chain is not digitally signed or externally anchored, so it must not be described as a tamper-proof independent audit log.
+
+## Audit remediation update — cancellable local tasks
+
+The document/PDF and translation commands now share the native task registry used by local chat and model downloads. Each accepts a bounded task identifier, rejects duplicate active IDs, emits lifecycle events, observes explicit cancellation, and applies a 240-second overall time budget. The desktop UI passes IDs and exposes cancellation buttons. Cancellation drops the in-flight async operation; the PDF child process uses kill-on-drop. CI and platform smoke tests are still required before claiming verified behaviour.
