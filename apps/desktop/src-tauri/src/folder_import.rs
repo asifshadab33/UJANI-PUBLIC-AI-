@@ -49,10 +49,11 @@ pub struct FolderImportResult {
 #[tauri::command]
 pub async fn process_selected_folder(
     app: tauri::AppHandle,
+    control: tauri::State<'_, crate::TaskControlState>,
+    task_id: String,
     mode: String,
     model: String,
 ) -> Result<FolderImportResult, String> {
-    let _reservation = crate::resource_runtime::MemoryReservation::acquire("folder-import")?;
     if mode != "fortress" && mode != "smart" {
         return Err("Folder processing is local-only. Select Fortress or Smart.".into());
     }
@@ -60,8 +61,11 @@ pub async fn process_selected_folder(
         return Err("Invalid local model identifier.".into());
     }
 
+    // Keep the native folder picker and all path handling in Rust. The webview
+    // never supplies a filesystem path or receives a persistent directory grant.
+    let picker_app = app.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
-        let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
         let path = folder
@@ -73,44 +77,98 @@ pub async fn process_selected_folder(
     .map_err(|error| format!("Folder selection worker failed: {error}"))??;
 
     let Some(files) = selected else {
-        return Ok(FolderImportResult { cancelled: true, files: Vec::new(), total_bytes: 0 });
+        return Ok(FolderImportResult {
+            cancelled: true,
+            files: Vec::new(),
+            total_bytes: 0,
+        });
     };
 
-    let total_bytes = files.iter().map(|file| file.size_bytes).sum();
-    let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
-    let mut results = Vec::with_capacity(files.len());
-
-    for file in files {
-        let analysis = crate::task_engine::LocalTaskEngine::analyze_text(&file.name, &file.content)?;
-        let (summary, note) = if ollama_available {
-            match crate::task_engine::LocalTaskEngine::process_document(
-                file.name.clone(),
-                file.content,
-                mode.clone(),
-                model.clone(),
-                None,
-            ).await {
-                Ok(document) => (Some(document.summary), "Analysed and summarised by local Ollama. No cloud transfer.".to_string()),
-                Err(error) => (None, format!("Analysis completed; local summary failed: {error}")),
-            }
-        } else {
-            (None, "Analysis only. Ollama is not available; no cloud service was contacted.".to_string())
-        };
-
-        results.push(FolderFileResult {
-            file_name: analysis.file_name,
-            size_bytes: analysis.size_bytes,
-            word_count: analysis.word_count,
-            line_count: analysis.line_count,
-            top_keywords: analysis.top_keywords,
-            summary,
-            note,
-        });
+    // Bind the receipt to the exact selected filenames and contents, without
+    // copying document data into the receipt ledger.
+    let receipt_model = if model.trim().is_empty() {
+        "analysis-only"
+    } else {
+        model.as_str()
+    };
+    // Preserve the caller-supplied model value separately so an actual model named
+    // "analysis-only" cannot collide with the empty-model fallback above.
+    let mut receipt_fields: Vec<&[u8]> = vec![mode.as_bytes(), model.as_bytes()];
+    for file in &files {
+        receipt_fields.push(file.name.as_bytes());
+        receipt_fields.push(file.content.as_bytes());
     }
+    let receipt = crate::local_receipt_context(
+        "folder.import",
+        receipt_model,
+        &receipt_fields,
+    )?;
 
-    Ok(FolderImportResult { cancelled: false, files: results, total_bytes })
+    crate::run_managed_task(
+        app,
+        &control,
+        task_id,
+        "Folder import",
+        receipt,
+        async move {
+            let total_bytes = files.iter().map(|file| file.size_bytes).sum();
+            let ollama_available =
+                !model.trim().is_empty() && crate::ollama::is_available().await;
+            let mut results = Vec::with_capacity(files.len());
+
+            for file in files {
+                let analysis =
+                    crate::task_engine::LocalTaskEngine::analyze_text(&file.name, &file.content)?;
+                let (summary, note) = if ollama_available {
+                    match crate::task_engine::LocalTaskEngine::process_document(
+                        file.name.clone(),
+                        file.content,
+                        mode.clone(),
+                        model.clone(),
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(document) => (
+                            Some(document.summary),
+                            "Analysed and summarised by local Ollama. No cloud transfer."
+                                .to_string(),
+                        ),
+                        Err(error) => (
+                            None,
+                            format!("Analysis completed; local summary failed: {error}"),
+                        ),
+                    }
+                } else {
+                    (
+                        None,
+                        "Analysis only. Ollama is not available; no cloud service was contacted."
+                            .to_string(),
+                    )
+                };
+
+                results.push(FolderFileResult {
+                    file_name: analysis.file_name,
+                    size_bytes: analysis.size_bytes,
+                    word_count: analysis.word_count,
+                    line_count: analysis.line_count,
+                    top_keywords: analysis.top_keywords,
+                    summary,
+                    note,
+                });
+            }
+
+            Ok(FolderImportResult {
+                cancelled: false,
+                files: results,
+                total_bytes,
+            })
+        },
+    )
+    .await
 }
 
+/// Reads a bounded, sorted set of supported direct-child text files without following links.
 fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
     let folder_metadata = fs::symlink_metadata(folder)
         .map_err(|error| format!("Cannot inspect the selected folder: {error}"))?;
