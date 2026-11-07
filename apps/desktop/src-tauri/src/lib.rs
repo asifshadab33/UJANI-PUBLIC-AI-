@@ -1065,7 +1065,7 @@ async fn decode_pdf_upload_off_thread(data_base64: String) -> Result<Vec<u8>, St
 
 #[cfg(test)]
 mod pdf_upload_tests {
-    use super::decode_bounded_pdf_payload;
+    use super::{decode_bounded_pdf_payload, decode_pdf_upload, MAX_PDF_UPLOAD_BYTES};
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     #[test]
@@ -1094,17 +1094,17 @@ mod pdf_upload_tests {
     fn maximum_upload_decode_runs_on_blocking_pool_not_async_executor_thread() {
         use std::thread;
         let caller = thread::current().id();
-        let payload = STANDARD.encode(vec![0x5a; 1024 * 1024]);
+        let payload = STANDARD.encode(vec![0x5a; MAX_PDF_UPLOAD_BYTES]);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
         let (decoded, worker) = runtime.block_on(async {
             tokio::task::spawn_blocking(move || {
-                (decode_bounded_pdf_payload(&payload, 1024 * 1024).unwrap(), thread::current().id())
+                (decode_pdf_upload(&payload).unwrap(), thread::current().id())
             }).await.unwrap()
         });
-        assert_eq!(decoded.len(), 1024 * 1024);
+        assert_eq!(decoded.len(), MAX_PDF_UPLOAD_BYTES);
         assert_ne!(caller, worker, "PDF decoding must never occupy the async executor thread");
     }
 }
