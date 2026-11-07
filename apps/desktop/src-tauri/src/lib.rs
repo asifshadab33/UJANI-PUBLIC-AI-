@@ -1,6 +1,7 @@
 mod cloud_gateway;
 mod device_identity;
 mod everyday_tools;
+mod file_insights;
 mod folder_import;
 mod local_search;
 mod search_cache;
@@ -923,6 +924,7 @@ pub fn run() {
             search_cache::clear_local_search_cache,
             everyday_tools::get_local_clock,
             everyday_tools::find_duplicate_files,
+            file_insights::find_large_files,
             history::get_task_history_settings,
             history::set_task_history_enabled,
             history::save_task_history,
