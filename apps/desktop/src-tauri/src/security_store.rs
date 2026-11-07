@@ -219,6 +219,8 @@ fn verify_archive_index(
 fn verify_receipts_db_with_archive(
     db: &Connection, archive_dir: Option<&Path>,
 ) -> Result<ReceiptLedgerStatus, String> {
+    // Keep the checkpoint, archive index and retained rows in one SQLite snapshot.
+    let _snapshot = db.unchecked_transaction().map_err(|e| e.to_string())?;
     let mut statement = db.prepare(
         "SELECT receipt_json,previous_hash,record_hash FROM execution_receipts ORDER BY id ASC"
     ).map_err(|e| e.to_string())?;
@@ -266,6 +268,7 @@ fn verify_receipts_db_with_archive(
     })
 }
 
+#[cfg(test)]
 fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
     verify_receipts_db_with_archive(db, None)
 }
