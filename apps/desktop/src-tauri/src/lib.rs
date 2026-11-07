@@ -213,20 +213,55 @@ struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::Docum
 
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
-async fn execute_document_workflow(file_name:String,content:String,mode:String,model:String,translation_language:Option<String>)->Result<WorkflowExecutionResult,String>{
- let _reservation = resource_runtime::MemoryReservation::acquire("document-workflow")?;
- if content.len()>256*1024{return Err("Workflow input exceeds the 256 KiB document limit.".into());}
- if mode!="fortress"&&mode!="smart"{return Err("Executable document workflows are local-only (Fortress or Smart).".into());}
- let snapshot=get_capability_snapshot().await?;
- let graph=TaskGraph{schema_version:1,nodes:vec![
- TaskNode{id:"analyse".into(),operation_id:"file.analyze_text".into(),depends_on:vec![]},
- TaskNode{id:"summarise".into(),operation_id:"document.summarize".into(),depends_on:vec!["analyse".into()]},
- TaskNode{id:"translate".into(),operation_id:"translate.text".into(),depends_on:vec!["summarise".into()]}]};
- let plan=plan_task_graph(&graph,&mode,snapshot.available_memory_mb,&snapshot.capabilities);
- if !plan.accepted{return Err(format!("Workflow preflight rejected execution: {}",plan.reason));}
- // Do not interpret arbitrary graph data as executable code. This command runs this fixed sequence only.
- let result=LocalTaskEngine::process_document(file_name,content,mode,model,translation_language).await?;
- Ok(WorkflowExecutionResult{plan,result})
+async fn execute_document_workflow(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
+    file_name: String,
+    content: String,
+    mode: String,
+    model: String,
+    translation_language: Option<String>,
+) -> Result<WorkflowExecutionResult, String> {
+    let language = translation_language.as_deref().unwrap_or("");
+    let receipt = local_receipt_context(
+        "document.workflow",
+        &model,
+        &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
+    )?;
+    run_managed_task(
+        app,
+        &control,
+        task_id,
+        "Document workflow",
+        receipt,
+        async move {
+            if content.len() > 256 * 1024 {
+                return Err("Workflow input exceeds the 256 KiB document limit.".into());
+            }
+            if mode != "fortress" && mode != "smart" {
+                return Err("Executable document workflows are local-only (Fortress or Smart).".into());
+            }
+            let snapshot = get_capability_snapshot().await?;
+            let graph = TaskGraph {
+                schema_version: 1,
+                nodes: vec![
+                    TaskNode { id: "analyse".into(), operation_id: "file.analyze_text".into(), depends_on: vec![] },
+                    TaskNode { id: "summarise".into(), operation_id: "document.summarize".into(), depends_on: vec!["analyse".into()] },
+                    TaskNode { id: "translate".into(), operation_id: "translate.text".into(), depends_on: vec!["summarise".into()] },
+                ],
+            };
+            let plan = plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities);
+            if !plan.accepted {
+                return Err(format!("Workflow preflight rejected execution: {}", plan.reason));
+            }
+            // Only this fixed, validated sequence is executable; arbitrary graph data is never code.
+            let result = LocalTaskEngine::process_document(
+                file_name, content, mode, model, translation_language
+            ).await?;
+            Ok(WorkflowExecutionResult { plan, result })
+        },
+    ).await
 }
 
 
