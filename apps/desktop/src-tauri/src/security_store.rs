@@ -305,7 +305,7 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
         ))).map_err(|e| e.to_string())?;
         for row in rows {
             let (json, previous_hash, record_hash) = row.map_err(|e| e.to_string())?;
-            writeln!(file, "{{\\"previous_hash\\":\\"{previous_hash}\\",\\"record_hash\\":\\"{record_hash}\\",\\"receipt\\":{json}}}")
+            writeln!(file, "{{\"previous_hash\":\"{previous_hash}\",\"record_hash\":\"{record_hash}\",\"receipt\":{json}}}")
                 .map_err(|e| format!("Could not write receipt archive: {e}"))?;
             head = record_hash;
         }
