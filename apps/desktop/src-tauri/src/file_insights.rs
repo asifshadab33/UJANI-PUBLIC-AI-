@@ -2,8 +2,8 @@
 use serde::Serialize;
 use std::{
     fs,
-    path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    path::Path,
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -232,7 +232,7 @@ fn scan_large_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
     fn temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
