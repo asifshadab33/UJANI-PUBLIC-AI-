@@ -336,9 +336,9 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let _link = root.with_extension("link");
         #[cfg(unix)] {
-            std::os::unix::fs::symlink(&root, &link).unwrap();
-            assert!(scan_duplicates(&link, &CancellationToken::new()).is_err());
-            fs::remove_file(link).unwrap();
+            std::os::unix::fs::symlink(&root, &_link).unwrap();
+            assert!(scan_duplicates(&_link, &CancellationToken::new()).is_err());
+            fs::remove_file(_link).unwrap();
         }
         fs::remove_dir_all(root).unwrap();
     }
