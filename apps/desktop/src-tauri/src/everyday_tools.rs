@@ -76,7 +76,7 @@ pub async fn find_duplicate_files(
         }
         active.insert(task_id.clone(), token.clone());
     }
-    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone(), token: token.clone() };
     super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to scan for duplicate files.", 1);
 
     let picker_app = app.clone();
