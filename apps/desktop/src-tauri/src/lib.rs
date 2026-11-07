@@ -17,7 +17,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::Mutex};
+use std::{collections::{BTreeSet, HashMap}, sync::{Mutex, OnceLock}};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
@@ -278,9 +278,18 @@ async fn execute_cloud_ai_task(
   return Err("Invalid task identifier.".into());
  }
  if !external_data_approved {
-  return Err("Cloud transfer was not approved. No request was sent.".into());
+  return Err("Cloud transfer was not approved in UJANI. No request was sent.".into());
  }
  cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
+ let preview: String = prompt.chars().take(600).collect();
+ let truncated = prompt.chars().count() > 600;
+ let consent_message = format!(
+  "UJANI is about to send this single request to an external provider.\n\nEndpoint: {endpoint}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
+ );
+ if !confirm_native(&app, "Approve one-time cloud data transfer", consent_message).await {
+  return Err("Cloud transfer was not approved in the native confirmation dialog. No request was sent.".into());
+ }
  if !validate_model_identifier(&model) {
   return Err("Model identifier cannot be recorded safely in execution provenance.".into());
  }
@@ -300,6 +309,7 @@ async fn execute_cloud_ai_task(
   active.insert(task_id.clone(), token.clone());
  }
  let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+ flush_pending_receipts(&app);
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
@@ -344,8 +354,7 @@ async fn execute_cloud_ai_task(
    user_approval_id: Some(approval_id),
    network_activity: network_activity.clone(),
   };
-  receipt_slot.persist(receipt)
-   .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
+  persist_receipt_or_warn(&app, &task_id, "Cloud inference", receipt_slot, receipt);
  }
  match &result {
   Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed and provenance recorded.", 100),
@@ -464,6 +473,54 @@ fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str
     });
 }
 
+/// Native confirmation is required for every cloud data transfer. A renderer-supplied
+/// boolean is only an input guard; it is not proof of user consent.
+async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().message(message).title(title)
+        .kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::YesNo)
+        .show(move |approved| { let _ = tx.send(approved); });
+    rx.await.unwrap_or(false)
+}
+
+static PENDING_RECEIPTS: OnceLock<Mutex<Vec<ExecutionReceipt>>> = OnceLock::new();
+const MAX_PENDING_RECEIPTS: usize = 100;
+fn pending_receipts() -> &'static Mutex<Vec<ExecutionReceipt>> {
+    PENDING_RECEIPTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+fn enqueue_pending_receipt(receipt: ExecutionReceipt) -> bool {
+    let Ok(mut pending) = pending_receipts().lock() else { return false; };
+    if pending.len() >= MAX_PENDING_RECEIPTS { return false; }
+    pending.push(receipt); true
+}
+/// Retry process-local receipts before the next inference. This is bounded and
+/// deliberately not described as durable recovery across an application crash.
+fn flush_pending_receipts(app: &AppHandle) {
+    let batch = match pending_receipts().lock() {
+        Ok(mut pending) => std::mem::take(&mut *pending), Err(_) => return,
+    };
+    for receipt in batch {
+        if security_store::append_execution_receipt(app.clone(), receipt.clone()).is_err() {
+            if let Ok(mut pending) = pending_receipts().lock() {
+                if pending.len() < MAX_PENDING_RECEIPTS { pending.push(receipt); }
+            }
+        }
+    }
+}
+fn persist_receipt_or_warn(
+    app: &AppHandle, task_id: &str, label: &str,
+    slot: security_store::ReceiptSlotReservation, receipt: ExecutionReceipt,
+) {
+    if let Err(error) = slot.persist(receipt.clone()) {
+        let message = if enqueue_pending_receipt(receipt) {
+            format!("{label} completed. Its provenance receipt could not be stored yet and has been queued for retry: {error}")
+        } else {
+            format!("{label} completed, but receipt storage and the bounded retry queue are unavailable. Preserve this result before closing UJANI: {error}")
+        };
+        emit_task_progress(app, task_id, "receipt_warning", &message, 100);
+    }
+}
+
 #[derive(Debug)]
 struct LocalReceiptContext {
     operation_id: &'static str,
@@ -517,6 +574,7 @@ where
     // Keep document, PDF, summary and translation tasks under the same native
     // single-task / 1 GiB admission gate as interactive inference.
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    flush_pending_receipts(&app);
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -569,11 +627,7 @@ where
             user_approval_id: None,
             network_activity,
         };
-        if let Err(error) = receipt_slot.persist(receipt) {
-            let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
-            emit_task_progress(&app, &task_id, "failed", &message, 0);
-            return Err(message);
-        }
+        persist_receipt_or_warn(&app, &task_id, label, receipt_slot, receipt);
     }
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed and provenance recorded."), 100),
@@ -651,6 +705,7 @@ async fn execute_local_ai_task(
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    flush_pending_receipts(&app);
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
@@ -696,8 +751,7 @@ async fn execute_local_ai_task(
             user_approval_id: None,
             network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         };
-        receipt_slot.persist(receipt)
-            .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
+        persist_receipt_or_warn(&app, &task_id, "Local inference", receipt_slot, receipt);
     }
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed and provenance recorded.", 100),
