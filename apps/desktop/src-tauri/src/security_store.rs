@@ -1,9 +1,9 @@
 //! Durable security state for provenance receipts, peer replay protection and cloud budgets.
 //! This module stores metadata only; it never stores prompts, outputs, API keys or peer private keys.
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ed25519_dalek::VerifyingKey;
-use std::{fs, io::Write, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, io::{BufRead, BufReader, Write}, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use std::collections::HashSet;
@@ -89,6 +89,14 @@ fn initialize(db: &Connection) -> Result<(), String> {
            archived_entries INTEGER NOT NULL,
            archived_at INTEGER NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS receipt_archive_index(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           archive_file TEXT NOT NULL,
+           previous_hash TEXT NOT NULL,
+           head_hash TEXT NOT NULL,
+           entries INTEGER NOT NULL,
+           archived_at INTEGER NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS receipt_slots(
            task_id TEXT PRIMARY KEY,
            reserved_at INTEGER NOT NULL
@@ -149,7 +157,65 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
     Ok(record_hash)
 }
 
-fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
+#[derive(Deserialize)]
+struct ArchivedReceipt {
+    previous_hash: String,
+    record_hash: String,
+    receipt: ExecutionReceipt,
+}
+
+fn verify_archive_index(
+    db: &Connection, archive_dir: &Path,
+) -> Result<(bool, i64, String), String> {
+    let mut statement = db.prepare(
+        "SELECT archive_file,previous_hash,head_hash,entries FROM receipt_archive_index ORDER BY id ASC"
+    ).map_err(|e| e.to_string())?;
+    let rows = statement.query_map([], |row| Ok((
+        row.get::<_, String>(0)?, row.get::<_, String>(1)?,
+        row.get::<_, String>(2)?, row.get::<_, i64>(3)?
+    ))).map_err(|e| e.to_string())?;
+    let mut previous = GENESIS_HASH.to_string();
+    let mut total = 0_i64;
+    let mut valid = true;
+    for row in rows {
+        let (archive_file, expected_previous, expected_head, expected_entries) =
+            row.map_err(|e| e.to_string())?;
+        if expected_previous != previous || archive_file.contains('/') || archive_file.contains('\\') {
+            valid = false;
+            break;
+        }
+        let file = match fs::File::open(archive_dir.join(&archive_file)) {
+            Ok(file) => file, Err(_) => { valid = false; break; }
+        };
+        let mut count = 0_i64;
+        for line in BufReader::new(file).lines() {
+            let line = match line { Ok(line) => line, Err(_) => { valid = false; break; } };
+            let archived: ArchivedReceipt = match serde_json::from_str(&line) {
+                Ok(row) => row, Err(_) => { valid = false; break; }
+            };
+            let json = serde_json::to_string(&archived.receipt)
+                .map_err(|e| format!("Could not encode archived receipt: {e}"))?;
+            if archived.previous_hash != previous
+                || validate_receipt(&archived.receipt).is_err()
+                || sha256_hex(format!("{}:{json}", archived.previous_hash).as_bytes()) != archived.record_hash {
+                valid = false;
+                break;
+            }
+            previous = archived.record_hash;
+            count += 1;
+        }
+        if !valid || count != expected_entries || previous != expected_head {
+            valid = false;
+            break;
+        }
+        total = total.saturating_add(count);
+    }
+    Ok((valid, total, previous))
+}
+
+fn verify_receipts_db_with_archive(
+    db: &Connection, archive_dir: Option<&Path>,
+) -> Result<ReceiptLedgerStatus, String> {
     let mut statement = db.prepare(
         "SELECT receipt_json,previous_hash,record_hash FROM execution_receipts ORDER BY id ASC"
     ).map_err(|e| e.to_string())?;
@@ -160,15 +226,27 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
         "SELECT head_hash,archived_entries FROM receipt_checkpoint WHERE id=1", [],
         |r| Ok((r.get(0)?, r.get(1)?))
     ).optional().map_err(|e| e.to_string())?;
-    let (mut previous, archived_entries) =
+    let (checkpoint_head, archived_entries) =
         checkpoint.unwrap_or_else(|| (GENESIS_HASH.to_string(), 0));
+    let (mut previous, mut valid) = (checkpoint_head.clone(), true);
+    if archived_entries > 0 {
+        match archive_dir {
+            Some(dir) => {
+                let (archive_valid, count, head) = verify_archive_index(db, dir)?;
+                valid = archive_valid && count == archived_entries && head == checkpoint_head;
+            }
+            None => valid = false,
+        }
+    } else {
+        let archive_count: i64 = db.query_row("SELECT COUNT(*) FROM receipt_archive_index", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if archive_count != 0 { valid = false; }
+    }
     let mut entries = 0_i64;
-    let mut valid = true;
     for row in rows {
         let (receipt_json, previous_hash, record_hash) = row.map_err(|e| e.to_string())?;
         let parsed: ExecutionReceipt = match serde_json::from_str(&receipt_json) {
-            Ok(value) => value,
-            Err(_) => { valid = false; break; }
+            Ok(value) => value, Err(_) => { valid = false; break; }
         };
         if validate_receipt(&parsed).is_err() || previous_hash != previous
             || sha256_hex(format!("{previous_hash}:{receipt_json}").as_bytes()) != record_hash {
@@ -178,7 +256,15 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
         previous = record_hash;
         entries += 1;
     }
-    Ok(ReceiptLedgerStatus { entries: entries.saturating_add(archived_entries), valid, head_sha256: previous })
+    Ok(ReceiptLedgerStatus {
+        entries: entries.saturating_add(archived_entries),
+        valid,
+        head_sha256: previous,
+    })
+}
+
+fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
+    verify_receipts_db_with_archive(db, None)
 }
 
 fn claim_nonce_tx(
@@ -290,6 +376,10 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
         .map_err(|e| e.to_string())?;
     if count <= KEEP_AFTER_ARCHIVE { return Ok(0); }
     let n = count - KEEP_AFTER_ARCHIVE;
+    let previous_checkpoint: Option<String> = tx.query_row(
+        "SELECT head_hash FROM receipt_checkpoint WHERE id=1", [], |r| r.get(0)
+    ).optional().map_err(|e| e.to_string())?;
+    let archive_previous = previous_checkpoint.unwrap_or_else(|| GENESIS_HASH.to_string());
     fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
     let path = archive_dir.join(format!("receipts-{now}-{count}.jsonl"));
     let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&path)
@@ -310,9 +400,16 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
         }
     }
     file.sync_all().map_err(|e| format!("Could not fsync receipt archive: {e}"))?;
+    let archive_file = path.file_name().and_then(|name| name.to_str())
+        .ok_or_else(|| "Receipt archive filename is not valid UTF-8.".to_string())?
+        .to_string();
     tx.execute(
         "DELETE FROM execution_receipts WHERE id IN (SELECT id FROM execution_receipts ORDER BY id ASC LIMIT ?1)",
         params![n]
+    ).map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO receipt_archive_index(archive_file,previous_hash,head_hash,entries,archived_at) VALUES(?1,?2,?3,?4,?5)",
+        params![archive_file, archive_previous, head, n, now as i64]
     ).map_err(|e| e.to_string())?;
     tx.execute(
         "INSERT INTO receipt_checkpoint(id,head_hash,archived_entries,archived_at) VALUES(1,?1,?2,?3)
@@ -368,6 +465,13 @@ fn release_receipt_slot(app: &AppHandle, task_id: &str) -> Result<(), String> {
     release_receipt_slot_db(&open(app)?, task_id)
 }
 
+fn receipt_archive_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut archive_dir = app.path().app_data_dir()
+        .map_err(|e| format!("Could not locate receipt archive directory: {e}"))?;
+    archive_dir.push("receipt-archive");
+    Ok(archive_dir)
+}
+
 /// Reserve a durable receipt slot before inference. The reservation is released on drop
 /// if the request fails, is cancelled, or never reaches successful receipt persistence.
 pub fn reserve_execution_receipt_slot(
@@ -380,9 +484,7 @@ pub fn reserve_execution_receipt_slot(
     }
     let now = now_seconds()?;
     let mut db = open(app)?;
-    let mut archive_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Could not locate receipt archive directory: {e}"))?;
-    archive_dir.push("receipt-archive");
+    let archive_dir = receipt_archive_dir(app)?;
     reserve_receipt_slot_db(&mut db, task_id, now, &archive_dir)?;
     Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
 }
@@ -395,14 +497,17 @@ pub fn append_execution_receipt(app: AppHandle, receipt: ExecutionReceipt) -> Re
 /// Verify the local receipt hash chain and return its entry count and head hash.
 #[tauri::command]
 pub fn verify_execution_receipt_ledger(app: AppHandle) -> Result<ReceiptLedgerStatus, String> {
-    verify_receipts_db(&open(&app)?)
+    let db = open(&app)?;
+    let archive_dir = receipt_archive_dir(&app)?;
+    verify_receipts_db_with_archive(&db, Some(&archive_dir))
 }
 
 /// Return the latest 50 metadata-only receipts, refusing to display an invalid ledger.
 #[tauri::command]
 pub fn list_execution_receipts(app: AppHandle) -> Result<Vec<ReceiptLedgerEntry>, String> {
     let db = open(&app)?;
-    let status = verify_receipts_db(&db)?;
+    let archive_dir = receipt_archive_dir(&app)?;
+    let status = verify_receipts_db_with_archive(&db, Some(&archive_dir))?;
     if !status.valid {
         return Err("Execution receipt ledger integrity check failed; receipts are hidden until the store is investigated.".into());
     }
@@ -698,7 +803,7 @@ mod tests {
         reserve_receipt_slot_db(&mut db, "task-new", 3_000, &archive_dir).unwrap();
         let retained: i64 = db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0)).unwrap();
         assert_eq!(retained, KEEP_AFTER_ARCHIVE);
-        let status = verify_receipts_db(&db).unwrap();
+        let status = verify_receipts_db_with_archive(&db, Some(&archive_dir)).unwrap();
         assert!(status.valid);
         assert_eq!(status.entries, ARCHIVE_TRIGGER);
         assert_eq!(status.head_sha256, previous);
@@ -722,7 +827,7 @@ mod tests {
         assert_eq!(archive_previous, checkpoint_head);
 
         append_receipt_db(&mut db, &receipt("task-new")).unwrap();
-        assert!(verify_receipts_db(&db).unwrap().valid);
+        assert!(verify_receipts_db_with_archive(&db, Some(&archive_dir)).unwrap().valid);
         fs::remove_dir_all(archive_dir).unwrap();
     }
 
