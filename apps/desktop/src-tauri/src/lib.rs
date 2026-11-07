@@ -213,20 +213,56 @@ struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::Docum
 
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
-async fn execute_document_workflow(file_name:String,content:String,mode:String,model:String,translation_language:Option<String>)->Result<WorkflowExecutionResult,String>{
- let _reservation = resource_runtime::MemoryReservation::acquire("document-workflow")?;
- if content.len()>256*1024{return Err("Workflow input exceeds the 256 KiB document limit.".into());}
- if mode!="fortress"&&mode!="smart"{return Err("Executable document workflows are local-only (Fortress or Smart).".into());}
- let snapshot=get_capability_snapshot().await?;
- let graph=TaskGraph{schema_version:1,nodes:vec![
- TaskNode{id:"analyse".into(),operation_id:"file.analyze_text".into(),depends_on:vec![]},
- TaskNode{id:"summarise".into(),operation_id:"document.summarize".into(),depends_on:vec!["analyse".into()]},
- TaskNode{id:"translate".into(),operation_id:"translate.text".into(),depends_on:vec!["summarise".into()]}]};
- let plan=plan_task_graph(&graph,&mode,snapshot.available_memory_mb,&snapshot.capabilities);
- if !plan.accepted{return Err(format!("Workflow preflight rejected execution: {}",plan.reason));}
- // Do not interpret arbitrary graph data as executable code. This command runs this fixed sequence only.
- let result=LocalTaskEngine::process_document(file_name,content,mode,model,translation_language).await?;
- Ok(WorkflowExecutionResult{plan,result})
+#[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
+async fn execute_document_workflow(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
+    file_name: String,
+    content: String,
+    mode: String,
+    model: String,
+    translation_language: Option<String>,
+) -> Result<WorkflowExecutionResult, String> {
+    let language = translation_language.as_deref().unwrap_or("");
+    let receipt = local_receipt_context(
+        "document.workflow",
+        &model,
+        &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
+    )?;
+    run_managed_task(
+        app,
+        &control,
+        task_id,
+        "Document workflow",
+        receipt,
+        async move {
+            if content.len() > 256 * 1024 {
+                return Err("Workflow input exceeds the 256 KiB document limit.".into());
+            }
+            if mode != "fortress" && mode != "smart" {
+                return Err("Executable document workflows are local-only (Fortress or Smart).".into());
+            }
+            let snapshot = get_capability_snapshot().await?;
+            let graph = TaskGraph {
+                schema_version: 1,
+                nodes: vec![
+                    TaskNode { id: "analyse".into(), operation_id: "file.analyze_text".into(), depends_on: vec![] },
+                    TaskNode { id: "summarise".into(), operation_id: "document.summarize".into(), depends_on: vec!["analyse".into()] },
+                    TaskNode { id: "translate".into(), operation_id: "translate.text".into(), depends_on: vec!["summarise".into()] },
+                ],
+            };
+            let plan = plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities);
+            if !plan.accepted {
+                return Err(format!("Workflow preflight rejected execution: {}", plan.reason));
+            }
+            // Only this fixed, validated sequence is executable; arbitrary graph data is never code.
+            let result = LocalTaskEngine::process_document(
+                file_name, content, mode, model, translation_language
+            ).await?;
+            Ok(WorkflowExecutionResult { plan, result })
+        },
+    ).await
 }
 
 
@@ -396,6 +432,39 @@ struct TaskControlState {
     active: Mutex<HashMap<String, CancellationToken>>,
 }
 
+/// Removes a task from the cancellation registry even if its future unwinds.
+///
+/// Keeping registration ownership in a drop guard prevents stale task IDs from
+/// surviving a panic or an early return while a managed operation is running.
+struct ActiveTaskRegistration<'a> {
+    control: &'a TaskControlState,
+    task_id: String,
+}
+
+impl<'a> ActiveTaskRegistration<'a> {
+    fn register(
+        control: &'a TaskControlState,
+        task_id: &str,
+        token: CancellationToken,
+    ) -> Result<Self, String> {
+        let mut active = control.active.lock()
+            .map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(task_id) {
+            return Err("Task identifier is already active.".into());
+        }
+        active.insert(task_id.to_string(), token);
+        Ok(Self { control, task_id: task_id.to_string() })
+    }
+}
+
+impl Drop for ActiveTaskRegistration<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.control.active.lock() {
+            active.remove(&self.task_id);
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct TaskProgressEvent {
     task_id: String,
@@ -471,13 +540,7 @@ where
         .map_err(|e| e.to_string())?
         .as_millis() as u64;
     let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
+    let _active_registration = ActiveTaskRegistration::register(control, &task_id, token.clone())?;
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
     let result = tokio::select! {
         _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
@@ -488,9 +551,7 @@ where
             }
         }
     };
-    if let Ok(mut active) = control.active.lock() {
-        active.remove(&task_id);
-    }
+    drop(_active_registration);
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
             .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
@@ -867,6 +928,57 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running UJANI Public AI");
+}
+
+
+#[cfg(test)]
+mod active_task_registration_tests {
+    use super::{ActiveTaskRegistration, TaskControlState};
+    use std::{collections::HashMap, sync::Mutex};
+    use tokio_util::sync::CancellationToken;
+
+    fn control() -> TaskControlState {
+        TaskControlState { active: Mutex::new(HashMap::new()) }
+    }
+
+    #[test]
+    fn registration_is_removed_when_guard_is_dropped() {
+        let control = control();
+        {
+            let _registration = ActiveTaskRegistration::register(
+                &control, "managed-task-1", CancellationToken::new()
+            ).unwrap();
+            assert!(control.active.lock().unwrap().contains_key("managed-task-1"));
+        }
+        assert!(!control.active.lock().unwrap().contains_key("managed-task-1"));
+    }
+
+    #[test]
+    fn registration_is_removed_when_managed_future_unwinds() {
+        let control = control();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _registration = ActiveTaskRegistration::register(
+                &control, "managed-task-panic", CancellationToken::new()
+            ).unwrap();
+            panic!("simulated managed task panic");
+        }));
+        assert!(result.is_err());
+        assert!(!control.active.lock().unwrap().contains_key("managed-task-panic"));
+    }
+
+    #[test]
+    fn duplicate_registration_is_rejected_without_replacing_token() {
+        let control = control();
+        let original = CancellationToken::new();
+        let _registration = ActiveTaskRegistration::register(
+            &control, "managed-task-1", original.clone()
+        ).unwrap();
+        assert!(ActiveTaskRegistration::register(
+            &control, "managed-task-1", CancellationToken::new()
+        ).is_err());
+        assert!(!original.is_cancelled());
+        assert_eq!(control.active.lock().unwrap().len(), 1);
+    }
 }
 
 #[cfg(test)]
