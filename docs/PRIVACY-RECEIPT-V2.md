@@ -18,6 +18,7 @@ The local ledger is a SQLite hash chain. It is tamper-evident against accidental
   - `measured`: captured directly by the UJANI application at the stated boundary.
   - `inferred`: derived from configuration or resolver results; it is not proof of the actual connected peer.
   - `unknown`: not observed, with a reason. Unknown is never encoded as zero.
+  - A zero byte count is accepted only as a `measured` observation; inferred byte counts must be positive.
 - The BYOK cloud gateway measures the serialized HTTP request body length and the response body bytes read by the application. It records the configured destination host and the resolver addresses as inferred. These are application-payload measurements, **not total network traffic**: HTTP headers, TLS, transport framing, DNS packets, retries below the HTTP client and other processes/system traffic are excluded.
 - Local Ollama tasks currently report network observations as unknown because UJANI does not run a system-wide socket monitor. This avoids falsely claiming that local inference generated zero network traffic.
 - Model downloads are cancellable, bounded tasks but are not inference receipts. Their full registry/network transfer is not instrumented at this time.
