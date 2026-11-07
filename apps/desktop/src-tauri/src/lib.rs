@@ -505,13 +505,19 @@ fn flush_pending_receipts_blocking(app: &AppHandle) {
     let batch = match pending_receipts().lock() {
         Ok(mut pending) => std::mem::take(&mut *pending), Err(_) => return,
     };
-    for receipt in batch {
+    let mut receipts = batch.into_iter();
+    while let Some(receipt) = receipts.next() {
         let persisted = security_store::reserve_execution_receipt_slot(app, &receipt.task_id)
             .and_then(|slot| slot.persist(receipt.clone()).map(|_| ()));
         if persisted.is_err() {
+            // A store-unavailable error is unlikely to improve on the next row.
+            // Requeue the failed item and the untouched tail, then stop this retry pass.
             if let Ok(mut pending) = pending_receipts().lock() {
-                if pending.len() < MAX_PENDING_RECEIPTS { pending.push(receipt); }
+                for item in std::iter::once(receipt).chain(receipts) {
+                    if pending.len() < MAX_PENDING_RECEIPTS { pending.push(item); }
+                }
             }
+            break;
         }
     }
 }
