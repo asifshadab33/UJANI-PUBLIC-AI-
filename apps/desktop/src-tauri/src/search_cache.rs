@@ -550,6 +550,22 @@ mod tests {
     }
 
     /// Ensures deleting a user-approved scope cascades to both cached results and recent queries.
+    /// Verifies a cache miss never creates a durable folder-scope record.
+    #[test]
+    fn cache_lookup_does_not_register_a_scope_until_a_result_is_stored() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-cache-scope-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let mut db = memory_db();
+        let key = key();
+        assert_eq!(scope_for_path(&mut db, &key, &root, false).unwrap(), None);
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM approved_scopes", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
+        let created = scope_for_path(&mut db, &key, &root, true).unwrap().unwrap();
+        assert_eq!(scope_for_path(&mut db, &key, &root, false).unwrap(), Some(created));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn removing_a_scope_invalidates_all_associated_cache_and_history() {
         let db = memory_db();
