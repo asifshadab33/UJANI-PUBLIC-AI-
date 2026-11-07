@@ -158,6 +158,7 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
 }
 
 #[derive(Deserialize)]
+/// One receipt record reconstructed from an immutable JSONL archive line.
 struct ArchivedReceipt {
     previous_hash: String,
     record_hash: String,
@@ -388,6 +389,7 @@ impl Drop for ReceiptSlotReservation {
 }
 
 #[cfg(windows)]
+/// Atomically publish a file or directory using Windows write-through rename semantics.
 fn move_archive_write_through(from: &Path, to: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     let from_wide: Vec<u16> = from.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
