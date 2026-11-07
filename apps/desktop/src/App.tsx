@@ -76,6 +76,7 @@ function readFileAsBase64(file: File): Promise<string> {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
@@ -754,10 +755,12 @@ export default function App() {
     <UpdateNotice />
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">U</div><div><b>UJANI</b><small>PUBLIC AI</small></div></div>
-      <div className="nav-label">WORKSPACE</div>
-      <div className="nav active"><Sparkles size={17}/> New task</div>
-      <div className="nav"><Activity size={17}/> Activity</div>
-      <div className="nav"><HardDrive size={17}/> Local resources</div>
+      <nav aria-label="Workspace navigation">
+        <div className="nav-label">WORKSPACE</div>
+        <button type="button" className={`nav ${activeSidebarSection === "new-task" ? "active" : ""}`} aria-label="New task" aria-current={activeSidebarSection === "new-task" ? "page" : undefined} onClick={() => { setActiveSidebarSection("new-task"); document.getElementById("new-task")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}><Sparkles size={17}/> New task</button>
+        <button type="button" className={`nav ${activeSidebarSection === "activity" ? "active" : ""}`} aria-label="Activity" aria-current={activeSidebarSection === "activity" ? "page" : undefined} onClick={() => { setActiveSidebarSection("activity"); document.getElementById("activity-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}><Activity size={17}/> Activity</button>
+        <button type="button" className={`nav ${activeSidebarSection === "resources" ? "active" : ""}`} aria-label="Local resources" aria-current={activeSidebarSection === "resources" ? "page" : undefined} onClick={() => { setActiveSidebarSection("resources"); openLocalSetup(); }}><HardDrive size={17}/> Local resources</button>
+      </nav>
       <div className="sidebar-bottom"><ShieldCheck size={17}/><span>Local-first mode<br/><small>Your device, your control</small></span></div>
     </aside>
     <section className="main">
@@ -772,7 +775,7 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
-      <section className="launcher-section" aria-labelledby="launcher-title">
+      <section className="launcher-section" id="new-task" aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
           <button className="launcher-card launcher-primary" onClick={openLocalChat}>
@@ -1045,7 +1048,7 @@ export default function App() {
             {modelResult && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> {modelResult.is_mock ? "Mock adapter result" : "Model result"} <span>{modelResult.execution}</span></div><p>{modelResult.output}</p><small>{modelResult.model_name} · {modelResult.model_id} · {modelResult.is_mock ? "No AI inference occurred" : "Local inference"}</small></div>}
           </div>
         </div>
-        <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
+        <div className="side-panel" id="activity-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history receipt-history">
             <h3>Privacy & execution receipts</h3>
