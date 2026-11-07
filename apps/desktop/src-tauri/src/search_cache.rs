@@ -90,11 +90,6 @@ fn open_database(path: &Path) -> Result<Connection, String> {
 
 /// Creates the versioned cache schema and verifies SQLite integrity.
 fn initialize(db: &Connection) -> Result<(), String> {
-    let current_schema: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
-    if current_schema > 2 {
-        return Err("Local search cache schema is newer than this UJANI build.".into());
-    }
     db.execute_batch(
         "PRAGMA foreign_keys=ON;
          PRAGMA secure_delete=ON;
@@ -138,18 +133,32 @@ fn initialize(db: &Connection) -> Result<(), String> {
     // Search caching and recent-query retention now require an explicit user opt-in.
     // Version-1 installations used an implicit-on default, so discard those automatic
     // entries and disable caching rather than treating that historical default as consent.
-    if current_schema < 2 {
-        db.execute("UPDATE cache_settings SET value='false' WHERE key='enabled'", [])
-            .map_err(|error| format!("Could not disable implicit search caching: {error}"))?;
-        db.execute("DELETE FROM search_cache", [])
-            .map_err(|error| format!("Could not clear pre-opt-in search results: {error}"))?;
-        db.execute("DELETE FROM recent_searches", [])
-            .map_err(|error| format!("Could not clear pre-opt-in search history: {error}"))?;
-        db.execute("DELETE FROM approved_scopes", [])
-            .map_err(|error| format!("Could not clear pre-opt-in folder scopes: {error}"))?;
+    // Serialize migration with other cache opens, then re-read the version under the write lock.
+    // Consent reset, legacy data deletion and schema bump commit as one atomic operation.
+    db.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|error| format!("Could not start local search cache migration: {error}"))?;
+    let migration = (|| -> Result<(), String> {
+        let current_schema: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
+        if current_schema > 2 {
+            return Err("Local search cache schema is newer than this UJANI build.".into());
+        }
+        if current_schema < 2 {
+            db.execute_batch(
+                "UPDATE cache_settings SET value='false' WHERE key='enabled';
+                 DELETE FROM search_cache;
+                 DELETE FROM recent_searches;
+                 DELETE FROM approved_scopes;
+                 PRAGMA user_version=2;"
+            ).map_err(|error| format!("Could not migrate local search cache to schema v2: {error}"))?;
+        }
+        db.execute_batch("COMMIT;")
+            .map_err(|error| format!("Could not commit local search cache migration: {error}"))
+    })();
+    if let Err(error) = migration {
+        let _ = db.execute_batch("ROLLBACK;");
+        return Err(error);
     }
-    db.execute_batch("PRAGMA user_version=2;")
-        .map_err(|error| format!("Could not update local search cache schema version: {error}"))?;
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| format!("Could not verify local search cache: {error}"))?;
     if check != "ok" {
