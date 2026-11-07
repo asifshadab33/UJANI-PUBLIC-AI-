@@ -27,7 +27,7 @@
 
 - Signed administrator approval and policy-validation foundations.
 - Ed25519 approval claims bound to workload/device/class/resource limits and expiry.
-- In-memory reservation leases, expiry/renewal handling, replay protection within process lifetime and overflow-safe resource accounting.
+- A local file-backed reservation ledger with OS advisory locking, snapshot checksum validation, backup/rename recovery, opaque lease capabilities, authenticated renewal/release and durable challenge replay claims. It is single-host and not a distributed transaction service.
 - Strict, versioned workload manifest input contract and JSON Schema, with validation tests.
 - The workload manifest is not an execution grant. Production identity enrollment, durable state and a complete control plane remain future work.
 
@@ -36,7 +36,7 @@
 ### P0 — before describing either product as production-ready
 
 1. **OS-enforced isolation:** implement and test supported Linux, macOS and Windows sandbox adapters. Fortress is currently an application policy boundary, not OS-enforced network/process isolation. Validate filesystem, network-egress, child-process, CPU, memory and file-descriptor restrictions.
-2. **PDF worker containment:** OS-specific worker restrictions are implemented in the current remediation branch (Unix resource limits and Linux network syscall filtering, macOS deny-network/file-write profile, Windows Job Object). Validate launch, cancellation, termination and cleanup on all supported OSes; these worker restrictions are not a full application sandbox.
+2. **PDF worker containment:** OS-specific worker restrictions include Unix resource limits, Linux seccomp denial of network/process-creation/namespace syscalls, a macOS deny-network/file-write profile, and a Windows Job Object with memory/CPU/one-process limits. Validate launch, cancellation, termination and cleanup on all supported OSes; these worker restrictions are not a full application sandbox.
 3. **Security verification:** commission independent threat modelling and penetration testing; review dependencies/SBOM, signing, update provenance, secrets, IPC, local services, cloud gateway, storage and installer/release pipeline.
 4. **Release engineering:** establish signed reproducible builds, provenance/attestations, protected release approvals, artifact verification, rollback and a tested update/recovery process.
 5. **Data lifecycle:** verify history migration, backup/restore, user-visible export/deletion, key rotation/recovery, retention enforcement and concurrent key initialization across supported OS credential stores.
@@ -50,7 +50,7 @@
 5. **Receiver-side authorization:** verify signatures and exact payload digests before parsing/execution; re-evaluate current organisation policy, user consent, device status, scopes, quotas and resource limits immediately before dispatch.
 6. **Result provenance:** sign receipts; bind worker and organisation identity; verify task ID and input digest; hash exact returned output bytes and compare to the signed output digest before accepting results.
 7. **Authenticated transport/API:** build the Enterprise control-plane API, device agent, mutual authentication, authorization, audit logs, rate limiting, idempotency, failure recovery and tenant isolation.
-8. **Durable reservations:** replace in-memory-only reservation/replay state with a transactional store and crash-safe leases, accounting, expiry, reconciliation and idempotency.
+8. **Durable reservations:** the merged file-backed ledger is a single-host prototype with OS advisory locks and backup/rename recovery. Before production, add a trusted storage boundary, authenticated service principal binding, keyed integrity/encryption at rest, migrations, backup/restore drills, and cross-process crash/power-loss testing on supported filesystems.
 
 ### P1 — actual resource-aware execution
 
@@ -77,7 +77,7 @@
 - The Public scheduler does not collect telemetry, reserve resources, dispatch work or guarantee capacity.
 - The execution receipt type is a contract; there is no durable receipt ledger or universal cryptographic attestation of execution.
 - Peer protocol v2 plus local device identity, native-confirmed trust/revocation and persistent nonce claims do not provide encrypted/authenticated network transport, remote dispatch, organisation-level identity, or remote execution.
-- Enterprise in-memory leases/replay protection are not durable across process restarts.
+- Enterprise now has a file-backed, cross-process reservation/replay ledger with restart recovery tests. It remains single-host, unencrypted, and protected by an unkeyed checksum rather than a MAC/signature; a local writer can alter and recompute the checksum. It is not a production control-plane database or distributed lock service.
 - A workload manifest validates requested input only; it does not authenticate a sender, authorize a workload or execute it.
 - Parser fuzz targets exist, but no completed fuzz campaign is claimed.
 - CI compilation and unit tests do not substitute for native desktop smoke tests, hardware tests or independent security testing.
@@ -86,7 +86,7 @@
 
 1. Stabilise and merge the current Public security remediation only after all CI and CodeQL checks pass.
 2. Rework Public PR #14 against the current `main` base, resolve conflicts, and make all three native platform checks pass before merging its resource-aware and runtime-hardening work.
-3. Build the Enterprise durable identity, approval, reservation and replay store before enabling any external worker.
+3. Harden the merged Enterprise file-backed ledger and complete trusted enrollment/key lifecycle, authenticated control-plane APIs and receiver-side authorization before enabling any external worker.
 4. Freeze the shared Personal-to-Enterprise protocol and publish cross-language test vectors before implementing transport.
 5. Implement OS isolation and PDF worker limits before production security claims.
 6. Add real hardware telemetry, resource reservations and measured benchmark/receipt storage before claiming distributed optimisation.
