@@ -3,7 +3,7 @@
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -11,6 +11,8 @@ use std::{
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
+#[cfg(not(any(unix, windows)))]
+use std::fs::File;
 
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
@@ -53,7 +55,7 @@ struct Candidate {
 pub fn get_local_clock() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
         .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
 }
 
@@ -68,6 +70,17 @@ pub async fn find_duplicate_files(
         return Err("Invalid task identifier.".into());
     }
 
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) {
+            return Err("Task identifier is already active.".into());
+        }
+        active.insert(task_id.clone(), token.clone());
+    }
+    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to scan for duplicate files.", 1);
+
     let picker_app = app.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
         let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to find duplicates").blocking_pick_folder() else {
@@ -80,20 +93,13 @@ pub async fn find_duplicate_files(
     .await
     .map_err(|error| format!("Folder picker failed: {error}"))??;
 
+    if token.is_cancelled() {
+        return Err("Duplicate scan cancelled by user.".into());
+    }
     let Some(folder) = selected else {
         return Err("Folder selection cancelled. Nothing was scanned.".into());
     };
-
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
-    super::emit_task_progress(&app, &task_id, "starting", "Scanning the selected folder for duplicate files.", 5);
+    super::emit_task_progress(&app, &task_id, "scanning", "Scanning the selected folder for duplicates.", 10);
 
     let worker_token = token.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || scan_duplicates(&folder, &worker_token));
@@ -112,7 +118,7 @@ pub async fn find_duplicate_files(
     };
 
     match &result {
-        Ok(summary) => super::emit_task_progress(&app, &task_id, "completed", "Duplicate scan finished. Review the preview; no files were changed.", 100),
+        Ok(_) => super::emit_task_progress(&app, &task_id, "completed", "Duplicate scan finished. Review the preview; no files were changed.", 100),
         Err(error) if error.contains("cancelled") => super::emit_task_progress(&app, &task_id, "cancelled", "Duplicate scan cancelled.", 0),
         Err(error) => super::emit_task_progress(&app, &task_id, "failed", error, 0),
     }
