@@ -110,6 +110,7 @@ pub async fn process_selected_folder(
         task_id,
         "Folder import",
         receipt,
+        ujani_core::NetworkActivity::unknown(),
         async move {
             let total_bytes = files.iter().map(|file| file.size_bytes).sum();
             let ollama_available =

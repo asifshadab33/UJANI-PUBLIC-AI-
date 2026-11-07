@@ -27,7 +27,7 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
-use ujani_core::{sha256_hex, validate_model_identifier, ReceiptExecutionLocation, ExecutionReceipt};
+use ujani_core::{sha256_hex, validate_model_identifier, NetworkActivity, ReceiptExecutionLocation, ExecutionReceipt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
@@ -233,7 +233,7 @@ async fn execute_document_workflow(
   &model,
   &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
  )?;
- run_managed_task(app, &control, task_id, "Document workflow", receipt, async move {
+ run_managed_task(app, &control, task_id, "Document workflow", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]), async move {
   if content.len() > 256 * 1024 {
    return Err("Workflow input exceeds the 256 KiB document limit.".into());
   }
@@ -285,6 +285,9 @@ async fn execute_cloud_ai_task(
  }
  let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
   .map_err(|e| e.to_string())?.as_millis() as u64;
+ let network_activity = NetworkActivity::inferred(vec![
+  cloud_gateway::endpoint_host(&endpoint).unwrap_or_else(|| "configured-provider-endpoint".into())
+ ]);
  let input_digest = sha256_hex(prompt.as_bytes());
  let receipt_model_id = model.clone();
  // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
@@ -295,10 +298,10 @@ async fn execute_cloud_ai_task(
   if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
   active.insert(task_id.clone(), token.clone());
  }
+ let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
-   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
    return Err(error);
   }
  };
@@ -306,7 +309,6 @@ async fn execute_cloud_ai_task(
  let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
   Err(error) => {
-   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
    return Err(error);
   }
  };
@@ -322,12 +324,11 @@ async fn execute_cloud_ai_task(
    }
   }
  };
- if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
  if let Ok(output) = &result {
   let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
    .map_err(|e| e.to_string())?.as_millis() as u64;
   let receipt = ExecutionReceipt {
-   schema_version: 1,
+   schema_version: 2,
    task_id: task_id.clone(),
    operation_id: "cloud.ai.generate".into(),
    location: ReceiptExecutionLocation::ExternalProvider,
@@ -340,6 +341,7 @@ async fn execute_cloud_ai_task(
    started_at_unix_ms,
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
+   network_activity: network_activity.clone(),
   };
   receipt_slot.persist(receipt)
    .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
@@ -390,6 +392,7 @@ async fn pull_ollama_model(
         if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
         active.insert(task_id.clone(), token.clone());
     }
+    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
@@ -398,9 +401,13 @@ async fn pull_ollama_model(
     });
     let result = tokio::select! {
         _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
-        outcome = download => outcome,
+        outcome = tokio::time::timeout(std::time::Duration::from_secs(20 * 60), download) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err("Model download exceeded the 20-minute task time budget.".into()),
+            }
+        },
     };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
@@ -496,6 +503,7 @@ async fn run_managed_task<T, F>(
     task_id: String,
     label: &'static str,
     receipt_context: LocalReceiptContext,
+    network_activity: NetworkActivity,
     future: F,
 ) -> Result<T, String>
 where
@@ -545,7 +553,7 @@ where
             _ => ReceiptExecutionLocation::LocalUnverified,
         };
         let receipt = ExecutionReceipt {
-            schema_version: 1,
+            schema_version: 2,
             task_id: task_id.clone(),
             operation_id: receipt_context.operation_id.into(),
             location,
@@ -558,6 +566,7 @@ where
             started_at_unix_ms,
             completed_at_unix_ms,
             user_approval_id: None,
+            network_activity,
         };
         if let Err(error) = receipt_slot.persist(receipt) {
             let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
@@ -651,6 +660,7 @@ async fn execute_local_ai_task(
         if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
         active.insert(task_id.clone(), token.clone());
     }
+    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
     emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
     let execution = LocalTaskEngine::execute(prompt, mode, model);
@@ -663,12 +673,11 @@ async fn execute_local_ai_task(
             }
         }
     };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     if let Ok(value) = &result {
         let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?.as_millis() as u64;
         let receipt = ExecutionReceipt {
-            schema_version: 1,
+            schema_version: 2,
             task_id: task_id.clone(),
             operation_id: "local.ai.generate".into(),
             location: match ollama::accelerator_observation().await.ok() {
@@ -684,6 +693,7 @@ async fn execute_local_ai_task(
             started_at_unix_ms,
             completed_at_unix_ms,
             user_approval_id: None,
+            network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         };
         receipt_slot.persist(receipt)
             .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
@@ -730,7 +740,7 @@ async fn summarize_selected_text(
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Text summary", receipt,
+    run_managed_task(app, &control, task_id, "Text summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::summarize(file_name, content, mode, model)).await
 }
 
@@ -754,7 +764,7 @@ async fn process_selected_document(
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Document pipeline", receipt,
+    run_managed_task(app, &control, task_id, "Document pipeline", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
 }
 
@@ -778,7 +788,7 @@ async fn process_selected_pdf(
         &model,
         &[file_name.as_bytes(), data.as_slice(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "PDF extraction and summary", receipt,
+    run_managed_task(app, &control, task_id, "PDF extraction and summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language)).await
 }
 
@@ -798,7 +808,7 @@ async fn translate_text_local(
         &model,
         &[text.as_bytes(), target_language.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Local translation", receipt,
+    run_managed_task(app, &control, task_id, "Local translation", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         LocalTaskEngine::translate_local(text, target_language, mode, model)).await
 }
 
