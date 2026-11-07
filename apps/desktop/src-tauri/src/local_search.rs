@@ -21,7 +21,7 @@ const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LocalSearchMatch {
     path: String,
     file_name: String,
@@ -29,10 +29,9 @@ pub struct LocalSearchMatch {
     size_bytes: u64,
     modified_unix_ms: Option<u64>,
     matched_in: Vec<String>,
-    file_identity: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LocalSearchResult {
     cancelled: bool,
     root_name: Option<String>,
@@ -52,6 +51,12 @@ struct Candidate {
     modified_unix_ms: Option<u64>,
     modified_unix_ns: Option<u64>,
     identity: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedSearchPayload {
+    result: LocalSearchResult,
+    file_identities: Vec<Option<String>>,
 }
 
 /// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
@@ -116,19 +121,21 @@ pub async fn find_local_files(
     if !force_refresh && !truncated {
         if let Some(inventory_json) = inventory_json.as_deref() {
         if let Ok(Some(cached_json)) = crate::search_cache::load(&app, &root, &query, search_pdf_text, inventory_json) {
-            if let Ok(mut cached) = serde_json::from_str::<LocalSearchResult>(&cached_json) {
-                if validate_cached_matches(&root, &candidates, &cached) {
-                    cached.scanned_files = scanned_files;
-                    cached.cache_hit = true;
-                    cached.note = format!("{} Cached metadata was revalidated against the selected folder just now; no document contents were retained.", cached.note);
+            if let Ok(cached) = serde_json::from_str::<CachedSearchPayload>(&cached_json) {
+                if validate_cached_matches(&root, &candidates, &cached.result, &cached.file_identities) {
+                    let mut cached_result = cached.result;
+                    cached_result.scanned_files = scanned_files;
+                    cached_result.cache_hit = true;
+                    cached_result.note = format!("{} Cached metadata was revalidated against the selected folder just now; no document contents were retained.", cached_result.note);
                     super::emit_task_progress(&app, &task_id, "completed", "Validated recent local search results.", 100);
-                    return Ok(cached);
+                    return Ok(cached_result);
                 }
             }
         }
         }
     }
     let mut matches = Vec::new();
+    let mut cached_file_identities = Vec::new();
     let mut text_bytes = 0u64;
     let mut pdf_count = 0usize;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
@@ -194,8 +201,8 @@ pub async fn find_local_files(
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in,
-                file_identity: candidate.identity.clone(),
             });
+            cached_file_identities.push(candidate.identity.clone());
         }
     }
 
@@ -214,7 +221,8 @@ pub async fn find_local_files(
         },
     };
     if !result.truncated {
-        if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&result)) {
+        let cached_payload = CachedSearchPayload { result: result.clone(), file_identities: cached_file_identities };
+        if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&cached_payload)) {
             let _ = crate::search_cache::store(
                 &app, &root, &query, search_pdf_text, inventory_json, &payload, result.matches.is_empty()
             );
@@ -249,13 +257,14 @@ fn modified_unix_ns(metadata: &fs::Metadata) -> Option<u64> {
 
 /// A cache hit is accepted only when the entire current inventory matched and each
 /// cached result can be re-opened without following a symlink/reparse point.
-fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &LocalSearchResult) -> bool {
-    for item in &cached.matches {
+fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &LocalSearchResult, cached_identities: &[Option<String>]) -> bool {
+    if cached.matches.len() != cached_identities.len() { return false; }
+    for (item, cached_identity) in cached.matches.iter().zip(cached_identities) {
         let path = PathBuf::from(&item.path);
         if !path.starts_with(root) { return false; }
         let Some(candidate) = candidates.iter().find(|candidate| candidate.path == path) else { return false; };
         if candidate.size != item.size_bytes || candidate.modified_unix_ms != item.modified_unix_ms
-            || candidate.identity != item.file_identity {
+            || candidate.identity.as_ref() != cached_identity.as_ref() {
             return false;
         }
         let Ok(file) = open_candidate(&path) else { return false; };
@@ -507,16 +516,15 @@ mod tests {
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in: vec!["text content".into()],
-                file_identity: candidate.identity.clone(),
             }],
             truncated: false,
             note: "cached".into(),
             cache_hit: false,
         };
-        assert!(validate_cached_matches(&canonical, &candidates, &cached));
+        assert!(validate_cached_matches(&canonical, &candidates, &cached, &[candidate.identity.clone()]));
         fs::write(&path, "invoice changed to a longer value").unwrap();
         let (_, changed_candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
-        assert!(!validate_cached_matches(&canonical, &changed_candidates, &cached));
+        assert!(!validate_cached_matches(&canonical, &changed_candidates, &cached, &[candidate.identity.clone()]));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -545,17 +553,16 @@ mod tests {
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in: vec!["filename".into()],
-                file_identity: candidate.identity.clone(),
             }],
             truncated: false,
             note: "cached".into(),
             cache_hit: false,
         };
-        assert!(validate_cached_matches(&canonical, &candidates, &cached));
+        assert!(validate_cached_matches(&canonical, &candidates, &cached, &[candidate.identity.clone()]));
         fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink(&outside_file, &path).unwrap();
         let (_, replaced_candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
-        assert!(!validate_cached_matches(&canonical, &replaced_candidates, &cached));
+        assert!(!validate_cached_matches(&canonical, &replaced_candidates, &cached, &[candidate.identity.clone()]));
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
     }
