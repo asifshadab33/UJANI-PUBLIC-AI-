@@ -908,6 +908,7 @@ pub fn run() {
             folder_import::process_selected_folder,
             local_search::find_local_files,
             search_cache::get_local_search_cache_settings,
+            search_cache::list_recent_local_searches,
             search_cache::set_local_search_cache_settings,
             search_cache::clear_local_search_cache,
             everyday_tools::get_local_clock,
