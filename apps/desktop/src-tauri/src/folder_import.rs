@@ -20,9 +20,9 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 ];
 
 #[derive(Debug)]
-struct SelectedTextFile {
-    name: String,
-    content: String,
+pub(super) struct SelectedTextFile {
+    pub(super) name: String,
+    pub(super) content: String,
     size_bytes: usize,
 }
 
