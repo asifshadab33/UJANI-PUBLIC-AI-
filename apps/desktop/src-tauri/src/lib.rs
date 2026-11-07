@@ -1,5 +1,6 @@
 mod cloud_gateway;
 mod device_identity;
+mod everyday_tools;
 mod folder_import;
 mod history;
 mod model_runtime;
@@ -903,6 +904,8 @@ pub fn run() {
             translate_text_local,
             inspect_image_file,
             folder_import::process_selected_folder,
+            everyday_tools::get_local_clock,
+            everyday_tools::find_duplicate_files,
             history::get_task_history_settings,
             history::set_task_history_enabled,
             history::save_task_history,
