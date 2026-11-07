@@ -160,20 +160,23 @@ pub async fn find_local_files(
 
         let is_text = matches!(candidate.extension.as_str(),
             "txt" | "md" | "csv" | "log" | "json" | "xml" | "html" | "htm" | "rtf");
-        if matched_in.is_empty() && is_text && candidate.size <= MAX_TEXT_FILE_BYTES
-            && text_bytes.saturating_add(candidate.size) <= MAX_TEXT_TOTAL_BYTES
-        {
-            let read_path = candidate.path.clone();
-            match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
-                Ok(Ok(bytes)) => {
-                    text_bytes = text_bytes.saturating_add(bytes.len() as u64);
-                    match String::from_utf8(bytes) {
-                        Ok(content) if content.to_lowercase().contains(&query) => matched_in.push("text content".to_string()),
-                        Ok(_) => {},
-                        Err(_) => incomplete = true,
+        if matched_in.is_empty() && is_text {
+            if candidate.size > MAX_TEXT_FILE_BYTES
+                || text_bytes.saturating_add(candidate.size) > MAX_TEXT_TOTAL_BYTES {
+                incomplete = true;
+            } else {
+                let read_path = candidate.path.clone();
+                match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
+                    Ok(Ok(bytes)) => {
+                        text_bytes = text_bytes.saturating_add(bytes.len() as u64);
+                        match String::from_utf8(bytes) {
+                            Ok(content) if content.to_lowercase().contains(&query) => matched_in.push("text content".to_string()),
+                            Ok(_) => {},
+                            Err(_) => incomplete = true,
+                        }
                     }
+                    _ => incomplete = true,
                 }
-                _ => incomplete = true,
             }
         }
 
@@ -230,10 +233,17 @@ pub async fn find_local_files(
         matches,
         truncated,
         cache_hit: false,
-        note: if search_pdf_text {
-            "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs and 180 seconds.".into()
-        } else {
-            "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included.".into()
+        note: {
+            let base = if search_pdf_text {
+                "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs and 180 seconds."
+            } else {
+                "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included."
+            };
+            if incomplete {
+                format!("{base} Some eligible files could not be inspected within the supported limits; this partial result was not cached.")
+            } else {
+                base.into()
+            }
         },
     };
     if !result.truncated && !incomplete {
