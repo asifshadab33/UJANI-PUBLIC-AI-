@@ -47,13 +47,13 @@ jobs:
       - name: Verify frontend build
         working-directory: apps/desktop
         run: |
-          npm install
+          npm ci
           npm run build
       - name: Verify Rust core and desktop native code
         run: |
-          cargo test --workspace
-          cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+          cargo test --workspace --locked
+          cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
 
   build-and-upload:
     needs: verify
@@ -85,7 +85,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/desktop/package.json
+          cache-dependency-path: apps/desktop/package-lock.json
       - name: Validate release signing secrets and inject public key
         shell: bash
         env:
@@ -115,7 +115,7 @@ jobs:
           workspaces: apps/desktop/src-tauri -> target
       - name: Install frontend dependencies
         working-directory: apps/desktop
-        run: npm install
+        run: npm ci
       - name: Generate platform installer icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
