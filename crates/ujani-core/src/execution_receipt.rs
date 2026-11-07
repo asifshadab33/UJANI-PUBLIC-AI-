@@ -145,7 +145,9 @@ fn validate_network_telemetry(network: &NetworkTelemetry) -> Result<(), ReceiptE
         NetworkObservation::Unknown { reason } => valid_unknown_reason(reason),
     };
     let validate_bytes = |observation: &NetworkObservation<u64>| match observation {
-        NetworkObservation::Measured { value } | NetworkObservation::Inferred { value } => *value <= 1_073_741_824,
+        NetworkObservation::Measured { value } => *value <= 1_073_741_824,
+        // An inferred zero would falsely imply no traffic; zero must be directly measured.
+        NetworkObservation::Inferred { value } => *value > 0 && *value <= 1_073_741_824,
         NetworkObservation::Unknown { reason } => valid_unknown_reason(reason),
     };
     if !validate_names(&network.destinations)
@@ -267,6 +269,9 @@ mod tests {
         assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkTelemetry));
         r.network = NetworkTelemetry::default();
         r.network.application_request_body_bytes = NetworkObservation::Unknown { reason: "".into() };
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkTelemetry));
+        r.network = NetworkTelemetry::default();
+        r.network.application_response_body_bytes = NetworkObservation::Inferred { value: 0 };
         assert_eq!(validate_receipt(&r), Err(ReceiptError::InvalidNetworkTelemetry));
     }
 
