@@ -37,6 +37,8 @@ The fixed document workflow, selected text/document/PDF processing, translation 
 
 The BYOK path has its own approval, token reservation, cancellation, 95-second deadline and active-task RAII guard. Its conservative token reservation is intentionally not refunded on failure/cancellation.
 
+The local file finder registers before opening its native picker, checks cancellation during metadata traversal and content inspection, and is bounded to 5,000 entries, 30 seconds for metadata traversal and 180 seconds for content inspection. The duplicate-file preview is also cancellable and bounded to 5,000 entries and 60 seconds. Dropping a Tauri command future cancels its shared token as well as removing the active task ID, allowing any cooperative `spawn_blocking` scan to stop.
+
 ## Verification
 
 The core contract tests cover:
