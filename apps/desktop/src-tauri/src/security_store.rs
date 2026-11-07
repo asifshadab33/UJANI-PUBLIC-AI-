@@ -716,7 +716,10 @@ mod tests {
             archived_count += 1;
         }
         assert_eq!(archived_count, ARCHIVE_TRIGGER - KEEP_AFTER_ARCHIVE);
-        assert_eq!(archive_previous, status.head_sha256);
+        let checkpoint_head: String = db.query_row(
+            "SELECT head_hash FROM receipt_checkpoint WHERE id=1", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(archive_previous, checkpoint_head);
 
         append_receipt_db(&mut db, &receipt("task-new")).unwrap();
         assert!(verify_receipts_db(&db).unwrap().valid);
