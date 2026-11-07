@@ -122,6 +122,8 @@ fn initialize(db: &Connection) -> Result<(), String> {
     ).map_err(|e| format!("Could not initialise UJANI security store: {e}"))
 }
 
+/// Append one validated receipt in an immediate transaction. A retry with the
+/// same task ID and identical receipt is idempotent; conflicting task data is rejected.
 fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<String, String> {
     validate_receipt(receipt).map_err(|e| format!("Execution receipt rejected: {e:?}"))?;
     let receipt_json = serde_json::to_string(receipt)
@@ -130,6 +132,20 @@ fn append_receipt_db(db: &mut Connection, receipt: &ExecutionReceipt) -> Result<
         return Err("Execution receipt exceeds the 16 KiB storage limit.".into());
     }
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let existing: Option<(String, String)> = tx.query_row(
+        "SELECT receipt_json,record_hash FROM execution_receipts WHERE task_id=?1 ORDER BY id DESC LIMIT 1",
+        params![receipt.task_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|e| e.to_string())?;
+    if let Some((existing_json, existing_hash)) = existing {
+        if existing_json != receipt_json {
+            return Err("A different provenance receipt already exists for this task identifier.".into());
+        }
+        tx.execute("DELETE FROM receipt_slots WHERE task_id=?1", params![receipt.task_id])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        return Ok(existing_hash);
+    }
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     let reserved: i64 = tx.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get(0))
@@ -369,14 +385,25 @@ pub struct ReceiptSlotReservation {
 }
 
 impl ReceiptSlotReservation {
-    /// Persist the completed receipt and atomically consume this reservation.
-    pub fn persist(mut self, receipt: ExecutionReceipt) -> Result<String, String> {
+    /// Persist while returning the still-live reservation on failure, allowing
+    /// the caller to retry without attempting to insert a duplicate task slot.
+    pub fn persist_recoverable(
+        mut self,
+        receipt: ExecutionReceipt,
+    ) -> Result<String, Box<(Self, String)>> {
         if receipt.task_id != self.task_id {
-            return Err("Execution receipt task identifier does not match its reserved ledger slot.".into());
+            return Err(Box::new((
+                self,
+                "Execution receipt task identifier does not match its reserved ledger slot.".into(),
+            )));
         }
-        let result = append_execution_receipt(self.app.clone(), receipt)?;
-        self.consumed = true;
-        Ok(result)
+        match append_execution_receipt(self.app.clone(), receipt) {
+            Ok(result) => {
+                self.consumed = true;
+                Ok(result)
+            }
+            Err(error) => Err(Box::new((self, error))),
+        }
     }
 }
 
@@ -826,6 +853,24 @@ mod tests {
             completed_at_unix_ms: 2_000, user_approval_id: None,
             network_activity: ujani_core::NetworkActivity::unknown(),
         }
+    }
+
+    #[test]
+    fn receipt_append_is_idempotent_for_the_same_task_identifier() {
+        let mut db = db();
+        let first = receipt("task-idempotent");
+        let first_hash = append_receipt_db(&mut db, &first).unwrap();
+        reserve_receipt_slot_db(&mut db, "task-idempotent", 3_000, &std::env::temp_dir()).unwrap();
+        let retry_hash = append_receipt_db(&mut db, &first).unwrap();
+        assert_eq!(first_hash, retry_hash);
+        let reserved: i64 = db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |row| row.get(0)).unwrap();
+        assert_eq!(reserved, 0);
+        let mut changed = receipt("task-idempotent");
+        changed.output_sha256 = sha256_hex(b"different-output");
+        assert!(append_receipt_db(&mut db, &changed).is_err());
+        let status = verify_receipts_db(&db).unwrap();
+        assert!(status.valid);
+        assert_eq!(status.entries, 1);
     }
 
     #[test]

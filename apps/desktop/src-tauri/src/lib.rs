@@ -22,7 +22,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::Mutex};
+use std::{collections::{BTreeSet, HashMap}, sync::{Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
@@ -283,9 +283,18 @@ async fn execute_cloud_ai_task(
   return Err("Invalid task identifier.".into());
  }
  if !external_data_approved {
-  return Err("Cloud transfer was not approved. No request was sent.".into());
+  return Err("Cloud transfer was not approved in UJANI. No request was sent.".into());
  }
  cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
+ let preview: String = prompt.chars().take(600).collect();
+ let truncated = prompt.chars().count() > 600;
+ let consent_message = format!(
+  "UJANI is about to send this single request to an external provider.\n\nEndpoint: {endpoint}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
+ );
+ if !native_consent::confirm_native(&app, "Approve one-time cloud data transfer", consent_message).await {
+  return Err("Cloud transfer was not approved in the native confirmation dialog. No request was sent.".into());
+ }
  if !validate_model_identifier(&model) {
   return Err("Model identifier cannot be recorded safely in execution provenance.".into());
  }
@@ -305,6 +314,7 @@ async fn execute_cloud_ai_task(
   active.insert(task_id.clone(), token.clone());
  }
  let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+ flush_pending_receipts(&app).await;
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
@@ -321,6 +331,7 @@ async fn execute_cloud_ai_task(
  emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
+ let mut receipt_warning = None;
  let result = tokio::select! {
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
   outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
@@ -349,15 +360,15 @@ async fn execute_cloud_ai_task(
    user_approval_id: Some(approval_id),
    network_activity: network_activity.clone(),
   };
-  receipt_slot.persist(receipt)
-   .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
+  receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  }
  match &result {
-  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed and provenance recorded.", 100),
+  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
   Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
  }
+ if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
  result
 }
 /// Explicitly downloads a named model through the local Ollama service only.
@@ -469,6 +480,180 @@ fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str
     });
 }
 
+/// A pending receipt retains its original durable capacity reservation so retries
+/// do not fail by trying to insert the same task slot again.
+struct PendingReceipt {
+    receipt: ExecutionReceipt,
+    slot: security_store::ReceiptSlotReservation,
+    attempts: u8,
+}
+
+/// Tracks queued and currently retrying provenance receipts for bounded capacity accounting.
+struct PendingReceiptState {
+    queued: Vec<PendingReceipt>,
+    in_flight: usize,
+    flush_in_progress: bool,
+}
+
+static PENDING_RECEIPTS: OnceLock<Mutex<PendingReceiptState>> = OnceLock::new();
+const MAX_PENDING_RECEIPTS: usize = 100;
+const RECEIPT_RETRY_BUDGET: Duration = Duration::from_secs(3);
+const MAX_RECEIPT_RETRY_ATTEMPTS: u8 = 5;
+static PENDING_RECEIPTS_CHANGED: OnceLock<Condvar> = OnceLock::new();
+
+fn pending_receipts_changed() -> &'static Condvar {
+    PENDING_RECEIPTS_CHANGED.get_or_init(Condvar::new)
+}
+
+fn next_receipt_retry_attempt(attempts: u8) -> Option<u8> {
+    let next = attempts.saturating_add(1);
+    (next < MAX_RECEIPT_RETRY_ATTEMPTS).then_some(next)
+}
+
+/// Returns the process-local bounded queue and its in-flight capacity accounting.
+fn pending_receipts() -> &'static Mutex<PendingReceiptState> {
+    PENDING_RECEIPTS.get_or_init(|| Mutex::new(PendingReceiptState { queued: Vec::new(), in_flight: 0, flush_in_progress: false }))
+}
+
+/// Adds a failed receipt and its still-live reservation without exceeding the
+/// combined queued and in-flight bound.
+fn enqueue_pending_receipt(receipt: ExecutionReceipt, slot: security_store::ReceiptSlotReservation) -> bool {
+    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if state.queued.len().saturating_add(state.in_flight) >= MAX_PENDING_RECEIPTS { return false; }
+    // The first persistence attempt already failed before the item entered this queue.
+    state.queued.push(PendingReceipt { receipt, slot, attempts: 1 });
+    true
+}
+
+/// Retries receipts on a blocking thread with bounded capacity and a bounded per-entry retry count.
+/// Transient failures requeue the batch; a poison receipt is discarded after five attempts.
+fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receipts: usize) {
+    let batch = {
+        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Only one worker may own the retry batch. Shutdown observes this flag
+        // instead of mistaking an temporarily empty queue for completed work.
+        if state.flush_in_progress {
+            return;
+        }
+        let batch = std::mem::take(&mut state.queued);
+        if batch.is_empty() {
+            return;
+        }
+        state.flush_in_progress = true;
+        state.in_flight = state.in_flight.saturating_add(batch.len());
+        batch
+    };
+    let started = Instant::now();
+    let mut iter = batch.into_iter();
+    let mut processed = 0usize;
+    while let Some(pending) = iter.next() {
+        if processed >= max_receipts || started.elapsed() >= budget {
+            let remaining = std::iter::once(pending).chain(iter).collect::<Vec<_>>();
+            let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.in_flight = state.in_flight.saturating_sub(remaining.len());
+            state.queued.extend(remaining);
+            break;
+        }
+        processed += 1;
+        match pending.slot.persist_recoverable(pending.receipt.clone()) {
+            Ok(_) => {
+                let task_id = pending.receipt.task_id.clone();
+                let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.in_flight = state.in_flight.saturating_sub(1);
+                drop(state);
+                emit_task_progress(
+                    app,
+                    &task_id,
+                    "receipt_recovered",
+                    "The previously pending provenance receipt has now been stored.",
+                    100,
+                );
+            }
+            Err(error) => {
+                let (slot, message) = *error;
+                if let Some(attempts) = next_receipt_retry_attempt(pending.attempts) {
+                    let failed = PendingReceipt { receipt: pending.receipt, slot, attempts };
+                    let remaining = std::iter::once(failed).chain(iter).collect::<Vec<_>>();
+                    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    state.in_flight = state.in_flight.saturating_sub(remaining.len());
+                    state.queued.extend(remaining);
+                    break;
+                }
+
+                // A poison receipt must not permanently block unrelated receipts.
+                // Dropping the reservation releases its durable slot; the final warning
+                // makes the provenance gap visible instead of retrying forever.
+                let task_id = pending.receipt.task_id.clone();
+                drop(slot);
+                let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.in_flight = state.in_flight.saturating_sub(1);
+                drop(state);
+                emit_task_progress(
+                    app,
+                    &task_id,
+                    "receipt_warning",
+                    &format!("The provenance receipt could not be stored after {MAX_RECEIPT_RETRY_ATTEMPTS} attempts and was discarded: {message}"),
+                    100,
+                );
+            }
+        }
+    }
+    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.flush_in_progress = false;
+    drop(state);
+    pending_receipts_changed().notify_all();
+}
+
+/// Wait for an active retry batch, then make one final bounded flush during shutdown.
+fn flush_pending_receipts_on_exit(app: &AppHandle) {
+    let deadline = Instant::now() + RECEIPT_RETRY_BUDGET;
+    {
+        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.flush_in_progress {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            let (next, timeout) = pending_receipts_changed()
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
+            if timeout.timed_out() && state.flush_in_progress {
+                return;
+            }
+        }
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if !remaining.is_zero() {
+        flush_pending_receipts_blocking(app, remaining, MAX_PENDING_RECEIPTS);
+    }
+}
+
+/// Retries pending receipts off the async runtime with a short, bounded time budget.
+async fn flush_pending_receipts(app: &AppHandle) {
+    let app = app.clone();
+    let _ = tokio::task::spawn_blocking(move || flush_pending_receipts_blocking(&app, RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS)).await;
+}
+
+/// Persists a receipt or returns a warning while preserving the completed task result.
+fn persist_receipt_or_warn(
+    label: &str,
+    slot: security_store::ReceiptSlotReservation,
+    receipt: ExecutionReceipt,
+) -> Option<String> {
+    match slot.persist_recoverable(receipt.clone()) {
+        Ok(_) => None,
+        Err(recovery) => {
+            let (slot, error) = *recovery;
+            Some(if enqueue_pending_receipt(receipt, slot) {
+                format!("{label} completed. Its provenance receipt could not be stored yet and has been queued for retry: {error}")
+            } else {
+                format!("{label} completed, but receipt storage and the bounded retry queue are unavailable. Preserve this result before closing UJANI: {error}")
+            })
+        },
+    }
+}
+
 #[derive(Debug)]
 struct LocalReceiptContext {
     operation_id: &'static str,
@@ -503,6 +688,26 @@ fn local_receipt_context(
 
 /// Runs a native task with cancellation, a hard wall-clock budget and a
 /// reserved provenance slot. The ledger stores digests and metadata, never content.
+async fn await_task_with_limits<T, F>(
+    token: &CancellationToken,
+    budget: std::time::Duration,
+    timeout_message: &str,
+    future: F,
+) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    tokio::select! {
+        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
+        outcome = tokio::time::timeout(budget, future) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err(timeout_message.to_string()),
+            }
+        }
+    }
+}
+
 async fn run_managed_task<T, F>(
     app: AppHandle,
     control: &TaskControlState,
@@ -522,6 +727,7 @@ where
     // Keep document, PDF, summary and translation tasks under the same native
     // single-task / 1 GiB admission gate as interactive inference.
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -537,16 +743,14 @@ where
     }
     let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(240), future) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err(format!("{label} exceeded the 240-second overall time budget.")),
-            }
-        }
-    };
+    let result = await_task_with_limits(
+        &token,
+        std::time::Duration::from_secs(240),
+        &format!("{label} exceeded the 240-second overall time budget."),
+        future,
+    ).await;
     drop(active_task_guard);
+    let mut receipt_warning = None;
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
             .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
@@ -574,19 +778,75 @@ where
             user_approval_id: None,
             network_activity,
         };
-        if let Err(error) = receipt_slot.persist(receipt) {
-            let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
-            emit_task_progress(&app, &task_id, "failed", &message, 0);
-            return Err(message);
-        }
+        receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
     }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed and provenance recorded."), 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
         Err(error) if error.contains("240-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
+    if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
+}
+
+#[cfg(test)]
+mod managed_task_liveness_tests {
+    use super::await_task_with_limits;
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn managed_task_timeout_does_not_block_the_async_executor() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let timer_ran = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&timer_ran);
+        let result = runtime.block_on(async {
+            let timer = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                observed.store(true, Ordering::SeqCst);
+            });
+            let result = await_task_with_limits(
+                &CancellationToken::new(),
+                Duration::from_millis(10),
+                "test task timed out",
+                std::future::pending::<Result<(), String>>(),
+            ).await;
+            timer.await.unwrap();
+            result
+        });
+        assert_eq!(result, Err("test task timed out".to_string()));
+        assert!(timer_ran.load(Ordering::SeqCst), "executor timer must run while task is pending");
+    }
+
+    #[test]
+    fn managed_task_cancellation_interrupts_a_pending_operation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async {
+            let token = CancellationToken::new();
+            let cancel = token.clone();
+            let cancel_task = tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                cancel.cancel();
+            });
+            let result = await_task_with_limits(
+                &token,
+                Duration::from_secs(1),
+                "test task timed out",
+                std::future::pending::<Result<(), String>>(),
+            ).await;
+            cancel_task.await.unwrap();
+            result
+        });
+        assert_eq!(result, Err("Task cancelled by user.".to_string()));
+    }
 }
 
 #[cfg(test)]
@@ -656,6 +916,7 @@ async fn execute_local_ai_task(
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
@@ -679,6 +940,7 @@ async fn execute_local_ai_task(
             }
         }
     };
+    let mut receipt_warning = None;
     if let Ok(value) = &result {
         let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?.as_millis() as u64;
@@ -701,15 +963,15 @@ async fn execute_local_ai_task(
             user_approval_id: None,
             network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         };
-        receipt_slot.persist(receipt)
-            .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
+        receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
     }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed and provenance recorded.", 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
         Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
+    if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
 }
 
@@ -795,29 +1057,55 @@ fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
     decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)
 }
 
+async fn decode_pdf_upload_off_thread(data_base64: String) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || decode_pdf_upload(&data_base64))
+        .await
+        .map_err(|error| format!("PDF decode worker failed: {error}"))?
+}
+
 #[cfg(test)]
 mod pdf_upload_tests {
     use super::decode_bounded_pdf_payload;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     #[test]
-    fn pdf_upload_decoder_accepts_exact_limit_and_rejects_over_limit() {
+    fn pdf_upload_decoder_accepts_exact_limit_and_rejects_decoded_overflow() {
         let exact = STANDARD.encode(b"12345678");
         assert_eq!(decode_bounded_pdf_payload(&exact, 8).unwrap(), b"12345678");
-        let oversized = STANDARD.encode(b"123456789");
-        assert!(decode_bounded_pdf_payload(&oversized, 8).is_err());
+        // This payload is within the encoded-length ceiling but decodes to 9 bytes.
+        let decoded_overflow = STANDARD.encode(b"123456789");
+        assert!(decode_bounded_pdf_payload(&decoded_overflow, 8).is_err());
     }
 
     #[test]
-    fn pdf_upload_decoder_rejects_empty_and_malformed_payloads() {
+    fn pdf_upload_decoder_rejects_empty_malformed_and_zero_limit_payloads() {
         assert!(decode_bounded_pdf_payload("", 8).is_err());
         assert!(decode_bounded_pdf_payload("not base64!", 8).is_err());
+        assert!(decode_bounded_pdf_payload(&STANDARD.encode(b"x"), 0).is_err());
     }
 
     #[test]
     fn pdf_upload_decoder_rejects_encoded_payloads_over_the_predecode_bound() {
         let too_large = "A".repeat(16);
         assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
+    }
+
+    #[test]
+    fn maximum_upload_decode_runs_on_blocking_pool_not_async_executor_thread() {
+        use std::thread;
+        let caller = thread::current().id();
+        let payload = STANDARD.encode(vec![0x5a; 1024 * 1024]);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (decoded, worker) = runtime.block_on(async {
+            tokio::task::spawn_blocking(move || {
+                (decode_bounded_pdf_payload(&payload, 1024 * 1024).unwrap(), thread::current().id())
+            }).await.unwrap()
+        });
+        assert_eq!(decoded.len(), 1024 * 1024);
+        assert_ne!(caller, worker, "PDF decoding must never occupy the async executor thread");
     }
 }
 
@@ -837,9 +1125,7 @@ async fn process_selected_pdf(
 ) -> Result<task_engine::DocumentPipelineResult, String> {
     // Base64 decoding can allocate and briefly occupy CPU for a large upload.
     // Keep it off the async runtime so a maximum-size PDF cannot stall other commands.
-    let data = tokio::task::spawn_blocking(move || decode_pdf_upload(&data_base64))
-        .await
-        .map_err(|error| format!("PDF decode worker failed: {error}"))??;
+    let data = decode_pdf_upload_off_thread(data_base64).await?;
 
     let language = translation_language.as_deref().unwrap_or("");
     let receipt = local_receipt_context(
@@ -989,8 +1275,29 @@ pub fn run() {
     #[cfg(not(feature = "peer-preview"))]
     let builder = builder.invoke_handler(ujani_invoke_handler!());
 
-    builder.run(tauri::generate_context!())
-        .expect("error while running UJANI Public AI");
+    let app = builder.build(tauri::generate_context!())
+        .expect("error while building UJANI Public AI");
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            flush_pending_receipts_on_exit(app);
+        }
+    });
+}
+
+#[cfg(test)]
+mod pending_receipt_retry_tests {
+    use super::{next_receipt_retry_attempt, MAX_RECEIPT_RETRY_ATTEMPTS};
+
+    #[test]
+    fn receipt_retry_attempts_include_the_initial_failure_and_are_bounded() {
+        let mut attempts = 1; // initial persist_receipt_or_warn attempt
+        for expected in 2..MAX_RECEIPT_RETRY_ATTEMPTS {
+            attempts = next_receipt_retry_attempt(attempts).expect("retry remains available");
+            assert_eq!(attempts, expected);
+        }
+        assert_eq!(next_receipt_retry_attempt(attempts), None);
+        assert_eq!(next_receipt_retry_attempt(u8::MAX), None);
+    }
 }
 
 #[cfg(test)]
