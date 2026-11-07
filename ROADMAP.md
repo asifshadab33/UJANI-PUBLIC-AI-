@@ -104,3 +104,13 @@ No release should be described as secure, private-by-design in implementation, o
 - [x] Apply task identifier validation, duplicate-active-task rejection, explicit cancellation tokens, progress events, registry cleanup and a 240-second wall-clock budget.
 - [x] Expose cancel controls in the desktop UI for document/PDF and translation tasks.
 - [ ] Verify the updated native and frontend code on Windows, macOS and Linux CI; cancellation is cooperative at async boundaries and does not make the whole application an OS sandbox.
+
+
+## Bounded large-file discovery — 2026-11-07
+
+- [x] Add a native folder-picker workflow to find files above a user-selected size threshold using filesystem metadata only; file contents are never opened.
+- [x] Bound traversal to six directory levels, 5,000 entries, 100 displayed results and a 60-second time budget; support task cancellation and progress events.
+- [x] Skip symbolic links and Windows reparse points, constrain canonical paths to the selected root, and keep the operation read-only.
+- [x] Add native tests for size ordering and Unix symbolic-link exclusion.
+- [ ] Validate Windows/macOS/Linux native builds and tests in CI; add real-device filesystem race and Windows reparse-point validation.
+- [ ] Continue with preview-only sorting plans, archive safety, image metadata and large-folder search after platform validation.
