@@ -787,14 +787,21 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("local-search-cache.sqlite3");
         let db = Connection::open(&path).unwrap();
-        db.execute_batch("PRAGMA user_version=3;").unwrap();
+        db.execute_batch("CREATE TABLE future_table(value TEXT); INSERT INTO future_table VALUES('preserve'); PRAGMA user_version=3;").unwrap();
+        let tables_before: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| row.get(0)).unwrap();
         drop(db);
         let error = open_database(&path).unwrap_err();
         assert!(error.contains("newer than this UJANI build"));
         assert!(path.exists());
         let db = Connection::open(&path).unwrap();
         let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        let tables_after: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| row.get(0)).unwrap();
+        let cache_settings: i64 = db.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='cache_settings'", [], |row| row.get(0)).unwrap();
+        let preserved: String = db.query_row("SELECT value FROM future_table", [], |row| row.get(0)).unwrap();
         assert_eq!(version, 3);
+        assert_eq!(tables_after, tables_before);
+        assert_eq!(cache_settings, 0);
+        assert_eq!(preserved, "preserve");
         drop(db);
         fs::remove_dir_all(directory).unwrap();
     }
