@@ -326,6 +326,7 @@ async fn execute_cloud_ai_task(
  emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
+ let mut receipt_warning = None;
  let result = tokio::select! {
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
   outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
@@ -354,14 +355,15 @@ async fn execute_cloud_ai_task(
    user_approval_id: Some(approval_id),
    network_activity: network_activity.clone(),
   };
-  persist_receipt_or_warn(&app, &task_id, "Cloud inference", receipt_slot, receipt);
+  receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  }
  match &result {
-  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed and provenance recorded.", 100),
+  Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
   Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
  }
+ if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
  result
 }
 /// Explicitly downloads a named model through the local Ollama service only.
@@ -508,16 +510,17 @@ fn flush_pending_receipts(app: &AppHandle) {
     }
 }
 fn persist_receipt_or_warn(
-    app: &AppHandle, task_id: &str, label: &str,
-    slot: security_store::ReceiptSlotReservation, receipt: ExecutionReceipt,
-) {
-    if let Err(error) = slot.persist(receipt.clone()) {
-        let message = if enqueue_pending_receipt(receipt) {
+    label: &str,
+    slot: security_store::ReceiptSlotReservation,
+    receipt: ExecutionReceipt,
+) -> Option<String> {
+    match slot.persist(receipt.clone()) {
+        Ok(_) => None,
+        Err(error) => Some(if enqueue_pending_receipt(receipt) {
             format!("{label} completed. Its provenance receipt could not be stored yet and has been queued for retry: {error}")
         } else {
             format!("{label} completed, but receipt storage and the bounded retry queue are unavailable. Preserve this result before closing UJANI: {error}")
-        };
-        emit_task_progress(app, task_id, "receipt_warning", &message, 100);
+        }),
     }
 }
 
@@ -600,6 +603,7 @@ where
         }
     };
     drop(active_task_guard);
+    let mut receipt_warning = None;
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
             .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
@@ -627,14 +631,15 @@ where
             user_approval_id: None,
             network_activity,
         };
-        persist_receipt_or_warn(&app, &task_id, label, receipt_slot, receipt);
+        receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
     }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed and provenance recorded."), 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
         Err(error) if error.contains("240-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
+    if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
 }
 
@@ -729,6 +734,7 @@ async fn execute_local_ai_task(
             }
         }
     };
+    let mut receipt_warning = None;
     if let Ok(value) = &result {
         let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?.as_millis() as u64;
@@ -751,14 +757,15 @@ async fn execute_local_ai_task(
             user_approval_id: None,
             network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
         };
-        persist_receipt_or_warn(&app, &task_id, "Local inference", receipt_slot, receipt);
+        receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
     }
     match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed and provenance recorded.", 100),
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
         Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
+    if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
 }
 
