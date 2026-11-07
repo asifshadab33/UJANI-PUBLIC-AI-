@@ -829,7 +829,7 @@ export default function App() {
           <button className="launcher-card" onClick={openFileTools}>
             <span className="launcher-icon"><HardDrive size={21}/></span><b>Work with my files</b><small>Analyze documents, PDFs, folders and image metadata using local tools.</small><span className="launcher-action">Open file tools →</span>
           </button>
-          <button className="launcher-card" onClick={openLocalSetup}>
+          <button className="launcher-card" onClick={() => openLocalSetup()}>
             <span className="launcher-icon"><Cpu size={21}/></span><b>Set up local AI</b><small>Check Ollama, installed models, memory and available device capabilities.</small><span className="launcher-action">View device setup →</span>
           </button>
           <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
