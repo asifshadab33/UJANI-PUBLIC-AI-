@@ -169,7 +169,7 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Download release assets and generate installer size report
+      - name: Download release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -181,6 +181,8 @@ jobs:
 
       - name: Verify every Tauri updater signature before publishing
         shell: bash
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -188,7 +190,7 @@ jobs:
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
 
-          pubkey_b64="$(node -e "const config = require('./apps/desktop/src-tauri/tauri.conf.json'); process.stdout.write(config.plugins.updater.pubkey);")"
+          pubkey_b64="$TAURI_UPDATER_PUBLIC_KEY"
           test -n "$pubkey_b64"
           printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
 
@@ -223,6 +225,11 @@ jobs:
             echo "Missing Windows updater signature (.msi.sig, .exe.sig or .zip.sig)." >&2
             exit 1
           fi
+
+
+      - name: Generate installer size report and stage SBOM
+        run: |
+          set -euo pipefail
           rm -f release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS
           node <<'NODE'
           const fs = require('fs');
