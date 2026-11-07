@@ -340,7 +340,8 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     #[cfg(target_os = "macos")]
     let mut command = {
         // sandbox-exec is deprecated by Apple but remains the available
-        // per-process profile interface for this worker. Fail closed if absent.
+        // per-process profile interface for this worker on supported macOS runners.
+        // This is a worker profile, not a full application sandbox; fail closed if absent.
         const PDF_PROFILE: &str = "(version 1) (allow default) (deny network*) (deny file-write*)";
         let mut sandboxed = tokio::process::Command::new("/usr/bin/sandbox-exec");
         sandboxed.arg("-p").arg(PDF_PROFILE).arg(exe);
@@ -422,6 +423,11 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     let mut child = command.spawn()
         .map_err(|e| format!("Could not start resource-limited PDF extraction worker: {e}"))?;
 
+    // Windows Job Objects are assigned immediately after spawn rather than atomically
+    // at process creation. Mitigation: the worker blocks reading stdin; no untrusted
+    // PDF bytes are written until after assignment succeeds. If assignment fails,
+    // kill the child before taking/writing stdin. The tiny launcher can execute before
+    // assignment, so this is a reduced race window, not an atomic sandbox guarantee.
     #[cfg(windows)]
     {
         use std::os::windows::io::AsRawHandle;
@@ -432,6 +438,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
             return Err(format!("Could not assign PDF worker to its resource-limited Job Object: {}", std::io::Error::last_os_error()));
         }
     }
+    // Do not take or write stdin until all platform resource controls are installed.
     let mut stdin = child.stdin.take().ok_or("PDF worker stdin unavailable")?;
     let mut stdout = child.stdout.take().ok_or("PDF worker stdout unavailable")?;
     let work = async move {
