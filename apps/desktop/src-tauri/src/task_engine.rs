@@ -297,7 +297,7 @@ fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     denied
 }
 
-async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
+pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if data.len() > 10 * 1024 * 1024 { return Err("PDF input exceeds the 10 MiB limit.".into()); }
