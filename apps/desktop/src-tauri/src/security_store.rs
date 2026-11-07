@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn persistent_replay_nonce_rejects_duplicate_and_prunes_expired() {
         let mut db = db();
-        let nonce = "0123456789abcdef0123456789abcdef";
+        let nonce = format!("{:032x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
         let peer_a = "a".repeat(64);
         let peer_b = "b".repeat(64);
         assert!(claim_nonce_db(&mut db, &peer_a, nonce, 200, 100).is_ok());
