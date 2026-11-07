@@ -207,17 +207,20 @@ export default function App() {
   }
 
   function openLocalChat() {
+    setActiveSidebarSection("new-task");
     document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
   function openFileTools() {
+    setActiveSidebarSection("new-task");
     document.getElementById("document-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     // File inspection works without Ollama; check local AI only when the user opens file tools.
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
   function openLocalSetup() {
+    setActiveSidebarSection("resources");
     document.getElementById("local-resources")?.scrollIntoView({ behavior: "smooth", block: "start" });
     void loadDeviceInfo();
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
