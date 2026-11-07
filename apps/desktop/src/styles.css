@@ -36,3 +36,25 @@
 .chat-footer small{font-size:9px;color:#849489;line-height:1.4}
 .chat-footer button{flex-shrink:0;border:1px solid #496047;background:#1d3022;color:#cde8bc;border-radius:6px;padding:6px 9px;font-size:10px}
 .chat-footer button:disabled{opacity:.4;cursor:not-allowed}
+
+
+/* Sidebar navigation uses native buttons for keyboard and assistive-technology access. */
+.sidebar nav .nav {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  font-family: inherit;
+  font-weight: 400;
+  line-height: normal;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar nav .nav:hover {
+  background: #1b2b21;
+  color: #d9efcf;
+}
+.sidebar nav .nav:focus-visible {
+  outline: 2px solid #b8ef7a;
+  outline-offset: 3px;
+}
