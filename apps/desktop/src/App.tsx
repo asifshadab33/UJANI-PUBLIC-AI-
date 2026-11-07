@@ -118,6 +118,7 @@ export default function App() {
   const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
   const [workflowPlan, setWorkflowPlan] = useState<WorkflowPlan | null>(null);
   const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [activeWorkflowTaskId, setActiveWorkflowTaskId] = useState<string | null>(null);
   const [workflowExecution, setWorkflowExecution] = useState<WorkflowExecution | null>(null);
   const [modelRecommendation, setModelRecommendation] = useState<ModelRecommendation | null>(null);
   const [recommendationError, setRecommendationError] = useState("");
@@ -371,9 +372,12 @@ export default function App() {
   async function executeValidatedDocumentWorkflow() {
     if (!isTauri() || workflowBusy || !fileText.trim() || !ollamaModel) return;
     if (executionMode !== "fortress" && executionMode !== "smart") { setCapabilityError("This executable workflow is local-only. Select Fortress or Smart."); return; }
+    const taskId = `document-workflow-${crypto.randomUUID()}`;
+    setActiveWorkflowTaskId(taskId);
     setWorkflowBusy(true); setCapabilityError(""); setWorkflowExecution(null);
     try {
       const execution = await invoke<WorkflowExecution>("execute_document_workflow", {
+        taskId,
         fileName: fileAnalysis?.file_name || "selected-document.txt",
         content: fileText, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
@@ -384,7 +388,13 @@ export default function App() {
       setFileTranslatedSummary(execution.result.translated_summary || "");
       setFilePipelineMeta(`${execution.result.chunks_processed}/${execution.result.total_chunks} sections · validated order: ${execution.plan.ordered_node_ids.join(" → ")}`);
     } catch (error) { setCapabilityError(String(error)); }
-    finally { setWorkflowBusy(false); }
+    finally { setWorkflowBusy(false); setActiveWorkflowTaskId(null); }
+  }
+
+  async function cancelDocumentWorkflow() {
+    if (!activeWorkflowTaskId) return;
+    try { await invoke<boolean>("cancel_active_task", { taskId: activeWorkflowTaskId }); }
+    catch (error) { setCapabilityError("Could not cancel document workflow: " + String(error)); }
   }
 
   async function previewRoute() {
@@ -753,6 +763,7 @@ export default function App() {
             <small>Order: {workflowPlan.ordered_node_ids.join(" → ") || "Not available"} · Required: {workflowPlan.required_capabilities.join(", ") || "none"} · Conservative peak-memory preflight: {workflowPlan.estimated_peak_memory_mb} MiB · Available: {workflowPlan.available_memory_mb} MiB · Execution started: {workflowPlan.execution_started ? "yes" : "no"}</small>
           </>}
           <button className="model-run" onClick={executeValidatedDocumentWorkflow} disabled={!isTauri() || workflowBusy || !fileText.trim() || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{workflowBusy ? "Executing validated local workflow…" : "Execute validated workflow on selected text"}</button>
+          {workflowBusy && activeWorkflowTaskId && <button className="model-run" onClick={cancelDocumentWorkflow}>Cancel document workflow</button>}
           {workflowExecution && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Workflow executed <span>LOCAL</span></div><p>{workflowExecution.result.summary}</p><small>Order: {workflowExecution.plan.ordered_node_ids.join(" → ")} · {workflowExecution.result.chunks_processed}/{workflowExecution.result.total_chunks} sections · {workflowExecution.result.model} · Execution started: yes</small>{workflowExecution.result.translated_summary && <p><b>Translation ({workflowExecution.result.translation_language}):</b> {workflowExecution.result.translated_summary}</p>}</div>}
           <small className="muted">Only this fixed, validated local sequence executes. It uses text already selected in the app; no arbitrary graph nodes, filesystem paths, shell commands or cloud requests are executed.</small>
         </div>
