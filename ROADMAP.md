@@ -104,3 +104,20 @@ No release should be described as secure, private-by-design in implementation, o
 - [x] Apply task identifier validation, duplicate-active-task rejection, explicit cancellation tokens, progress events, registry cleanup and a 240-second wall-clock budget.
 - [x] Expose cancel controls in the desktop UI for document/PDF and translation tasks.
 - [ ] Verify the updated native and frontend code on Windows, macOS and Linux CI; cancellation is cooperative at async boundaries and does not make the whole application an OS sandbox.
+
+
+## Everyday tools delivery status — 2026-11-07
+
+The first delivery requested in issue #44 is present in the desktop application and registered through the native Tauri command allow-list:
+
+- [x] Device-local date/time display, using the OS clock and the webview's device-local timezone; no network lookup is used.
+- [x] Read-only duplicate-file preview scoped to a folder selected through the native OS picker.
+- [x] Duplicate candidates are grouped by file size and confirmed with SHA-256 content hashes; matching names alone are not treated as duplicates.
+- [x] Bounded scan: six directory levels, 5,000 entries, 64 MiB per file, 512 MiB total hashed bytes, 100 result groups and a 60-second scan budget.
+- [x] Symlinks are skipped; selected-root symlinks are rejected; cancellation is available; no files are deleted, moved, renamed or overwritten.
+- [x] UI explains scope, limits, progress, cancellation and read-only behavior.
+- [x] Native unit tests cover content-based matching, symlink behavior on Unix, depth limits, cancellation and selected-root symlink rejection. CI on the current PDF-worker PR head also passed native tests on Ubuntu, Windows and macOS, Rust lint and frontend build.
+- [ ] Add direct Windows reparse-point and macOS/Windows real-device filesystem race tests; hosted CI is not a substitute for real-device validation.
+- [ ] Continue with the next utilities only after the first delivery receives product review: bounded large/recent/empty-file finders, followed by image metadata and preview-only organisation.
+
+This records implementation already present on `main`; it does not claim that all proposals in issue #44 or the broader issue #46 are complete. Duplicate detection is read-only and must remain so until a separately reviewed, explicit-confirmation deletion workflow exists.
