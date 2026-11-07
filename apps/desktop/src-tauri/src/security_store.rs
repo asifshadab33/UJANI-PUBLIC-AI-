@@ -408,7 +408,7 @@ fn move_archive_write_through(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 /// Create the archive directory, using a write-through directory rename on Windows.
-fn ensure_receipt_archive_dir(archive_dir: &Path, nonce: u128) -> Result<bool, String> {
+fn ensure_receipt_archive_dir(archive_dir: &Path, _nonce: u128) -> Result<bool, String> {
     match fs::symlink_metadata(archive_dir) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -424,7 +424,7 @@ fn ensure_receipt_archive_dir(archive_dir: &Path, nonce: u128) -> Result<bool, S
     fs::create_dir_all(parent).map_err(|e| format!("Could not create receipt archive parent: {e}"))?;
     #[cfg(windows)]
     {
-        let temporary = parent.join(format!(".receipt-archive-{nonce}.tmp"));
+        let temporary = parent.join(format!(".receipt-archive-{_nonce}.tmp"));
         fs::create_dir(&temporary).map_err(|e| format!("Could not create temporary receipt archive directory: {e}"))?;
         if let Err(error) = move_archive_write_through(&temporary, archive_dir) {
             let _ = fs::remove_dir(&temporary);
