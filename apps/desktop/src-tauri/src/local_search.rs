@@ -1,0 +1,372 @@
+//! Bounded, user-initiated local file finder.
+//! Folder selection is performed by the native OS dialog; no path is accepted from the webview.
+//! Search is read-only. PDF text is extracted only in the existing resource-limited worker.
+
+use serde::Serialize;
+use std::{
+    fs::{self, File, OpenOptions},
+    io::{self, Read},
+    path::{Path, PathBuf},
+    time::UNIX_EPOCH,
+};
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
+use tokio_util::sync::CancellationToken;
+
+const MAX_DEPTH: usize = 6;
+const MAX_ENTRIES: usize = 5_000;
+const MAX_MATCHES: usize = 250;
+const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
+const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_PDF_FILES: usize = 20;
+
+#[derive(Serialize)]
+pub struct LocalSearchMatch {
+    path: String,
+    file_name: String,
+    extension: String,
+    size_bytes: u64,
+    modified_unix_ms: Option<u64>,
+    matched_in: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct LocalSearchResult {
+    cancelled: bool,
+    root_name: Option<String>,
+    scanned_files: usize,
+    matches: Vec<LocalSearchMatch>,
+    truncated: bool,
+    note: String,
+}
+
+struct Candidate {
+    path: PathBuf,
+    name: String,
+    extension: String,
+    size: u64,
+    modified_unix_ms: Option<u64>,
+}
+
+/// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
+#[tauri::command]
+pub async fn find_local_files(
+    app: AppHandle,
+    control: State<'_, super::TaskControlState>,
+    task_id: String,
+    query: String,
+    search_pdf_text: bool,
+) -> Result<LocalSearchResult, String> {
+    if !super::valid_command_identifier(&task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
+    let query = query.trim().to_lowercase();
+    if query.is_empty() || query.encode_utf16().count() > 160 || query.chars().any(char::is_control) {
+        return Err("Enter a search phrase between 1 and 160 characters.".into());
+    }
+
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) {
+            return Err("Task identifier is already active.".into());
+        }
+        active.insert(task_id.clone(), token.clone());
+    }
+    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to search.", 1);
+
+    let picker_app = app.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
+        let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
+            return Ok(None);
+        };
+        let path = folder.into_path()
+            .map_err(|_| "The selected folder is not a local filesystem path.".to_string())?;
+        Ok(Some(path))
+    }).await.map_err(|e| format!("Folder picker failed: {e}"))??;
+
+    if token.is_cancelled() {
+        return Err("File search cancelled by user.".into());
+    }
+    let Some(folder) = selected else {
+        return Ok(LocalSearchResult {
+            cancelled: true, root_name: None, scanned_files: 0, matches: Vec::new(),
+            truncated: false, note: "Folder selection cancelled. Nothing was searched.".into(),
+        });
+    };
+
+    super::emit_task_progress(&app, &task_id, "scanning", "Scanning the selected folder.", 10);
+    let collect_token = token.clone();
+    let (root, candidates, scanned_files, mut truncated) = tauri::async_runtime::spawn_blocking(move || {
+        collect_candidates(&folder, &collect_token)
+    }).await.map_err(|e| format!("File search worker failed: {e}"))??;
+
+    let root_name = root.file_name().map(|v| v.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.display().to_string());
+    let mut matches = Vec::new();
+    let mut text_bytes = 0u64;
+    let mut pdf_count = 0usize;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+
+    for candidate in candidates {
+        if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+        if tokio::time::Instant::now() >= deadline { truncated = true; break; }
+        if matches.len() >= MAX_MATCHES { truncated = true; break; }
+        let mut matched_in = Vec::new();
+        if candidate.name.to_lowercase().contains(&query) {
+            matched_in.push("filename".to_string());
+        }
+
+        let is_text = matches!(candidate.extension.as_str(),
+            "txt" | "md" | "csv" | "log" | "json" | "xml" | "html" | "htm" | "rtf");
+        if matched_in.is_empty() && is_text && candidate.size <= MAX_TEXT_FILE_BYTES
+            && text_bytes.saturating_add(candidate.size) <= MAX_TEXT_TOTAL_BYTES
+        {
+            let read_path = candidate.path.clone();
+            if let Ok(Ok(bytes)) = tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
+                text_bytes = text_bytes.saturating_add(bytes.len() as u64);
+                if let Ok(content) = String::from_utf8(bytes) {
+                    if content.to_lowercase().contains(&query) {
+                        matched_in.push("text content".to_string());
+                    }
+                }
+            }
+        }
+
+        if matched_in.is_empty() && candidate.extension == "pdf" && search_pdf_text
+            && candidate.size <= MAX_PDF_BYTES && pdf_count < MAX_PDF_FILES
+            && tokio::time::Instant::now() < deadline
+        {
+            pdf_count += 1;
+            let read_path = candidate.path.clone();
+            if let Ok(Ok(bytes)) = tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
+                if bytes.starts_with(b"%PDF-") {
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if !remaining.is_zero() {
+                        let extraction = tokio::time::timeout(
+                            remaining.min(std::time::Duration::from_secs(45)),
+                            crate::task_engine::extract_pdf_isolated(bytes)
+                        );
+                        match tokio::select! {
+                            _ = token.cancelled() => return Err("File search cancelled by user.".into()),
+                            result = extraction => result,
+                        } {
+                            Ok(Ok(text)) if text.to_lowercase().contains(&query) => {
+                                matched_in.push("PDF text (isolated worker)".to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if !matched_in.is_empty() {
+            matches.push(LocalSearchMatch {
+                path: candidate.path.display().to_string(),
+                file_name: candidate.name,
+                extension: candidate.extension,
+                size_bytes: candidate.size,
+                modified_unix_ms: candidate.modified_unix_ms,
+                matched_in,
+            });
+        }
+    }
+
+    super::emit_task_progress(&app, &task_id, "completed", "File search completed.", 100);
+    Ok(LocalSearchResult {
+        cancelled: false,
+        root_name: Some(root_name),
+        scanned_files,
+        matches,
+        truncated,
+        note: if search_pdf_text {
+            "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs and 180 seconds.".into()
+        } else {
+            "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included.".into()
+        },
+    })
+}
+
+/// Collects bounded file metadata beneath the folder selected through the native picker.
+/// Walks a user-selected directory with depth and entry-count limits.
+fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathBuf, Vec<Candidate>, usize, bool), String> {
+    let meta = fs::symlink_metadata(folder).map_err(|e| format!("Cannot inspect folder: {e}"))?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err("Choose a real folder, not a symbolic link.".into());
+    }
+    let root = fs::canonicalize(folder).map_err(|e| format!("Cannot resolve folder: {e}"))?;
+    let mut stack = vec![(root.clone(), 0usize)];
+    let mut candidates = Vec::new();
+    let mut entries_seen = 0usize;
+    let mut scanned_files = 0usize;
+    let mut truncated = false;
+
+    while let Some((directory, depth)) = stack.pop() {
+        if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+        if depth > MAX_DEPTH { truncated = true; continue; }
+        let directory_meta = match fs::symlink_metadata(&directory) {
+            Ok(meta) => meta,
+            Err(_) => { truncated = true; continue; }
+        };
+        if directory_meta.file_type().is_symlink() || !directory_meta.is_dir() { continue; }
+        let canonical_directory = match fs::canonicalize(&directory) {
+            Ok(path) => path,
+            Err(_) => { truncated = true; continue; }
+        };
+        if !canonical_directory.starts_with(&root) { truncated = true; continue; }
+        let iterator = match fs::read_dir(&canonical_directory) {
+            Ok(entries) => entries,
+            Err(error) if depth == 0 => return Err(format!("Cannot read selected folder: {error}")),
+            Err(_) => { truncated = true; continue; }
+        };
+        for item in iterator {
+            if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+            let item = match item { Ok(entry) => entry, Err(_) => { truncated = true; continue; } };
+            entries_seen += 1;
+            if entries_seen > MAX_ENTRIES { truncated = true; break; }
+            let kind = match item.file_type() { Ok(kind) => kind, Err(_) => { truncated = true; continue; } };
+            if kind.is_symlink() { continue; }
+            if kind.is_dir() {
+                if depth < MAX_DEPTH { stack.push((item.path(), depth + 1)); } else { truncated = true; }
+                continue;
+            }
+            if !kind.is_file() { continue; }
+            scanned_files += 1;
+            let path = match fs::canonicalize(item.path()) { Ok(path) => path, Err(_) => { truncated = true; continue; } };
+            if !path.starts_with(&root) { truncated = true; continue; }
+            let metadata = match fs::metadata(&path) { Ok(meta) => meta, Err(_) => { truncated = true; continue; } };
+            let name = item.file_name().to_string_lossy().into_owned();
+            let extension = path.extension().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
+            let modified_unix_ms = metadata.modified().ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
+            candidates.push(Candidate { path, name, extension, size: metadata.len(), modified_unix_ms });
+        }
+        if entries_seen > MAX_ENTRIES { break; }
+    }
+    candidates.sort_by_key(|a| a.name.to_lowercase());
+    Ok((root, candidates, scanned_files, truncated))
+}
+
+/// Opens and reads one regular file with a hard byte cap; validation uses the opened handle.
+/// Reads at most `limit` bytes from a regular file without following its final link.
+fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let mut file = open_candidate(path).map_err(|e| e.to_string())?;
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err("File is not eligible for bounded reading.".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err("Reparse-point files are not eligible for bounded reading.".into());
+        }
+    }
+    let capacity = usize::try_from(metadata.len()).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    file.by_ref().take(limit.saturating_add(1)).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > limit { return Err("File grew beyond the search limit.".into()); }
+    Ok(bytes)
+}
+
+#[cfg(unix)]
+/// Opens without following a final symbolic link or blocking on a FIFO.
+fn open_candidate(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
+}
+
+#[cfg(windows)]
+/// Opens the reparse point itself so metadata validation applies to the handle.
+fn open_candidate(path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // FILE_FLAG_OPEN_REPARSE_POINT: open the reparse point itself so handle metadata rejects it.
+    OpenOptions::new().read(true).custom_flags(0x0020_0000).open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+/// Opens a candidate on platforms without specialized no-follow flags.
+fn open_candidate(path: &Path) -> io::Result<File> {
+    File::open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+    #[test]
+    fn skips_symlinks_and_limits_directory_depth() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-search-{unique}"));
+        let outside = std::env::temp_dir().join(format!("ujani-search-outside-{unique}"));
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(root.join("sub").join("contract.txt"), "supplier agreement").unwrap();
+        fs::write(outside.join("secret.txt"), "outside secret").unwrap();
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("linked-file.txt")).unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("linked-dir")).unwrap();
+        }
+        let (canonical, files, count, truncated) = collect_candidates(&root, &CancellationToken::new()).unwrap();
+        assert_eq!(canonical, fs::canonicalize(&root).unwrap());
+        assert_eq!(count, 1);
+        assert_eq!(files.len(), 1);
+        assert!(!truncated);
+        assert!(files.iter().all(|file| !file.path.starts_with(&outside)));
+        let mut deep = root.clone();
+        for level in 0..=MAX_DEPTH { deep.push(format!("d{level}")); }
+        fs::create_dir_all(&deep).unwrap();
+        let (_, _, _, deep_truncated) = collect_candidates(&root, &CancellationToken::new()).unwrap();
+        assert!(deep_truncated);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_regular_file_as_the_selected_root() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let file = std::env::temp_dir().join(format!("ujani-search-root-file-{unique}"));
+        fs::write(&file, "not a folder").unwrap();
+        assert!(collect_candidates(&file, &CancellationToken::new()).is_err());
+        fs::remove_file(file).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_symlink_as_the_selected_root() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-search-root-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let link = root.with_extension("link");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(collect_candidates(&link, &CancellationToken::new()).is_err());
+        fs::remove_file(link).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_a_symlink_as_the_selected_root_when_runner_allows_creation() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-search-root-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let link = root.with_extension("link");
+        match std::os::windows::fs::symlink_dir(&root, &link) {
+            Ok(()) => {
+                assert!(collect_candidates(&link, &CancellationToken::new()).is_err());
+                fs::remove_dir(&link).unwrap();
+            }
+            // Standard hosted Windows runners may not grant symlink-creation privilege.
+            // The cross-platform regular-file rejection test still runs in that environment.
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("Could not create test symlink: {error}"),
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
