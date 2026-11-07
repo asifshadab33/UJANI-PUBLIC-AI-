@@ -17,8 +17,8 @@ export default function LocalFinder() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<SearchResult | null>(null);
   const [taskId, setTaskId] = useState("");
-  const [cacheSettings, setCacheSettings] = useState<CacheSettings>({ enabled: true, retention_days: 30, max_entries: 50, max_bytes: 10 * 1024 * 1024 });
-  const [cacheMessage, setCacheMessage] = useState("Encrypted local search cache · 30-day retention");
+  const [cacheSettings, setCacheSettings] = useState<CacheSettings>({ enabled: false, retention_days: 30, max_entries: 50, max_bytes: 10 * 1024 * 1024 });
+  const [cacheMessage, setCacheMessage] = useState("Search caching is off until you opt in.");
   const [cacheBusy, setCacheBusy] = useState(false);
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
 
@@ -106,7 +106,7 @@ export default function LocalFinder() {
     </form>
     <div className="local-cache-controls">
       <div className="section-heading"><div><h3>Recent search cache</h3><p>Encrypted metadata only; document contents are never cached.</p></div></div>
-      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results</label>
+      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results (opt-in)</label>
       <label className="model-select">Delete cached results after
         <select value={String(cacheSettings.retention_days)} disabled={cacheBusy || busy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
           <option value="7">7 days</option>
