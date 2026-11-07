@@ -34,12 +34,14 @@ pub struct RecentSearch {
     pub created_at: i64,
 }
 
+/// Reads wall-clock Unix time and rejects clocks earlier than the epoch.
 fn now_seconds() -> Result<i64, String> {
     SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
         .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
 }
 
+/// Opens the app-local cache with restrictive directory permissions.
 fn open(app: &AppHandle) -> Result<Connection, String> {
     let mut dir: PathBuf = app.path().app_data_dir()
         .map_err(|error| format!("Could not locate UJANI app data directory: {error}"))?;
@@ -52,6 +54,7 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
     open_database(&dir)
 }
 
+/// Opens or safely rebuilds the disposable cache database without destroying newer schemas.
 fn open_database(path: &Path) -> Result<Connection, String> {
     let db = Connection::open(path).map_err(|error| format!("Could not open local search cache: {error}"))?;
     db.busy_timeout(std::time::Duration::from_secs(3)).map_err(|error| error.to_string())?;
@@ -83,6 +86,7 @@ fn open_database(path: &Path) -> Result<Connection, String> {
     Ok(db)
 }
 
+/// Creates the versioned cache schema and verifies SQLite integrity.
 fn initialize(db: &Connection) -> Result<(), String> {
     let current_schema: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
@@ -139,6 +143,7 @@ fn initialize(db: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// Reads and normalizes persisted cache preferences.
 fn settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
     let enabled: String = db.query_row("SELECT value FROM cache_settings WHERE key='enabled'", [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
@@ -153,6 +158,7 @@ fn settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
     })
 }
 
+/// Loads or creates the cache encryption key in the operating-system credential vault.
 fn cache_key() -> Result<Zeroizing<[u8; 32]>, String> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
@@ -178,6 +184,7 @@ fn cache_key() -> Result<Zeroizing<[u8; 32]>, String> {
     }
 }
 
+/// Encrypts one cache field with AES-GCM and context-bound associated data.
 fn encrypt(key: &[u8; 32], value: &[u8], aad: &[u8]) -> Result<String, String> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid search-cache key.".to_string())?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -188,6 +195,7 @@ fn encrypt(key: &[u8; 32], value: &[u8], aad: &[u8]) -> Result<String, String> {
     Ok(format!("{CIPHER_PREFIX}{}", B64.encode(payload)))
 }
 
+/// Authenticates and decrypts one cache field, rejecting modified or mis-scoped ciphertext.
 fn decrypt(key: &[u8; 32], value: &str, aad: &[u8]) -> Result<Vec<u8>, String> {
     let encoded = value.strip_prefix(CIPHER_PREFIX)
         .ok_or_else(|| "Search-cache entry has an unsupported encryption version.".to_string())?;
@@ -199,14 +207,17 @@ fn decrypt(key: &[u8; 32], value: &str, aad: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|_| "Search-cache authentication failed.".into())
 }
 
+/// Builds authenticated context for an encrypted approved-scope path.
 fn scope_aad(scope_id: &str) -> Vec<u8> {
     format!("ujani|local-search-scope|v1|{scope_id}").into_bytes()
 }
 
+/// Builds authenticated context for a particular encrypted cache field.
 fn entry_aad(scope_id: &str, request_key: &str, kind: &str) -> Vec<u8> {
     format!("ujani|local-search-entry|v1|{scope_id}|{request_key}|{kind}").into_bytes()
 }
 
+/// Resolves a user-selected canonical folder to a native-generated opaque scope ID.
 fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path) -> Result<String, String> {
     let canonical = fs::canonicalize(root).map_err(|error| format!("Could not resolve selected folder: {error}"))?;
     let canonical_text = canonical.to_str().ok_or_else(|| "This folder path cannot be safely represented for encrypted caching; search will run without cache.".to_string())?;
@@ -242,12 +253,14 @@ fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path) -> Result<St
     Ok(scope_id)
 }
 
+/// Hashes normalized search inputs and versioned provider settings into a non-reversible key.
 fn request_key(scope_id: &str, query: &str, search_pdf_text: bool) -> String {
     super::sha256_hex(format!(
         "UJANI-LOCAL-SEARCH-CACHE-V2|scope={scope_id}|query={query}|pdf_text={search_pdf_text}|provider=bounded-local-search|parser=2"
     ).as_bytes())
 }
 
+/// Applies TTL, negative-result expiry, recent-query bounds and LRU/byte limits.
 fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(), String> {
     if settings.retention_days > 0 {
         let cutoff = now.saturating_sub(settings.retention_days.saturating_mul(86_400));
@@ -385,78 +398,93 @@ pub fn store(
     trim_cache(&db, &settings, now)
 }
 
+/// Returns cache preferences without blocking Tauri's main thread.
 #[tauri::command]
-pub fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSettings, String> {
-    let db = open(&app)?;
-    let settings = settings_from_db(&db)?;
-    trim_cache(&db, &settings, now_seconds()?)?;
-    Ok(settings)
+pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSettings, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = open(&app)?;
+        let settings = settings_from_db(&db)?;
+        trim_cache(&db, &settings, now_seconds()?)?;
+        Ok(settings)
+    }).await.map_err(|error| format!("Cache settings worker failed: {error}"))?
 }
 
+/// Returns recent encrypted search phrases only for scopes that still exist, off the UI thread.
 #[tauri::command]
-pub fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
-    let db = open(&app)?;
-    let settings = settings_from_db(&db)?;
-    if !settings.enabled { return Ok(Vec::new()); }
-    trim_cache(&db, &settings, now_seconds()?)?;
-    let key = cache_key()?;
-    let mut statement = db.prepare(
-        "SELECT r.scope_id,r.request_key,r.encrypted_query,r.created_at,s.encrypted_path
-         FROM recent_searches r JOIN approved_scopes s ON s.scope_id=r.scope_id
-         ORDER BY r.created_at DESC,r.id DESC LIMIT 20"
-    ).map_err(|error| error.to_string())?;
-    let rows = statement.query_map([], |row| Ok((
-        row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?,
-        row.get::<_,i64>(3)?, row.get::<_,String>(4)?
-    ))).map_err(|error| error.to_string())?;
-    let mut recent = Vec::new();
-    for row in rows {
-        let (scope_id, request_key, encrypted_query, created_at, encrypted_path) = row.map_err(|error| error.to_string())?;
-        let Some(path) = decrypt(&key, &encrypted_path, &scope_aad(&scope_id)).ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok()) else { continue; };
-        let path = PathBuf::from(path);
-        if !path.is_dir() || fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) { continue; }
-        let query = decrypt(&key, &encrypted_query, &entry_aad(&scope_id, &request_key, "query"))
-            .ok().and_then(|bytes| String::from_utf8(bytes).ok());
-        if let Some(query) = query {
-            recent.push(RecentSearch { query, created_at });
+pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = open(&app)?;
+        let settings = settings_from_db(&db)?;
+        if !settings.enabled { return Ok(Vec::new()); }
+        trim_cache(&db, &settings, now_seconds()?)?;
+        // Do not prompt for or create a credential-vault key when no query needs decrypting.
+        let has_rows: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM recent_searches)", [], |row| row.get(0)
+        ).map_err(|error| error.to_string())?;
+        if !has_rows { return Ok(Vec::new()); }
+        let key = cache_key()?;
+        let mut statement = db.prepare(
+            "SELECT r.scope_id,r.request_key,r.encrypted_query,r.created_at,s.encrypted_path
+             FROM recent_searches r JOIN approved_scopes s ON s.scope_id=r.scope_id
+             ORDER BY r.created_at DESC,r.id DESC LIMIT 20"
+        ).map_err(|error| error.to_string())?;
+        let rows = statement.query_map([], |row| Ok((
+            row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?,
+            row.get::<_,i64>(3)?, row.get::<_,String>(4)?
+        ))).map_err(|error| error.to_string())?;
+        let mut recent = Vec::new();
+        for row in rows {
+            let (scope_id, request_key, encrypted_query, created_at, encrypted_path) = row.map_err(|error| error.to_string())?;
+            let Some(path) = decrypt(&key, &encrypted_path, &scope_aad(&scope_id)).ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok()) else { continue; };
+            let path = PathBuf::from(path);
+            if !path.is_dir() || fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) { continue; }
+            let query = decrypt(&key, &encrypted_query, &entry_aad(&scope_id, &request_key, "query"))
+                .ok().and_then(|bytes| String::from_utf8(bytes).ok());
+            if let Some(query) = query { recent.push(RecentSearch { query, created_at }); }
         }
-    }
-    Ok(recent)
+        Ok(recent)
+    }).await.map_err(|error| format!("Recent-search worker failed: {error}"))?
 }
 
+/// Persists user cache preferences and immediately purges entries when caching is disabled.
 #[tauri::command]
-pub fn set_local_search_cache_settings(
+pub async fn set_local_search_cache_settings(
     app: AppHandle,
     enabled: bool,
     retention_days: i64,
 ) -> Result<CacheSettings, String> {
-    if !ALLOWED_RETENTION_DAYS.contains(&retention_days) {
-        return Err("Choose 7, 30, 90 days, or Until cleared.".into());
-    }
-    let db = open(&app)?;
-    db.execute("UPDATE cache_settings SET value=?1 WHERE key='enabled'", params![if enabled {"true"} else {"false"}])
-        .map_err(|error| error.to_string())?;
-    db.execute("UPDATE cache_settings SET value=?1 WHERE key='retention_days'", params![retention_days.to_string()])
-        .map_err(|error| error.to_string())?;
-    if !enabled {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !ALLOWED_RETENTION_DAYS.contains(&retention_days) {
+            return Err("Choose 7, 30, 90 days, or Until cleared.".into());
+        }
+        let db = open(&app)?;
+        db.execute("UPDATE cache_settings SET value=?1 WHERE key='enabled'", params![if enabled {"true"} else {"false"}])
+            .map_err(|error| error.to_string())?;
+        db.execute("UPDATE cache_settings SET value=?1 WHERE key='retention_days'", params![retention_days.to_string()])
+            .map_err(|error| error.to_string())?;
+        if !enabled {
+            db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
+            db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
+            db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
+        } else {
+            let settings = settings_from_db(&db)?;
+            trim_cache(&db, &settings, now_seconds()?)?;
+        }
+        settings_from_db(&db)
+    }).await.map_err(|error| format!("Cache preference worker failed: {error}"))?
+}
+
+/// Clears cached results, encrypted recent-query history and approved folder-scope records.
+#[tauri::command]
+pub async fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = open(&app)?;
         db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
         db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
         db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
-    } else {
-        let settings = settings_from_db(&db)?;
-        trim_cache(&db, &settings, now_seconds()?)?;
-    }
-    settings_from_db(&db)
-}
-
-#[tauri::command]
-pub fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
-    let db = open(&app)?;
-    db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
-    db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
-    db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
-    Ok(())
+        Ok(())
+    }).await.map_err(|error| format!("Cache clear worker failed: {error}"))?
 }
 
 #[cfg(test)]
