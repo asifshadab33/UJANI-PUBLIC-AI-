@@ -17,6 +17,8 @@ const MAX_CACHE_ENTRIES: i64 = 50;
 const MAX_CACHE_BYTES: i64 = 10 * 1024 * 1024;
 const MAX_CACHE_ROW_BYTES: usize = 4 * 1024 * 1024;
 const NEGATIVE_TTL_SECONDS: i64 = 24 * 60 * 60;
+const CACHE_PROVIDER_VERSION: &str = "bounded-local-search-v1";
+const CACHE_PARSER_VERSION: u32 = 2;
 const ALLOWED_RETENTION_DAYS: [i64; 4] = [0, 7, 30, 90];
 
 #[derive(Debug, Clone, Serialize)]
@@ -253,10 +255,23 @@ fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path) -> Result<St
     Ok(scope_id)
 }
 
-/// Hashes normalized search inputs and versioned provider settings into a non-reversible key.
+/// Hashes normalized search inputs and the provider/parser versions into a non-reversible key.
 fn request_key(scope_id: &str, query: &str, search_pdf_text: bool) -> String {
+    request_key_for_versions(
+        scope_id, query, search_pdf_text, CACHE_PROVIDER_VERSION, CACHE_PARSER_VERSION
+    )
+}
+
+/// Builds a versioned key so provider or parser upgrades cannot reuse old snapshots.
+fn request_key_for_versions(
+    scope_id: &str,
+    query: &str,
+    search_pdf_text: bool,
+    provider_version: &str,
+    parser_version: u32,
+) -> String {
     super::sha256_hex(format!(
-        "UJANI-LOCAL-SEARCH-CACHE-V2|scope={scope_id}|query={query}|pdf_text={search_pdf_text}|provider=bounded-local-search|parser=2"
+        "UJANI-LOCAL-SEARCH-CACHE-V2|scope={scope_id}|query={query}|pdf_text={search_pdf_text}|provider={provider_version}|parser={parser_version}"
     ).as_bytes())
 }
 
@@ -509,12 +524,38 @@ mod tests {
         assert!(decrypt(&key, &encrypted_query, &entry_aad("scope-b", "request-a", "query")).is_err());
     }
 
+    /// Confirms scope, query, content preference, provider and parser versions partition cache entries.
     #[test]
-    fn cache_keys_are_isolated_by_scope_and_search_preferences() {
+    fn cache_keys_are_isolated_by_scope_query_preferences_and_versions() {
         let first = request_key("scope-a", "invoice", false);
         assert_ne!(first, request_key("scope-b", "invoice", false));
         assert_ne!(first, request_key("scope-a", "invoice", true));
         assert_ne!(first, request_key("scope-a", "contract", false));
+        assert_ne!(
+            first,
+            request_key_for_versions("scope-a", "invoice", false, CACHE_PROVIDER_VERSION, CACHE_PARSER_VERSION + 1)
+        );
+        assert_ne!(
+            first,
+            request_key_for_versions("scope-a", "invoice", false, "new-provider", CACHE_PARSER_VERSION)
+        );
+    }
+
+    /// Ensures deleting a user-approved scope cascades to both cached results and recent queries.
+    #[test]
+    fn removing_a_scope_invalidates_all_associated_cache_and_history() {
+        let db = memory_db();
+        insert_scope(&db, "revoked-scope");
+        insert_cache_row(&db, "revoked-scope", "request", 10, 10, false, 8);
+        db.execute(
+            "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+             VALUES('revoked-scope','request','encrypted',0,10,10)", []
+        ).unwrap();
+        db.execute("DELETE FROM approved_scopes WHERE scope_id='revoked-scope'", []).unwrap();
+        let cached: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        let recent: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        assert_eq!(cached, 0);
+        assert_eq!(recent, 0);
     }
 
     fn memory_db() -> Connection {
