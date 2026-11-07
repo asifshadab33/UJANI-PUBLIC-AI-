@@ -299,11 +299,7 @@ async fn execute_cloud_ai_task(
  // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
  let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  let token = CancellationToken::new();
- {
-  let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-  if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-  active.insert(task_id.clone(), token.clone());
- }
+ let _active_registration = ActiveTaskRegistration::register(&control, &task_id, token.clone())?;
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
   Err(error) => {
@@ -331,6 +327,7 @@ async fn execute_cloud_ai_task(
    }
   }
  };
+ drop(_active_registration);
  if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
  if let Ok(output) = &result {
   let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
@@ -394,11 +391,7 @@ async fn pull_ollama_model(
         return Err("Invalid task identifier.".into());
     }
     let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
+    let _active_registration = ActiveTaskRegistration::register(&control, &task_id, token.clone())?;
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
@@ -409,6 +402,7 @@ async fn pull_ollama_model(
         _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
         outcome = download => outcome,
     };
+    drop(_active_registration);
     if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
@@ -666,6 +660,7 @@ async fn execute_local_ai_task(
             }
         }
     };
+    drop(_active_registration);
     if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
     if let Ok(value) = &result {
         let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
