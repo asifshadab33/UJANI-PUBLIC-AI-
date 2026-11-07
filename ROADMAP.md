@@ -96,3 +96,11 @@ No release should be described as secure, private-by-design in implementation, o
 - [x] Expose a bounded latest-50 execution receipt listing only after full local hash-chain verification succeeds.
 - [x] Show ledger integrity, record count, execution adapter/model/location, timestamps and input/output/record digests in the desktop privacy panel.
 - [ ] Independent signature/remote anchoring and receipt export remain future work; the local hash chain is tamper-evident, not a signed external audit log.
+
+
+## Audit remediation update — cancellable local tasks
+
+- [x] Route text summarisation, integrated document processing, PDF extraction/summarisation and standalone local translation through a shared native task registry.
+- [x] Apply task identifier validation, duplicate-active-task rejection, explicit cancellation tokens, progress events, registry cleanup and a 240-second wall-clock budget.
+- [x] Expose cancel controls in the desktop UI for document/PDF and translation tasks.
+- [ ] Verify the updated native and frontend code on Windows, macOS and Linux CI; cancellation is cooperative at async boundaries and does not make the whole application an OS sandbox.

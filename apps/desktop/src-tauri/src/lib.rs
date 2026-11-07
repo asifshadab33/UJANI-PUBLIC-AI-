@@ -413,6 +413,54 @@ fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str
     });
 }
 
+/// Runs a native task with a registered cancellation token and a hard wall-clock budget.
+/// Dropping the future aborts the active HTTP request; PDF worker children are kill-on-drop.
+async fn run_managed_task<T, F>(
+    app: AppHandle,
+    control: &TaskControlState,
+    task_id: String,
+    label: &'static str,
+    future: F,
+) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    if !valid_command_identifier(&task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
+    // Keep document, PDF, summary and translation tasks under the same native
+    // single-task / 1 GiB admission gate as interactive inference.
+    let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) {
+            return Err("Task identifier is already active.".into());
+        }
+        active.insert(task_id.clone(), token.clone());
+    }
+    emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
+    let result = tokio::select! {
+        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
+        outcome = tokio::time::timeout(std::time::Duration::from_secs(240), future) => {
+            match outcome {
+                Ok(value) => value,
+                Err(_) => Err(format!("{label} exceeded the 240-second overall time budget.")),
+            }
+        }
+    };
+    if let Ok(mut active) = control.active.lock() {
+        active.remove(&task_id);
+    }
+    match &result {
+        Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
+        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
+        Err(error) if error.contains("240-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
+        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+    }
+    result
+}
+
 /// Interactive local chat with a cancellation token and an overall time budget.
 #[tauri::command]
 async fn execute_local_ai_task(
@@ -505,47 +553,68 @@ fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis,
 
 /// Summarises explicitly selected text with Ollama on loopback only.
 #[tauri::command]
-async fn summarize_selected_text(file_name: String, content: String, mode: String, model: String) -> Result<String, String> {
-    let _reservation = resource_runtime::MemoryReservation::acquire("selected-text-summary")?;
-    LocalTaskEngine::summarize(file_name, content, mode, model).await
+async fn summarize_selected_text(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
+    file_name: String,
+    content: String,
+    mode: String,
+    model: String,
+) -> Result<String, String> {
+    run_managed_task(app, &control, task_id, "Text summary",
+        LocalTaskEngine::summarize(file_name, content, mode, model)).await
 }
 
 /// Runs bounded text analysis followed by local-only Ollama summarisation.
+/// The arguments intentionally mirror the stable Tauri IPC payload fields.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn process_selected_document(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
     file_name: String,
     content: String,
     mode: String,
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    let _reservation = resource_runtime::MemoryReservation::acquire("selected-document")?;
-    LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await
+    run_managed_task(app, &control, task_id, "Document pipeline",
+        LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
 }
 
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
+/// The arguments intentionally mirror the stable Tauri IPC payload fields.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn process_selected_pdf(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
     file_name: String,
     data: Vec<u8>,
     mode: String,
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    let _reservation = resource_runtime::MemoryReservation::acquire("selected-pdf")?;
-    LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language).await
+    run_managed_task(app, &control, task_id, "PDF extraction and summary",
+        LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language)).await
 }
 
 /// Translates user-provided text through the selected local Ollama model.
 #[tauri::command]
 async fn translate_text_local(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
     text: String,
     target_language: String,
     mode: String,
     model: String,
 ) -> Result<String, String> {
-    let _reservation = resource_runtime::MemoryReservation::acquire("local-translation")?;
-    LocalTaskEngine::translate_local(text, target_language, mode, model).await
+    run_managed_task(app, &control, task_id, "Local translation",
+        LocalTaskEngine::translate_local(text, target_language, mode, model)).await
 }
 
 /// Inspects image bytes supplied by the user through the UI; never opens a path.
