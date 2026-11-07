@@ -28,7 +28,8 @@ type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; 
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
-type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null };
+type NetworkActivity = { observation: "measured" | "inferred" | "unknown"; destinations: string[]; bytes_sent: number | null; bytes_received: number | null };
+type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null; network_activity?: NetworkActivity };
 type ReceiptLedgerStatus = { entries: number; valid: boolean; head_sha256: string };
 type ReceiptLedgerEntry = { receipt: ExecutionReceipt; record_hash: string };
 type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -216,6 +217,25 @@ export default function App() {
       setReceiptError("Privacy receipts unavailable: " + String(error));
       setExecutionReceipts([]);
     } finally { setReceiptBusy(false); }
+  }
+
+  function exportExecutionReceipts() {
+    if (!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid) return;
+    const exportedAt = new Date();
+    const payload = JSON.stringify({
+      schema_version: 1,
+      exported_at: exportedAt.toISOString(),
+      ledger_status: receiptLedgerStatus,
+      entries: executionReceipts,
+    }, null, 2);
+    const objectUrl = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `ujani-execution-receipts-${exportedAt.toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   async function togglePersistentHistory(enabled: boolean) {
@@ -982,9 +1002,11 @@ export default function App() {
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history receipt-history">
             <h3>Privacy & execution receipts</h3>
-            <p>Metadata-only records for supported local chat and approved cloud chat tasks. Document, PDF, translation and model-download operations are not yet connected to this receipt ledger. Prompts and outputs are not stored in this ledger.</p>
+            <p>Metadata-only receipts cover local chat, the fixed document workflow, selected documents/PDFs, local translation, selected-folder import and approved cloud chat. Model downloads are not receipt-backed yet. Prompts and outputs are never stored in this ledger.</p>
+            <p>Network evidence is labelled measured, inferred or unknown. Configured adapter destinations may be inferred; transfer byte counts remain “Not measured” unless a trusted counter actually measured them. This is not full-system network monitoring.</p>
             <div className="history-actions">
               <button onClick={refreshExecutionReceipts} disabled={!isTauri() || receiptBusy}>{receiptBusy ? "Verifying…" : "Verify & refresh receipts"}</button>
+              <button onClick={exportExecutionReceipts} disabled={!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid}>Export receipts JSON</button>
             </div>
             {receiptLedgerStatus && <small>Ledger: {receiptLedgerStatus.valid ? "Integrity verified" : "Integrity check failed"} · {receiptLedgerStatus.entries} entries · Head SHA-256: {receiptLedgerStatus.head_sha256.slice(0, 16)}…</small>}
             {receiptError && <p className="error" role="alert">{receiptError}</p>}
@@ -997,6 +1019,10 @@ export default function App() {
                 <small>Output SHA-256: {receipt.output_sha256}</small>
                 <small>Ledger record SHA-256: {record_hash}</small>
                 <small>Approval reference: {receipt.user_approval_id || "Not required for this local task"}</small>
+                <small>Network evidence: {(receipt.network_activity?.observation || "unknown").toUpperCase()}</small>
+                <small>Destinations: {receipt.network_activity?.destinations?.join(", ") || "Unknown / not observed"}</small>
+                <small>Bytes sent: {receipt.network_activity?.bytes_sent == null ? "Not measured" : receipt.network_activity.bytes_sent.toLocaleString()}</small>
+                <small>Bytes received: {receipt.network_activity?.bytes_received == null ? "Not measured" : receipt.network_activity.bytes_received.toLocaleString()}</small>
               </details>
             </div>)}
             {!executionReceipts.length && !receiptError && <small>No execution receipts recorded yet. Run a supported AI task, then refresh this panel.</small>}
