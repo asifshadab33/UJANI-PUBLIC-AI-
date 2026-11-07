@@ -34,7 +34,7 @@ export default function LocalFinder() {
         setCacheMessage(settings.enabled ? "Encrypted local search cache is on." : "Search cache is off; searches will always run fresh.");
       })
       .catch(() => setCacheMessage("Cache settings unavailable. Searches still run without cached results."));
-    void refreshRecentSearches();
+    invoke<RecentSearch[]>("list_recent_local_searches").then(setRecentSearches).catch(() => setRecentSearches([]));
   }, []);
 
   async function updateCacheSettings(enabled: boolean, retention_days: number) {
@@ -57,7 +57,7 @@ export default function LocalFinder() {
   }
 
   async function clearCache() {
-    if (cacheBusy) return;
+    if (cacheBusy || busy) return;
     setCacheBusy(true);
     setCacheMessage("Clearing encrypted search cache…");
     try {
@@ -104,16 +104,16 @@ export default function LocalFinder() {
     </form>
     <div className="local-cache-controls">
       <div className="section-heading"><div><h3>Recent search cache</h3><p>Encrypted metadata only; document contents are never cached.</p></div></div>
-      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={cacheBusy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results</label>
+      <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results</label>
       <label className="model-select">Delete cached results after
-        <select value={String(cacheSettings.retention_days)} disabled={cacheBusy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
+        <select value={String(cacheSettings.retention_days)} disabled={cacheBusy || busy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
           <option value="7">7 days</option>
           <option value="30">30 days (recommended)</option>
           <option value="90">90 days</option>
           <option value="0">Until I clear them</option>
         </select>
       </label>
-      <div className="result-title"><small className="muted">{cacheMessage}</small><button className="model-run" type="button" onClick={clearCache} disabled={cacheBusy}><Trash2 size={14}/> Clear cache</button></div>
+      <div className="result-title"><small className="muted">{cacheMessage}</small><button className="model-run" type="button" onClick={clearCache} disabled={cacheBusy || busy}><Trash2 size={14}/> Clear cache</button></div>
       <small className="muted">Maximum 50 cached searches or 10 MB; least-recently-used entries are removed first. No-result searches expire after 24 hours. If the OS credential vault is unavailable, UJANI skips caching and performs a fresh search.</small>
       {recentSearches.length > 0 && <div className="recent-searches">
         <b><Clock3 size={14}/> Recent searches</b>
