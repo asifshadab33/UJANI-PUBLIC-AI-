@@ -434,7 +434,7 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
     fs::create_dir_all(archive_dir).map_err(|e| format!("Could not create receipt archive: {e}"))?;
     let archive_nonce = SystemTime::now().duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos()).unwrap_or(now as u128);
-    let archive_dir_created = ensure_receipt_archive_dir(archive_dir, archive_nonce)?;
+    let _archive_dir_created = ensure_receipt_archive_dir(archive_dir, archive_nonce)?;
     let archive_name = format!("receipts-{now}-{count}-{archive_nonce}.jsonl");
     let path = archive_dir.join(&archive_name);
     let temporary_path = archive_dir.join(format!(".{archive_name}.tmp"));
@@ -462,7 +462,7 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
     #[cfg(not(windows))]
     fs::rename(&temporary_path, &path).map_err(|e| format!("Could not publish receipt archive: {e}"))?;
     #[cfg(unix)]
-    sync_receipt_archive_directories(archive_dir, if archive_dir_created { archive_dir.parent() } else { None })?;
+    sync_receipt_archive_directories(archive_dir, if _archive_dir_created { archive_dir.parent() } else { None })?;
     let archive_file = path.file_name().and_then(|name| name.to_str())
         .ok_or_else(|| "Receipt archive filename is not valid UTF-8.".to_string())?
         .to_string();
