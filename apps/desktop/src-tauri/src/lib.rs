@@ -530,8 +530,8 @@ fn enqueue_pending_receipt(receipt: ExecutionReceipt, slot: security_store::Rece
     true
 }
 
-/// Retries receipts on a blocking thread. In-flight entries keep their queue capacity
-/// reserved until persisted or requeued; the first store failure stops this bounded batch.
+/// Retries receipts on a blocking thread with bounded capacity and a bounded per-entry retry count.
+/// Transient failures requeue the batch; a poison receipt is discarded after five attempts.
 fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receipts: usize) {
     let batch = {
         let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
