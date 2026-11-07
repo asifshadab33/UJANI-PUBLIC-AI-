@@ -1,4 +1,5 @@
 mod cloud_gateway;
+#[allow(dead_code)]
 mod device_identity;
 mod everyday_tools;
 mod file_insights;
@@ -9,6 +10,7 @@ mod history;
 mod model_runtime;
 mod ollama;
 mod resource_runtime;
+#[allow(dead_code, unused_imports)]
 mod security_store;
 pub mod pdf_worker;
 mod task_engine;
