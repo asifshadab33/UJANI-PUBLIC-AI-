@@ -664,6 +664,29 @@ mod tests {
     }
 
     #[test]
+    fn failed_privacy_migration_rolls_back_data_and_schema_version() {
+        let db = memory_db();
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        insert_scope(&db, "legacy-scope");
+        insert_cache_row(&db, "legacy-scope", "legacy-request", 10, 10, false, 8);
+        db.execute_batch(
+            "PRAGMA user_version=1;
+             CREATE TRIGGER reject_legacy_cache_delete BEFORE DELETE ON search_cache
+             BEGIN SELECT RAISE(ABORT, 'simulated migration failure'); END;"
+        ).unwrap();
+
+        assert!(initialize(&db).is_err());
+        let enabled: String = db.query_row(
+            "SELECT value FROM cache_settings WHERE key='enabled'", [], |row| row.get(0)
+        ).unwrap();
+        let cached: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(enabled, "true");
+        assert_eq!(cached, 1);
+        assert_eq!(version, 1);
+    }
+
+    #[test]
     fn retention_expiry_and_negative_ttl_are_enforced() {
         let db = memory_db();
         insert_scope(&db, "scope");
