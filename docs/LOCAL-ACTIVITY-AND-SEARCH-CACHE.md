@@ -44,8 +44,13 @@ Do not cache raw document text, extracted PDF text, OCR output, video frames, tr
 
 ### Bounds and invalidation
 
-- Use a bounded LRU cache with a configurable maximum size and short freshness window.
-- Keep negative/no-result entries on a shorter TTL than successful results.
+- Default successful-result retention is **30 days**. Users may choose **7, 30, or 90 days**, **Until cleared**, or turn caching **Off**.
+- "Until cleared" is still bounded by a 50-entry / 10 MiB LRU limit; it is not unlimited storage.
+- Negative/no-result entries expire after **24 hours** even when the user selects "Until cleared", because absence can change quickly.
+- The default cache stores metadata only, encrypted with AES-256-GCM using a key held in the OS credential vault. If the vault is unavailable, caching is skipped and the bounded search runs fresh.
+- The cache database is local, permission-restricted, schema-versioned, and disposable; corruption causes cache recovery by discarding the cache rather than returning questionable results.
+- Keep a bounded LRU cache with a maximum of 50 entries / 10 MiB; evict least-recently-used entries first.
+- Cache lookup still traverses the approved folder to compare the complete metadata inventory. A hit avoids repeating text/PDF content inspection, not filesystem permission checks or metadata validation.
 - Invalidate on scope removal, permission change, parser/provider upgrade, file deletion/move/change, explicit refresh, sign-out/profile switch, or cache clear.
 - Never return a cached path without rechecking that it remains inside the approved scope.
 - Do not follow symlinks or reparse points during validation; validate the opened file handle where content is read.
