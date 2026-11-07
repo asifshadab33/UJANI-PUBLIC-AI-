@@ -11,7 +11,7 @@ Public AI and Enterprise AI may share versioned cache concepts and result metada
 ### Search request identity
 
 Build a deterministic cache key from:
-- normalized query (Unicode-normalized and case-folded);
+- trimmed, lowercased query using the same normalization as the current local search implementation;
 - selected scope ID, not a webview-supplied filesystem path;
 - file-type and content-search filters;
 - search provider and parser/index version;
