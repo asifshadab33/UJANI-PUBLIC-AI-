@@ -211,6 +211,52 @@ async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
 #[derive(Serialize)]
 struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::DocumentPipelineResult }
 
+/// Selects a folder natively, then processes its bounded contents under the managed-task lifecycle.
+#[tauri::command]
+async fn process_selected_folder(
+    app: AppHandle,
+    control: State<'_, TaskControlState>,
+    task_id: String,
+    mode: String,
+    model: String,
+) -> Result<folder_import::FolderImportResult, String> {
+    if mode != "fortress" && mode != "smart" {
+        return Err("Folder processing is local-only. Select Fortress or Smart.".into());
+    }
+    if model.len() > 128 {
+        return Err("Invalid local model identifier.".into());
+    }
+
+    // The native picker runs before memory reservation; no folder path is accepted from the webview.
+    let Some(files) = folder_import::select_folder_files(app.clone()).await? else {
+        return Ok(folder_import::FolderImportResult {
+            cancelled: true,
+            files: Vec::new(),
+            total_bytes: 0,
+        });
+    };
+
+    // Bind the receipt input digest to every selected filename and byte of content.
+    let mut receipt_fields: Vec<&[u8]> = vec![mode.as_bytes(), model.as_bytes()];
+    for file in &files {
+        receipt_fields.push(file.name.as_bytes());
+        receipt_fields.push(file.content.as_bytes());
+    }
+    let receipt = local_receipt_context("folder.import", &model, &receipt_fields)?;
+
+    run_managed_task(
+        app,
+        &control,
+        task_id,
+        "Folder import",
+        receipt,
+        async move {
+            folder_import::process_selected_folder_files(files, mode, model).await
+        },
+    )
+    .await
+}
+
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
@@ -902,7 +948,7 @@ pub fn run() {
             process_selected_pdf,
             translate_text_local,
             inspect_image_file,
-            folder_import::process_selected_folder,
+            process_selected_folder,
             history::get_task_history_settings,
             history::set_task_history_enabled,
             history::save_task_history,
