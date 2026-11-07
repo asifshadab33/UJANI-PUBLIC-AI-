@@ -103,3 +103,8 @@ Before invoking a tool, re-check its current availability, version, permissions,
 ## Non-goals
 
 This design does not authorise whole-disk scanning, silent background indexing, document upload, automatic file modification, cross-tenant search, or bypassing user approval. It is a cache design, not a claim that these features are already implemented.
+
+
+## Privacy default update
+
+Search-result caching and encrypted recent-query history are **off until the user explicitly enables** “Remember validated search results” in the local finder. Enabling it stores bounded, encrypted metadata and recent query phrases under the OS credential-vault key. Upgrading from schema v1 disables the implicit-on setting and clears entries created under that default; it does not infer consent from the previous default.
