@@ -234,19 +234,22 @@ pub async fn find_local_files(
 
 /// Stable filesystem identity where the platform exposes it. Unsupported platforms
 /// deliberately return None; size, high-resolution mtime and canonical path remain required.
+#[cfg(unix)]
 fn file_identity(metadata: &fs::Metadata) -> Option<String> {
-    #[cfg(unix)] {
-        use std::os::unix::fs::MetadataExt;
-        return Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()));
-    }
-    #[cfg(windows)] {
-        use std::os::windows::fs::MetadataExt;
-        return Some(format!("windows:{}:{}", metadata.volume_serial_number()?, metadata.file_index()?));
-    }
-    #[cfg(not(any(unix, windows)))] {
-        let _ = metadata;
-        None
-    }
+    use std::os::unix::fs::MetadataExt;
+    Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+}
+
+#[cfg(windows)]
+fn file_identity(metadata: &fs::Metadata) -> Option<String> {
+    use std::os::windows::fs::MetadataExt;
+    Some(format!("windows:{}:{}", metadata.volume_serial_number()?, metadata.file_index()?))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity(metadata: &fs::Metadata) -> Option<String> {
+    let _ = metadata;
+    None
 }
 
 fn modified_unix_ns(metadata: &fs::Metadata) -> Option<u64> {
@@ -523,10 +526,10 @@ mod tests {
             note: "cached".into(),
             cache_hit: false,
         };
-        assert!(validate_cached_matches(&canonical, &candidates, &cached, &[candidate.identity.clone()]));
+        assert!(validate_cached_matches(&canonical, &candidates, &cached, std::slice::from_ref(&candidate.identity)));
         fs::write(&path, "invoice changed to a longer value").unwrap();
         let (_, changed_candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
-        assert!(!validate_cached_matches(&canonical, &changed_candidates, &cached, &[candidate.identity.clone()]));
+        assert!(!validate_cached_matches(&canonical, &changed_candidates, &cached, std::slice::from_ref(&candidate.identity)));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -560,11 +563,11 @@ mod tests {
             note: "cached".into(),
             cache_hit: false,
         };
-        assert!(validate_cached_matches(&canonical, &candidates, &cached, &[candidate.identity.clone()]));
+        assert!(validate_cached_matches(&canonical, &candidates, &cached, std::slice::from_ref(&candidate.identity)));
         fs::remove_file(&path).unwrap();
         std::os::unix::fs::symlink(&outside_file, &path).unwrap();
         let (_, replaced_candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
-        assert!(!validate_cached_matches(&canonical, &replaced_candidates, &cached, &[candidate.identity.clone()]));
+        assert!(!validate_cached_matches(&canonical, &replaced_candidates, &cached, std::slice::from_ref(&candidate.identity)));
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
     }
