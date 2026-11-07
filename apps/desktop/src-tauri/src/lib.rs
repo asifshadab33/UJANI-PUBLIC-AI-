@@ -714,7 +714,10 @@ async fn execute_local_ai_task(
     let progress_task = task_id.clone();
     run_managed_task(app, &control, task_id, "Local inference", receipt, async move {
         emit_task_progress(&progress_app, &progress_task, "inference", "Local model request sent; waiting for Ollama response.", 25);
-        LocalTaskEngine::execute(prompt, mode, model).await
+        tokio::time::timeout(
+            std::time::Duration::from_secs(140),
+            LocalTaskEngine::execute(prompt, mode, model),
+        ).await.map_err(|_| "Local task exceeded the 140-second overall time budget. Try a smaller prompt or faster model.".to_string())?
     }).await
 }
 
