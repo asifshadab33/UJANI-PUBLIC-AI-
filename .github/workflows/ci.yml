@@ -7,7 +7,7 @@ on:
     branches: [main]
   # Repeat the complete validation suite every 30 minutes (UTC).
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "13,43 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ permissions:
 
 # Keep only the newest CI run for a branch; superseded commits are not release candidates.
 concurrency:
-  group: ujani-ci-${{ github.ref }}
+  group: ${{ github.event_name == 'schedule' && format('ujani-ci-schedule-{0}', github.run_id) || format('ujani-ci-{0}', github.ref) }}
   cancel-in-progress: true
 
 jobs:
