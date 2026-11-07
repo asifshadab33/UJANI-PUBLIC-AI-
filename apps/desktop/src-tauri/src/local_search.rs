@@ -77,8 +77,9 @@ pub async fn find_local_files(
     let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to search.", 1);
 
+    let picker_app = app.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
-        let Some(folder) = app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
+        let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
             return Ok(None);
         };
         let path = folder.into_path()
