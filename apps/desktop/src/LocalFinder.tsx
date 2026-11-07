@@ -31,7 +31,7 @@ export default function LocalFinder() {
     catch (e) { setError(`Could not cancel search: ${String(e)}`); }
   }
 
-  return <section className="model-box local-finder" id="everyday-tools">
+  return <section className="model-box local-finder" id="local-file-finder">
     <div className="section-heading"><div><h2><FolderSearch size={18}/> Find files on this computer</h2><p>Find videos, PDFs, documents and other files in a folder you choose.</p></div><span className="muted">LOCAL · READ-ONLY</span></div>
     <form onSubmit={(event) => { event.preventDefault(); void search(); }}>
       <label className="model-select">What are you looking for?
