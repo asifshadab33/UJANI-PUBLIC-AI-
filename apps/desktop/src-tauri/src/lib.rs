@@ -452,6 +452,8 @@ fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str
     });
 }
 
+const MAX_RECEIPT_INPUT_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Debug)]
 struct LocalReceiptContext {
     operation_id: &'static str,
@@ -469,11 +471,19 @@ fn local_receipt_context(
     if !validate_model_identifier(model_id) {
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
-    let mut material = b"UJANI-LOCAL-TASK-INPUT-V1".to_vec();
-    for field in [operation_id.as_bytes(), model_id.as_bytes()]
+    let all_fields = [operation_id.as_bytes(), model_id.as_bytes()]
         .into_iter()
         .chain(fields.iter().copied())
-    {
+        .collect::<Vec<_>>();
+    let total_bytes = all_fields.iter().try_fold(0usize, |total, field| {
+        total.checked_add(field.len()).and_then(|value| value.checked_add(8))
+    }).ok_or_else(|| "Receipt input size overflowed.".to_string())?;
+    if total_bytes > MAX_RECEIPT_INPUT_BYTES {
+        return Err("Receipt input exceeds the 64 MiB hashing limit; narrow the selected input.".into());
+    }
+    let mut material = Vec::with_capacity(b"UJANI-LOCAL-TASK-INPUT-V1".len() + total_bytes);
+    material.extend_from_slice(b"UJANI-LOCAL-TASK-INPUT-V1");
+    for field in all_fields {
         material.extend_from_slice(&(field.len() as u64).to_be_bytes());
         material.extend_from_slice(field);
     }
