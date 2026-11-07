@@ -57,6 +57,21 @@ jobs:
       - name: Run desktop native unit tests
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
 
+  dependency-audit:
+    name: Rust dependency security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit locked workspace dependencies
+        run: cargo audit --deny warnings
+      - name: Audit locked desktop dependencies
+        working-directory: apps/desktop/src-tauri
+        run: cargo audit --deny warnings
+
   rust-quality:
     name: Rust lint checks
     runs-on: ubuntu-latest
