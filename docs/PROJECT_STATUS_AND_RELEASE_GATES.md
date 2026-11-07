@@ -30,7 +30,7 @@
 - Ed25519 approval claims bound to workload/device/class/resource limits and expiry.
 - A local file-backed reservation ledger with OS advisory locking, snapshot checksum validation, backup/rename recovery, opaque lease capabilities, authenticated renewal/release and durable challenge replay claims. It is single-host and not a distributed transaction service.
 - Strict, versioned workload manifest input contract and JSON Schema, with validation tests.
-- The workload manifest is not an execution grant. Production identity enrollment, durable state and a complete control plane remain future work.
+- The workload manifest is not an execution grant. Production identity enrollment, production-grade authenticated storage and a complete control plane remain future work.
 
 ## Critical release gates — not yet implemented or independently verified
 
