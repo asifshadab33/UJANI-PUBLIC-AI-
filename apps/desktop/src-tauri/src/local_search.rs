@@ -62,6 +62,7 @@ pub async fn find_local_files(
     task_id: String,
     query: String,
     search_pdf_text: bool,
+    force_refresh: bool,
 ) -> Result<LocalSearchResult, String> {
     if !super::valid_command_identifier(&task_id, 96) {
         return Err("Invalid task identifier.".into());
@@ -110,10 +111,11 @@ pub async fn find_local_files(
 
     let root_name = root.file_name().map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_else(|| root.display().to_string());
-    let inventory_json = serde_json::to_string(&candidates)
-        .map_err(|error| format!("Could not fingerprint the selected folder inventory: {error}"))?;
-    if !truncated {
-        if let Ok(Some(cached_json)) = crate::search_cache::load(&app, &root, &query, search_pdf_text, &inventory_json) {
+    // Non-Unicode paths may not serialize losslessly; in that case, run fresh without caching.
+    let inventory_json = serde_json::to_string(&candidates).ok();
+    if !force_refresh && !truncated {
+        if let Some(inventory_json) = inventory_json.as_deref() {
+        if let Ok(Some(cached_json)) = crate::search_cache::load(&app, &root, &query, search_pdf_text, inventory_json) {
             if let Ok(mut cached) = serde_json::from_str::<LocalSearchResult>(&cached_json) {
                 if validate_cached_matches(&root, &candidates, &cached) {
                     cached.scanned_files = scanned_files;
@@ -123,6 +125,7 @@ pub async fn find_local_files(
                     return Ok(cached);
                 }
             }
+        }
         }
     }
     let mut matches = Vec::new();
@@ -211,9 +214,9 @@ pub async fn find_local_files(
         },
     };
     if !result.truncated {
-        if let Ok(payload) = serde_json::to_string(&result) {
+        if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&result)) {
             let _ = crate::search_cache::store(
-                &app, &root, &query, search_pdf_text, &inventory_json, &payload, result.matches.is_empty()
+                &app, &root, &query, search_pdf_text, inventory_json, &payload, result.matches.is_empty()
             );
         }
     }
