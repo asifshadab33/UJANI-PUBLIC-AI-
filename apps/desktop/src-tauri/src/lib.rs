@@ -242,7 +242,8 @@ async fn process_selected_folder(
         receipt_fields.push(file.name.as_bytes());
         receipt_fields.push(file.content.as_bytes());
     }
-    let receipt = local_receipt_context("folder.import", &model, &receipt_fields)?;
+    let receipt_model = if model.trim().is_empty() { "analysis-only" } else { &model };
+    let receipt = local_receipt_context("folder.import", receipt_model, &receipt_fields)?;
 
     run_managed_task(
         app,
