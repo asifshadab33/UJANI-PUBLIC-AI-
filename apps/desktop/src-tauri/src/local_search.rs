@@ -454,4 +454,107 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn inventory_snapshot_changes_when_files_are_added_moved_modified_or_deleted() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-cache-inventory-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let first = root.join("one.txt");
+        let second = root.join("two.txt");
+        let moved = root.join("renamed.txt");
+        fs::write(&first, "needle").unwrap();
+        let snapshot = |folder: &Path| {
+            let (_, candidates, _, truncated) = collect_candidates(folder, &CancellationToken::new()).unwrap();
+            assert!(!truncated);
+            serde_json::to_string(&candidates).unwrap()
+        };
+        let initial = snapshot(&root);
+        fs::write(&second, "another file").unwrap();
+        let with_new_file = snapshot(&root);
+        assert_ne!(initial, with_new_file);
+        fs::rename(&second, &moved).unwrap();
+        let after_move = snapshot(&root);
+        assert_ne!(with_new_file, after_move);
+        fs::write(&first, "needle with changed bytes").unwrap();
+        let after_mutation = snapshot(&root);
+        assert_ne!(after_move, after_mutation);
+        fs::remove_file(&moved).unwrap();
+        let after_delete = snapshot(&root);
+        assert_ne!(after_mutation, after_delete);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cached_result_requires_current_file_identity_and_handle_validation() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-cache-validate-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("invoice.txt");
+        fs::write(&path, "invoice 2026").unwrap();
+        let (canonical, candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
+        let candidate = &candidates[0];
+        let cached = LocalSearchResult {
+            cancelled: false,
+            root_name: Some("cache-validate".into()),
+            scanned_files: 1,
+            matches: vec![LocalSearchMatch {
+                path: candidate.path.display().to_string(),
+                file_name: candidate.name.clone(),
+                extension: candidate.extension.clone(),
+                size_bytes: candidate.size,
+                modified_unix_ms: candidate.modified_unix_ms,
+                matched_in: vec!["text content".into()],
+                file_identity: candidate.identity.clone(),
+            }],
+            truncated: false,
+            note: "cached".into(),
+            cache_hit: false,
+        };
+        assert!(validate_cached_matches(&canonical, &candidates, &cached));
+        fs::write(&path, "invoice changed to a longer value").unwrap();
+        let (_, changed_candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
+        assert!(!validate_cached_matches(&canonical, &changed_candidates, &cached));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_result_is_rejected_after_symlink_replacement() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-cache-link-{unique}"));
+        let outside = std::env::temp_dir().join(format!("ujani-cache-link-outside-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let path = root.join("result.txt");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&path, "public result").unwrap();
+        fs::write(&outside_file, "outside secret").unwrap();
+        let (canonical, candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
+        let candidate = &candidates[0];
+        let cached = LocalSearchResult {
+            cancelled: false,
+            root_name: Some("cache-link".into()),
+            scanned_files: 1,
+            matches: vec![LocalSearchMatch {
+                path: candidate.path.display().to_string(),
+                file_name: candidate.name.clone(),
+                extension: candidate.extension.clone(),
+                size_bytes: candidate.size,
+                modified_unix_ms: candidate.modified_unix_ms,
+                matched_in: vec!["filename".into()],
+                file_identity: candidate.identity.clone(),
+            }],
+            truncated: false,
+            note: "cached".into(),
+            cache_hit: false,
+        };
+        assert!(validate_cached_matches(&canonical, &candidates, &cached));
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&outside_file, &path).unwrap();
+        let (_, replaced_candidates, _, _) = collect_candidates(&root, &CancellationToken::new()).unwrap();
+        assert!(!validate_cached_matches(&canonical, &replaced_candidates, &cached));
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
 }
