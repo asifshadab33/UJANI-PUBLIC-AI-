@@ -19,21 +19,21 @@ const MAX_TOTAL_HASH_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_DUPLICATE_GROUPS: usize = 100;
 const SCAN_TIMEOUT_SECS: u64 = 60;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DuplicateFile {
     pub file_name: String,
     pub path: String,
     pub size_bytes: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DuplicateGroup {
     pub sha256: String,
     pub size_bytes: u64,
     pub files: Vec<DuplicateFile>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct DuplicateScanResult {
     pub root_name: String,
     pub scanned_files: usize,
@@ -334,7 +334,7 @@ mod tests {
     fn rejects_a_symlink_as_the_selected_root() {
         let root = temp_dir("root");
         fs::create_dir_all(&root).unwrap();
-        let link = root.with_extension("link");
+        let _link = root.with_extension("link");
         #[cfg(unix)] {
             std::os::unix::fs::symlink(&root, &link).unwrap();
             assert!(scan_duplicates(&link, &CancellationToken::new()).is_err());
