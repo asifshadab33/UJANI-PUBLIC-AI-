@@ -28,14 +28,12 @@ export default function EverydayTools() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let mounted = true;
-    void invoke<number>("get_local_clock")
-      .then((timestamp) => { if (mounted) setClock(new Date(timestamp)); })
-      .catch((reason) => { if (mounted) setError(`Local clock unavailable: ${String(reason)}`); });
-    const timer = window.setInterval(() => {
-      if (mounted) setClock(new Date());
-    }, 1000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    // The device-local clock is available in the webview without a native IPC call.
+    // This keeps the browser preview useful and avoids a misleading "native clock
+    // unavailable" error when the app is intentionally running outside Tauri.
+    setClock(new Date());
+    const timer = window.setInterval(() => setClock(new Date()), 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   async function scanDuplicates() {
