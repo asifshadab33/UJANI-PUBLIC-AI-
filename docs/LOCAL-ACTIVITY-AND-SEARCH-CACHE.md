@@ -11,7 +11,7 @@ Public AI and Enterprise AI may share versioned cache concepts and result metada
 ### Search request identity
 
 Build a deterministic cache key from:
-- normalized query (Unicode-normalized and case-folded);
+- trimmed, lowercased query using the same normalization as the current local search implementation;
 - selected scope ID, not a webview-supplied filesystem path;
 - file-type and content-search filters;
 - search provider and parser/index version;
@@ -44,12 +44,20 @@ Do not cache raw document text, extracted PDF text, OCR output, video frames, tr
 
 ### Bounds and invalidation
 
-- Use a bounded LRU cache with a configurable maximum size and short freshness window.
-- Keep negative/no-result entries on a shorter TTL than successful results.
+- Default successful-result retention is **30 days**. Users may choose **7, 30, or 90 days**, **Until cleared**, or turn caching **Off**.
+- "Until cleared" is still bounded by a 50-entry / 10 MiB LRU limit; it is not unlimited storage.
+- Negative/no-result entries expire after **24 hours** even when the user selects "Until cleared", because absence can change quickly.
+- The default cache stores metadata only, encrypted with AES-256-GCM using a key held in the OS credential vault. If the vault is unavailable, caching is skipped and the bounded search runs fresh.
+- The cache database is local, permission-restricted, schema-versioned, and disposable; corruption causes cache recovery by discarding the cache rather than returning questionable results.
+- Keep a bounded LRU cache with a maximum of 50 entries / 10 MiB; evict least-recently-used entries first.
+- Cache lookup still traverses the approved folder to compare the complete metadata inventory. A hit avoids repeating text/PDF content inspection, not filesystem permission checks or metadata validation.
 - Invalidate on scope removal, permission change, parser/provider upgrade, file deletion/move/change, explicit refresh, sign-out/profile switch, or cache clear.
 - Never return a cached path without rechecking that it remains inside the approved scope.
 - Do not follow symlinks or reparse points during validation; validate the opened file handle where content is read.
 - Cache errors must fail open to a fresh bounded search, not fail closed to stale results.
+- Cache only fully completed searches. If any eligible text/PDF file cannot be read or parsed, exceeds a supported content limit, or the worker times out, mark the result partial and do not persist it; the UI explains that some eligible files could not be inspected.
+- Retain at most 20 encrypted recent query phrases, covered by the same retention policy; an empty history must not create or unlock a credential-vault key.
+- Perform SQLite and OS credential-vault operations on Tauri's blocking worker pool, never on the UI thread or async executor workers.
 
 ### Remembering repeated commands
 
@@ -77,8 +85,8 @@ Before invoking a tool, re-check its current availability, version, permissions,
 ## Observability and user controls
 
 - Mark results as "recent" or "validated just now" with the validation timestamp.
-- Provide Refresh and Clear recent searches controls.
-- Record cache hit/miss, validation outcome and invalidation reason without logging query contents or file names by default.
+- Provide Refresh, encrypted recent-query history and Clear cache controls. Recent query text is encrypted with the same OS-protected key and is shown only while its selected folder still exists.
+- Record cache hit/miss, validation outcome and invalidation reason without logging query contents or file names by default. Recent query history is local, encrypted and covered by the same retention setting.
 - Keep telemetry opt-in and local by default in Public AI.
 - In Enterprise, audit access to organisation-controlled cache entries under tenant-scoped audit policy.
 
