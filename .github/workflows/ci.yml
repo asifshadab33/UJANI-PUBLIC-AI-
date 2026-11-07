@@ -99,11 +99,18 @@ jobs:
         run: npm run build
 
   generate-lockfiles:
-    name: Generate dependency lockfiles
+    name: Generate and commit dependency lockfiles
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
@@ -115,12 +122,17 @@ jobs:
         run: |
           cargo generate-lockfile --manifest-path Cargo.toml
           cargo generate-lockfile --manifest-path apps/desktop/src-tauri/Cargo.toml
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ujani-dependency-lockfiles
-          path: |
-            apps/desktop/package-lock.json
-            Cargo.lock
-            apps/desktop/src-tauri/Cargo.lock
-          if-no-files-found: error
-          retention-days: 7
+      - name: Commit generated lockfiles to this same-repository PR branch
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/package-lock.json Cargo.lock apps/desktop/src-tauri/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Lockfiles are already current."
+            exit 0
+          fi
+          git commit -m "chore: commit generated dependency lockfiles"
+          git push origin "HEAD:${HEAD_REF}"
