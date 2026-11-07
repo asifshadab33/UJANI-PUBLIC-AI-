@@ -13,6 +13,8 @@ use std::{
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILES: usize = 10;
+const MAX_DIRECTORY_ENTRIES: usize = 5_000;
+const MAX_FOLDER_SCAN_SECONDS: u64 = 15;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
@@ -182,8 +184,17 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
         .map_err(|error| format!("Cannot read the selected folder: {error}"))?;
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
+    let mut entries_seen = 0usize;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MAX_FOLDER_SCAN_SECONDS);
 
     for entry in entries {
+        if std::time::Instant::now() >= deadline {
+            return Err("Folder inspection exceeded the 15-second time budget; choose a smaller folder.".into());
+        }
+        entries_seen = entries_seen.saturating_add(1);
+        if entries_seen > MAX_DIRECTORY_ENTRIES {
+            return Err("The selected folder exceeds the 5,000-entry inspection limit; choose a smaller folder.".into());
+        }
         let entry = entry.map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
         let file_type = entry.file_type()
             .map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
