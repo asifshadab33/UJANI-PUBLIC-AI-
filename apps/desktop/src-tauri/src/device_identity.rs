@@ -2,7 +2,7 @@
 //! Only the public key and its derived identifier are exposed to the frontend.
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use ed25519_dalek::SigningKey;
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use crate::native_consent::confirm_native;
 use ujani_core::{peer_protocol::{SignedTaskEnvelope, TaskEnvelope, PROTOCOL_VERSION}, registered_operations};
 use std::time::{SystemTime, UNIX_EPOCH};
 use rand::{rngs::OsRng, RngCore};
@@ -51,14 +51,6 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
 }
 
 /// Load or create the local Ed25519 signing key in the operating-system credential vault.
-async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().message(message).title(title)
-        .kind(MessageDialogKind::Warning).buttons(MessageDialogButtons::YesNo)
-        .show(move |approved| { let _ = tx.send(approved); });
-    rx.await.unwrap_or(false)
-}
-
 #[tauri::command]
 pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, String> {
     let signing = load_or_create_signing_key()?;
