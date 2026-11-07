@@ -92,7 +92,7 @@ fn open_database(path: &Path) -> Result<Connection, String> {
 fn initialize(db: &Connection) -> Result<(), String> {
     let current_schema: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
-    if current_schema > 1 {
+    if current_schema > 2 {
         return Err("Local search cache schema is newer than this UJANI build.".into());
     }
     db.execute_batch(
@@ -101,7 +101,7 @@ fn initialize(db: &Connection) -> Result<(), String> {
          PRAGMA journal_mode=DELETE;
          PRAGMA auto_vacuum=FULL;
          CREATE TABLE IF NOT EXISTS cache_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-         INSERT OR IGNORE INTO cache_settings(key,value) VALUES('enabled','true');
+         INSERT OR IGNORE INTO cache_settings(key,value) VALUES('enabled','false');
          INSERT OR IGNORE INTO cache_settings(key,value) VALUES('retention_days','30');
          CREATE TABLE IF NOT EXISTS approved_scopes(
            scope_id TEXT PRIMARY KEY,
@@ -135,7 +135,20 @@ fn initialize(db: &Connection) -> Result<(), String> {
          );
          CREATE INDEX IF NOT EXISTS idx_recent_searches_lru ON recent_searches(created_at DESC);"
     ).map_err(|error| format!("Could not initialise local search cache: {error}"))?;
-    db.execute_batch("PRAGMA user_version=1;")
+    // Search caching and recent-query retention now require an explicit user opt-in.
+    // Version-1 installations used an implicit-on default, so discard those automatic
+    // entries and disable caching rather than treating that historical default as consent.
+    if current_schema < 2 {
+        db.execute("UPDATE cache_settings SET value='false' WHERE key='enabled'", [])
+            .map_err(|error| format!("Could not disable implicit search caching: {error}"))?;
+        db.execute("DELETE FROM search_cache", [])
+            .map_err(|error| format!("Could not clear pre-opt-in search results: {error}"))?;
+        db.execute("DELETE FROM recent_searches", [])
+            .map_err(|error| format!("Could not clear pre-opt-in search history: {error}"))?;
+        db.execute("DELETE FROM approved_scopes", [])
+            .map_err(|error| format!("Could not clear pre-opt-in folder scopes: {error}"))?;
+    }
+    db.execute_batch("PRAGMA user_version=2;")
         .map_err(|error| format!("Could not update local search cache schema version: {error}"))?;
     let check: String = db.query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| format!("Could not verify local search cache: {error}"))?;
@@ -617,6 +630,31 @@ mod tests {
     }
 
     #[test]
+    fn cache_and_recent_search_history_are_off_until_explicit_opt_in() {
+        let db = memory_db();
+        assert!(!settings_from_db(&db).unwrap().enabled);
+
+        // Simulate a version-1 installation where caching was enabled by default.
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        insert_scope(&db, "legacy-scope");
+        insert_cache_row(&db, "legacy-scope", "legacy-request", 10, 10, false, 8);
+        db.execute(
+            "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+             VALUES('legacy-scope','legacy-request','encrypted',0,10,10)", []
+        ).unwrap();
+        db.execute_batch("PRAGMA user_version=1;").unwrap();
+
+        initialize(&db).unwrap();
+        assert!(!settings_from_db(&db).unwrap().enabled);
+        let cached: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
+        let recent: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        let scopes: i64 = db.query_row("SELECT COUNT(*) FROM approved_scopes", [], |row| row.get(0)).unwrap();
+        assert_eq!(cached, 0);
+        assert_eq!(recent, 0);
+        assert_eq!(scopes, 0);
+    }
+
+    #[test]
     fn retention_expiry_and_negative_ttl_are_enforced() {
         let db = memory_db();
         insert_scope(&db, "scope");
@@ -675,7 +713,7 @@ mod tests {
     #[test]
     fn newer_cache_schema_is_not_treated_as_corruption() {
         let db = Connection::open_in_memory().unwrap();
-        db.execute_batch("PRAGMA user_version=2;").unwrap();
+        db.execute_batch("PRAGMA user_version=3;").unwrap();
         let error = initialize(&db).unwrap_err();
         assert!(error.contains("newer than this UJANI build"));
     }
@@ -701,14 +739,14 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("local-search-cache.sqlite3");
         let db = Connection::open(&path).unwrap();
-        db.execute_batch("PRAGMA user_version=2;").unwrap();
+        db.execute_batch("PRAGMA user_version=3;").unwrap();
         drop(db);
         let error = open_database(&path).unwrap_err();
         assert!(error.contains("newer than this UJANI build"));
         assert!(path.exists());
         let db = Connection::open(&path).unwrap();
         let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         drop(db);
         fs::remove_dir_all(directory).unwrap();
     }
