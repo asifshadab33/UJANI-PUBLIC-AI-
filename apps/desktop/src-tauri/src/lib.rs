@@ -17,7 +17,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::{Mutex, OnceLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap}, sync::{Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
@@ -491,21 +491,34 @@ async fn confirm_native(app: &AppHandle, title: &str, message: String) -> bool {
 struct PendingReceipt {
     receipt: ExecutionReceipt,
     slot: security_store::ReceiptSlotReservation,
+    attempts: u8,
 }
 
 /// Tracks queued and currently retrying provenance receipts for bounded capacity accounting.
 struct PendingReceiptState {
     queued: Vec<PendingReceipt>,
     in_flight: usize,
+    flush_in_progress: bool,
 }
 
 static PENDING_RECEIPTS: OnceLock<Mutex<PendingReceiptState>> = OnceLock::new();
 const MAX_PENDING_RECEIPTS: usize = 100;
 const RECEIPT_RETRY_BUDGET: Duration = Duration::from_secs(3);
+const MAX_RECEIPT_RETRY_ATTEMPTS: u8 = 5;
+static PENDING_RECEIPTS_CHANGED: OnceLock<Condvar> = OnceLock::new();
+
+fn pending_receipts_changed() -> &'static Condvar {
+    PENDING_RECEIPTS_CHANGED.get_or_init(Condvar::new)
+}
+
+fn next_receipt_retry_attempt(attempts: u8) -> Option<u8> {
+    let next = attempts.saturating_add(1);
+    (next < MAX_RECEIPT_RETRY_ATTEMPTS).then_some(next)
+}
 
 /// Returns the process-local bounded queue and its in-flight capacity accounting.
 fn pending_receipts() -> &'static Mutex<PendingReceiptState> {
-    PENDING_RECEIPTS.get_or_init(|| Mutex::new(PendingReceiptState { queued: Vec::new(), in_flight: 0 }))
+    PENDING_RECEIPTS.get_or_init(|| Mutex::new(PendingReceiptState { queued: Vec::new(), in_flight: 0, flush_in_progress: false }))
 }
 
 /// Adds a failed receipt and its still-live reservation without exceeding the
@@ -513,7 +526,7 @@ fn pending_receipts() -> &'static Mutex<PendingReceiptState> {
 fn enqueue_pending_receipt(receipt: ExecutionReceipt, slot: security_store::ReceiptSlotReservation) -> bool {
     let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if state.queued.len().saturating_add(state.in_flight) >= MAX_PENDING_RECEIPTS { return false; }
-    state.queued.push(PendingReceipt { receipt, slot });
+    state.queued.push(PendingReceipt { receipt, slot, attempts: 0 });
     true
 }
 
@@ -522,7 +535,16 @@ fn enqueue_pending_receipt(receipt: ExecutionReceipt, slot: security_store::Rece
 fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receipts: usize) {
     let batch = {
         let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Only one worker may own the retry batch. Shutdown observes this flag
+        // instead of mistaking an temporarily empty queue for completed work.
+        if state.flush_in_progress {
+            return;
+        }
         let batch = std::mem::take(&mut state.queued);
+        if batch.is_empty() {
+            return;
+        }
+        state.flush_in_progress = true;
         state.in_flight = state.in_flight.saturating_add(batch.len());
         batch
     };
@@ -553,15 +575,62 @@ fn flush_pending_receipts_blocking(app: &AppHandle, budget: Duration, max_receip
                 );
             }
             Err(error) => {
-                let (slot, _error) = *error;
-                let failed = PendingReceipt { receipt: pending.receipt, slot };
-                let remaining = std::iter::once(failed).chain(iter).collect::<Vec<_>>();
+                let (slot, message) = *error;
+                if let Some(attempts) = next_receipt_retry_attempt(pending.attempts) {
+                    let failed = PendingReceipt { receipt: pending.receipt, slot, attempts };
+                    let remaining = std::iter::once(failed).chain(iter).collect::<Vec<_>>();
+                    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    state.in_flight = state.in_flight.saturating_sub(remaining.len());
+                    state.queued.extend(remaining);
+                    break;
+                }
+
+                // A poison receipt must not permanently block unrelated receipts.
+                // Dropping the reservation releases its durable slot; the final warning
+                // makes the provenance gap visible instead of retrying forever.
+                let task_id = pending.receipt.task_id.clone();
+                drop(slot);
                 let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                state.in_flight = state.in_flight.saturating_sub(remaining.len());
-                state.queued.extend(remaining);
-                break;
+                state.in_flight = state.in_flight.saturating_sub(1);
+                drop(state);
+                emit_task_progress(
+                    app,
+                    &task_id,
+                    "receipt_warning",
+                    &format!("The provenance receipt could not be stored after {MAX_RECEIPT_RETRY_ATTEMPTS} attempts and was discarded: {message}"),
+                    100,
+                );
             }
         }
+    }
+    let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.flush_in_progress = false;
+    drop(state);
+    pending_receipts_changed().notify_all();
+}
+
+/// Wait for an active retry batch, then make one final bounded flush during shutdown.
+fn flush_pending_receipts_on_exit(app: &AppHandle) {
+    let deadline = Instant::now() + RECEIPT_RETRY_BUDGET;
+    {
+        let mut state = pending_receipts().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.flush_in_progress {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            let (next, timeout) = pending_receipts_changed()
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
+            if timeout.timed_out() && state.flush_in_progress {
+                return;
+            }
+        }
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if !remaining.is_zero() {
+        flush_pending_receipts_blocking(app, remaining, MAX_PENDING_RECEIPTS);
     }
 }
 
@@ -1073,9 +1142,25 @@ pub fn run() {
         .expect("error while building UJANI Public AI");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            flush_pending_receipts_blocking(app, RECEIPT_RETRY_BUDGET, MAX_PENDING_RECEIPTS);
+            flush_pending_receipts_on_exit(app);
         }
     });
+}
+
+#[cfg(test)]
+mod pending_receipt_retry_tests {
+    use super::{next_receipt_retry_attempt, MAX_RECEIPT_RETRY_ATTEMPTS};
+
+    #[test]
+    fn receipt_retry_attempts_are_bounded_and_eventually_discarded() {
+        let mut attempts = 0;
+        for expected in 1..MAX_RECEIPT_RETRY_ATTEMPTS {
+            attempts = next_receipt_retry_attempt(attempts).expect("retry remains available");
+            assert_eq!(attempts, expected);
+        }
+        assert_eq!(next_receipt_retry_attempt(attempts), None);
+        assert_eq!(next_receipt_retry_attempt(u8::MAX), None);
+    }
 }
 
 #[cfg(test)]
