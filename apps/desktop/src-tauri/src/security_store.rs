@@ -160,9 +160,8 @@ fn verify_receipts_db(db: &Connection) -> Result<ReceiptLedgerStatus, String> {
         "SELECT head_hash,archived_entries FROM receipt_checkpoint WHERE id=1", [],
         |r| Ok((r.get(0)?, r.get(1)?))
     ).optional().map_err(|e| e.to_string())?;
-    let (mut previous, archived_entries) = checkpoint
-        .map(|(head, count)| (head, count))
-        .unwrap_or_else(|| (GENESIS_HASH.to_string(), 0));
+    let (mut previous, archived_entries) =
+        checkpoint.unwrap_or_else(|| (GENESIS_HASH.to_string(), 0));
     let mut entries = 0_i64;
     let mut valid = true;
     for row in rows {
@@ -662,26 +661,66 @@ mod tests {
     #[test]
     fn receipt_slot_reservations_are_atomic_and_expire_after_crashes() {
         let mut db = db();
-        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_000).is_ok());
-        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_001).is_err());
+        let archive_dir = std::env::temp_dir();
+        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_000, &archive_dir).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-one", 1_001, &archive_dir).is_err());
         assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
         assert!(release_receipt_slot_db(&db, "task-one").is_ok());
-        assert!(reserve_receipt_slot_db(&mut db, "task-two", 2_000).is_ok());
-        assert!(reserve_receipt_slot_db(&mut db, "task-three", 2_901).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-two", 2_000, &archive_dir).is_ok());
+        assert!(reserve_receipt_slot_db(&mut db, "task-three", 2_901, &archive_dir).is_ok());
         assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
     }
 
     #[test]
-    fn receipt_ledger_refuses_to_prune_chain_history() {
-        let mut db = db();
-        for index in 0..MAX_RECEIPTS {
-            db.execute(
-                "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,'{}',?2,?3)",
-                params![format!("old-{index}"), GENESIS_HASH, "0".repeat(64)]
-            ).unwrap();
+    fn receipt_ledger_archives_old_rows_and_verifies_the_checkpoint_chain() {
+        #[derive(serde::Deserialize)]
+        struct ArchivedReceipt {
+            previous_hash: String,
+            record_hash: String,
+            receipt: ExecutionReceipt,
         }
-        assert!(append_receipt_db(&mut db, &receipt("task-new")).is_err());
-        assert_eq!(db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get::<_, i64>(0)).unwrap(), MAX_RECEIPTS);
+
+        let mut db = db();
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let archive_dir = std::env::temp_dir().join(format!("ujani-receipt-archive-test-{unique}"));
+        let mut previous = GENESIS_HASH.to_string();
+        for index in 0..ARCHIVE_TRIGGER {
+            let item = receipt(&format!("old-{index}"));
+            let json = serde_json::to_string(&item).unwrap();
+            let hash = sha256_hex(format!("{previous}:{json}").as_bytes());
+            db.execute(
+                "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
+                params![item.task_id, json, previous, hash]
+            ).unwrap();
+            previous = hash;
+        }
+
+        reserve_receipt_slot_db(&mut db, "task-new", 3_000, &archive_dir).unwrap();
+        let retained: i64 = db.query_row("SELECT COUNT(*) FROM execution_receipts", [], |r| r.get(0)).unwrap();
+        assert_eq!(retained, KEEP_AFTER_ARCHIVE);
+        let status = verify_receipts_db(&db).unwrap();
+        assert!(status.valid);
+        assert_eq!(status.entries, ARCHIVE_TRIGGER);
+        assert_eq!(status.head_sha256, previous);
+
+        let archive_path = fs::read_dir(&archive_dir).unwrap().next().unwrap().unwrap().path();
+        let archived_text = fs::read_to_string(&archive_path).unwrap();
+        let mut archive_previous = GENESIS_HASH.to_string();
+        let mut archived_count = 0_i64;
+        for line in archived_text.lines() {
+            let row: ArchivedReceipt = serde_json::from_str(line).unwrap();
+            let json = serde_json::to_string(&row.receipt).unwrap();
+            assert_eq!(row.previous_hash, archive_previous);
+            assert_eq!(sha256_hex(format!("{}:{json}", row.previous_hash).as_bytes()), row.record_hash);
+            archive_previous = row.record_hash;
+            archived_count += 1;
+        }
+        assert_eq!(archived_count, ARCHIVE_TRIGGER - KEEP_AFTER_ARCHIVE);
+        assert_eq!(archive_previous, status.head_sha256);
+
+        append_receipt_db(&mut db, &receipt("task-new")).unwrap();
+        assert!(verify_receipts_db(&db).unwrap().valid);
+        fs::remove_dir_all(archive_dir).unwrap();
     }
 
     #[test]
