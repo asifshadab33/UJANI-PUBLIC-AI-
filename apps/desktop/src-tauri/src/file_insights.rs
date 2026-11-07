@@ -110,7 +110,7 @@ fn scan_large_files(
     token: &CancellationToken,
 ) -> Result<LargeFileScanResult, String> {
     let root_meta = fs::symlink_metadata(folder).map_err(|error| format!("Cannot inspect folder: {error}"))?;
-    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+    if is_link_or_reparse(&root_meta) || !root_meta.is_dir() {
         return Err("Choose a real folder, not a symbolic link.".into());
     }
     let root = fs::canonicalize(folder).map_err(|error| format!("Cannot resolve folder: {error}"))?;
@@ -139,7 +139,7 @@ fn scan_large_files(
             Ok(value) => value,
             Err(_) => { truncated = true; continue; }
         };
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        if is_link_or_reparse(&metadata) || !metadata.is_dir() {
             continue;
         }
         let canonical = match fs::canonicalize(&directory) {
@@ -169,15 +169,15 @@ fn scan_large_files(
                 truncated = true;
                 break;
             }
-            let kind = match entry.file_type() {
+            let entry_metadata = match fs::symlink_metadata(entry.path()) {
                 Ok(value) => value,
                 Err(_) => { truncated = true; continue; }
             };
-            // Never traverse symlinks, junctions, or other non-regular entries.
-            if kind.is_symlink() {
+            // Never traverse symlinks, Windows reparse points, or other special entries.
+            if is_link_or_reparse(&entry_metadata) {
                 continue;
             }
-            if kind.is_dir() {
+            if entry_metadata.is_dir() {
                 if depth < MAX_DEPTH {
                     stack.push((entry.path(), depth + 1));
                 } else {
@@ -185,7 +185,7 @@ fn scan_large_files(
                 }
                 continue;
             }
-            if !kind.is_file() {
+            if !entry_metadata.is_file() {
                 continue;
             }
             scanned_files += 1;
@@ -194,7 +194,7 @@ fn scan_large_files(
                 _ => { truncated = true; continue; }
             };
             let metadata = match fs::symlink_metadata(&path) {
-                Ok(value) if value.is_file() && !value.file_type().is_symlink() => value,
+                Ok(value) if value.is_file() && !is_link_or_reparse(&value) => value,
                 _ => { truncated = true; continue; }
             };
             if metadata.len() < min_size_bytes {
@@ -227,6 +227,22 @@ fn scan_large_files(
         truncated,
         note: "Metadata-only, read-only preview. File contents were not opened and no files were changed.".into(),
     })
+}
+
+fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        return metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 #[cfg(test)]
