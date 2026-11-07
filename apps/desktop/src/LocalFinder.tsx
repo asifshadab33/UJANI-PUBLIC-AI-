@@ -38,7 +38,7 @@ export default function LocalFinder() {
       })
       .catch(() => {
         setCacheSettingsAvailable(false);
-        setCacheMessage("Cache settings unavailable. Caching controls are disabled; searches still run fresh.");
+        setCacheMessage("Cache settings unavailable. Caching controls are disabled; searches may use the cache.");
       });
     invoke<RecentSearch[]>("list_recent_local_searches").then(setRecentSearches).catch(() => setRecentSearches([]));
   }, []);
