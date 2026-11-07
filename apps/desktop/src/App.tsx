@@ -185,7 +185,7 @@ export default function App() {
       }
       setTaskProgress(progress);
       if (progress.stage === "receipt_warning") {
-        setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress].slice(-5));
+        setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
       }
     }).then((stop) => { unlisten = stop; })
       .catch((error) => setOllamaError(String(error)));
