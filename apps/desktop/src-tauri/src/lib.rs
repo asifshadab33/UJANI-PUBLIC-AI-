@@ -591,6 +591,7 @@ async fn summarize_selected_text(
 
 /// Runs bounded text analysis followed by local-only Ollama summarisation.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable Tauri IPC argument contract.
 async fn process_selected_document(
     app: AppHandle,
     control: State<'_, TaskControlState>,
@@ -614,6 +615,7 @@ async fn process_selected_document(
 
 /// Extracts and summarises text from a user-selected PDF, entirely on this computer.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Preserve the stable Tauri IPC argument contract.
 async fn process_selected_pdf(
     app: AppHandle,
     control: State<'_, TaskControlState>,
