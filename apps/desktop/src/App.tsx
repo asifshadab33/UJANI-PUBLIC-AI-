@@ -28,9 +28,22 @@ type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; 
 type ImageInfo = { file_name: string; format: string; size_bytes: number; dimensions: [number, number] | null; description: string };
 type HistoryEntry = { id: number; prompt: string; output: string; mode: string; model: string; kind: string; created_at: number };
 type HistorySettings = { enabled: boolean; retention_days: number; max_entries: number };
-type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null };
+type NetworkObservation<T> = { status: "measured" | "inferred"; value: T } | { status: "unknown"; reason: string };
+type NetworkTelemetry = {
+  destinations: NetworkObservation<string[]>;
+  resolved_addresses: NetworkObservation<string[]>;
+  application_request_body_bytes: NetworkObservation<number>;
+  application_response_body_bytes: NetworkObservation<number>;
+  note: string;
+};
+type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null; network?: NetworkTelemetry };
 type ReceiptLedgerStatus = { entries: number; valid: boolean; head_sha256: string };
 type ReceiptLedgerEntry = { receipt: ExecutionReceipt; record_hash: string };
+function describeNetworkObservation<T>(observation: NetworkObservation<T> | undefined, format: (value: T) => string): string {
+  if (!observation) return "unknown: legacy receipt has no network telemetry";
+  if (observation.status === "unknown") return `unknown: ${observation.reason}`;
+  return `${observation.status}: ${format(observation.value)}`;
+}
 type ChatMessage = { role: "user" | "assistant"; content: string };
 function composeConversationPrompt(messages: ChatMessage[], current: string): string {
   const currentText = current.trim();
@@ -205,17 +218,38 @@ export default function App() {
     if (!isTauri() || receiptBusy) return;
     setReceiptBusy(true); setReceiptError("");
     try {
-      const [status, entries] = await Promise.all([
-        invoke<ReceiptLedgerStatus>("verify_execution_receipt_ledger"),
-        invoke<ReceiptLedgerEntry[]>("list_execution_receipts")
-      ]);
+      const status = await invoke<ReceiptLedgerStatus>("verify_execution_receipt_ledger");
       setReceiptLedgerStatus(status);
-      setExecutionReceipts(entries);
-      if (!status.valid) setReceiptError("Receipt integrity verification failed. Entries are hidden; investigate the local security store.");
+      if (!status.valid) {
+        setExecutionReceipts([]);
+        setReceiptError("Receipt integrity verification failed. Entries are hidden; investigate the local security store.");
+        return;
+      }
+      setExecutionReceipts(await invoke<ReceiptLedgerEntry[]>("list_execution_receipts"));
     } catch (error) {
       setReceiptError("Privacy receipts unavailable: " + String(error));
       setExecutionReceipts([]);
     } finally { setReceiptBusy(false); }
+  }
+
+  /** Exports only metadata and digests after the native receipt hash chain verifies. */
+  function exportExecutionReceipts() {
+    if (!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid) return;
+    const exportedAt = new Date();
+    const payload = JSON.stringify({
+      schema_version: 2,
+      exported_at: exportedAt.toISOString(),
+      ledger_status: receiptLedgerStatus,
+      receipts: executionReceipts
+    }, null, 2);
+    const objectUrl = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `ujani-execution-receipts-${exportedAt.toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   async function togglePersistentHistory(enabled: boolean) {
@@ -982,9 +1016,10 @@ export default function App() {
           <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
           <div className="history receipt-history">
             <h3>Privacy & execution receipts</h3>
-            <p>Metadata-only records for supported local chat and approved cloud chat tasks. Document, PDF, translation and model-download operations are not yet connected to this receipt ledger. Prompts and outputs are not stored in this ledger.</p>
+            <p>Metadata-only receipts cover local and approved BYOK chat, document/PDF processing, translation, the fixed document workflow and selected-folder import. Prompts and outputs are never stored. Model downloads are not inference receipts and are not included. Network evidence is explicitly measured, inferred or unknown; unknown is never displayed as zero.</p>
             <div className="history-actions">
               <button onClick={refreshExecutionReceipts} disabled={!isTauri() || receiptBusy}>{receiptBusy ? "Verifying…" : "Verify & refresh receipts"}</button>
+              <button onClick={exportExecutionReceipts} disabled={!executionReceipts.length || receiptBusy || !receiptLedgerStatus?.valid}>Export receipts JSON</button>
             </div>
             {receiptLedgerStatus && <small>Ledger: {receiptLedgerStatus.valid ? "Integrity verified" : "Integrity check failed"} · {receiptLedgerStatus.entries} entries · Head SHA-256: {receiptLedgerStatus.head_sha256.slice(0, 16)}…</small>}
             {receiptError && <p className="error" role="alert">{receiptError}</p>}
@@ -992,11 +1027,17 @@ export default function App() {
               <b>{receipt.operation_id} · {receipt.task_id}</b>
               <small>{receipt.location} · {receipt.adapter_id} v{receipt.adapter_version} · {receipt.model_id || "No model recorded"}</small>
               <small>{new Date(receipt.started_at_unix_ms).toLocaleString()} · {Math.max(0, receipt.completed_at_unix_ms - receipt.started_at_unix_ms)} ms</small>
-              <details className="saved-history-output"><summary>View provenance hashes</summary>
+              <details className="saved-history-output"><summary>View provenance & network evidence</summary>
+                <small>Receipt schema: v{receipt.schema_version}</small>
                 <small>Input SHA-256: {receipt.input_sha256}</small>
                 <small>Output SHA-256: {receipt.output_sha256}</small>
                 <small>Ledger record SHA-256: {record_hash}</small>
                 <small>Approval reference: {receipt.user_approval_id || "Not required for this local task"}</small>
+                <small>Destinations: {describeNetworkObservation(receipt.network?.destinations, value => value.join(", "))}</small>
+                <small>Resolved addresses: {describeNetworkObservation(receipt.network?.resolved_addresses, value => value.join(", "))}</small>
+                <small>Application request body: {describeNetworkObservation(receipt.network?.application_request_body_bytes, value => `${value.toLocaleString()} bytes`)}</small>
+                <small>Application response body: {describeNetworkObservation(receipt.network?.application_response_body_bytes, value => `${value.toLocaleString()} bytes`)}</small>
+                <small>{receipt.network?.note || "Legacy receipt: network activity was not recorded."}</small>
               </details>
             </div>)}
             {!executionReceipts.length && !receiptError && <small>No execution receipts recorded yet. Run a supported AI task, then refresh this panel.</small>}
