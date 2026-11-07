@@ -179,13 +179,13 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 }
 #[cfg(test)] mod tests{use super::*;
 #[test]fn provider_content_accepts_string_and_text_parts(){
- let plain: ChatResponse=serde_json::from_str(r#"{\"choices\":[{\"message\":{\"content\":\"hello\"}}]}"#).unwrap();
+ let plain: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap();
  assert_eq!(plain.choices.into_iter().next().unwrap().message.content.into_text(),"hello");
- let parts: ChatResponse=serde_json::from_str(r#"{\"choices\":[{\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"first\"},{\"type\":\"text\",\"text\":\"second\"}]}}]}"#).unwrap();
- assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"first\\nsecond");
+ let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}}]}"#).unwrap();
+ assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"first\nsecond");
 }
 #[test]fn provider_content_ignores_non_text_parts_without_failing(){
- let parts: ChatResponse=serde_json::from_str(r#"{\"choices\":[{\"message\":{\"content\":[{\"type\":\"image\",\"image_url\":\"data:image/png;base64,AAAA\"},{\"type\":\"text\",\"text\":\"answer\"}]}}]}"#).unwrap();
+ let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"image","image_url":"data:image/png;base64,AAAA"},{"type":"text","text":"answer"}]}}]}"#).unwrap();
  assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"answer");
 }#[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
