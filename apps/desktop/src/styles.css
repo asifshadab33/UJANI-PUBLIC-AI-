@@ -50,6 +50,10 @@
   text-align: left;
   cursor: pointer;
 }
+.sidebar nav .nav.active {
+  background: #24352a;
+  color: #c7f58d;
+}
 .sidebar nav .nav:hover {
   background: #1b2b21;
   color: #d9efcf;
