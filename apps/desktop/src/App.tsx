@@ -115,6 +115,7 @@ export default function App() {
   const [aiBusy, setAiBusy] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgressEvent | null>(null);
+  const [receiptWarnings, setReceiptWarnings] = useState<TaskProgressEvent[]>([]);
   const [aiResult, setAiResult] = useState<AiTaskResult | null>(null);
   const [fileAnalysis, setFileAnalysis] = useState<FileAnalysis | null>(null);
   const [fileText, setFileText] = useState("");
@@ -176,8 +177,17 @@ export default function App() {
   useEffect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
-    listen<TaskProgressEvent>("ujani-task-progress", (event) => setTaskProgress(event.payload))
-      .then((stop) => { unlisten = stop; })
+    listen<TaskProgressEvent>("ujani-task-progress", (event) => {
+      const progress = event.payload;
+      if (progress.stage === "receipt_recovered") {
+        setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
+        return;
+      }
+      setTaskProgress(progress);
+      if (progress.stage === "receipt_warning") {
+        setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
+      }
+    }).then((stop) => { unlisten = stop; })
       .catch((error) => setOllamaError(String(error)));
     return () => { unlisten?.(); };
   }, []);
@@ -594,6 +604,7 @@ export default function App() {
     if (!file) return;
     input.value = ""; // Clear before early returns so the same PDF can be retried.
     setFileError(""); setFileAnalysis(null); setFileSummary(""); setFilePipelineMeta(""); setFileTranslatedSummary("");
+    if (file.size === 0) { setFileError("The selected PDF is empty."); return; }
     if (file.size > 10 * 1024 * 1024) { setFileError("PDF files are limited to 10 MiB."); return; }
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
@@ -752,6 +763,13 @@ export default function App() {
     <section className="main">
       <header><div><span className="eyebrow">PERSONAL AI RUNTIME</span><h1>Make your device work smarter.</h1><p>Start locally. Keep control. Ask for outside help only when you choose.</p></div><div className="status"><span/> PRE-ALPHA</div></header>
       <div className="notice"><LockKeyhole size={17}/><span><b>Local-first by default.</b> Chat with a local model, or choose an online provider and approve each transfer. UJANI never silently switches your data to the cloud.</span></div>
+      {receiptWarnings.length > 0 && <section className="receipt-warning-list" aria-live="assertive" aria-label="Privacy receipt warnings">
+        {receiptWarnings.map((warning) => <div className="error" role="alert" key={warning.task_id}>
+          <b>Privacy receipt warning</b>
+          <p>{warning.message}</p>
+          <button type="button" className="model-run" onClick={() => setReceiptWarnings((current) => current.filter((item) => item.task_id !== warning.task_id))}>Dismiss warning</button>
+        </div>)}
+      </section>}
       <LocalFinder />
       <EverydayTools />
       <section className="launcher-section" aria-labelledby="launcher-title">
