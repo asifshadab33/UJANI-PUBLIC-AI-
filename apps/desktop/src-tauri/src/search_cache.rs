@@ -473,19 +473,21 @@ pub async fn set_local_search_cache_settings(
         if !ALLOWED_RETENTION_DAYS.contains(&retention_days) {
             return Err("Choose 7, 30, 90 days, or Until cleared.".into());
         }
-        let db = open(&app)?;
-        db.execute("UPDATE cache_settings SET value=?1 WHERE key='enabled'", params![if enabled {"true"} else {"false"}])
+        let mut db = open(&app)?;
+        let tx = db.transaction().map_err(|error| error.to_string())?;
+        tx.execute("UPDATE cache_settings SET value=?1 WHERE key='enabled'", params![if enabled {"true"} else {"false"}])
             .map_err(|error| error.to_string())?;
-        db.execute("UPDATE cache_settings SET value=?1 WHERE key='retention_days'", params![retention_days.to_string()])
+        tx.execute("UPDATE cache_settings SET value=?1 WHERE key='retention_days'", params![retention_days.to_string()])
             .map_err(|error| error.to_string())?;
         if !enabled {
-            db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
-            db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
-            db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
+            tx.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
+            tx.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
+            tx.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
         } else {
-            let settings = settings_from_db(&db)?;
-            trim_cache(&db, &settings, now_seconds()?)?;
+            let settings = settings_from_db(&tx)?;
+            trim_cache(&tx, &settings, now_seconds()?)?;
         }
+        tx.commit().map_err(|error| error.to_string())?;
         settings_from_db(&db)
     }).await.map_err(|error| format!("Cache preference worker failed: {error}"))?
 }
