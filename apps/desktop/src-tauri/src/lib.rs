@@ -26,7 +26,9 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
-use ujani_core::{sha256_hex, validate_model_identifier, ReceiptExecutionLocation, ExecutionReceipt};
+use ujani_core::{
+    sha256_hex, validate_model_identifier, NetworkTelemetry, ReceiptExecutionLocation, ExecutionReceipt,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
@@ -286,7 +288,7 @@ async fn execute_cloud_ai_task(
   .map_err(|e| e.to_string())?.as_millis() as u64;
  let input_digest = sha256_hex(prompt.as_bytes());
  let receipt_model_id = model.clone();
- // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
+ // Bind explicit consent to the endpoint, model and exact prompt digest without storing the prompt.
  let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  let token = CancellationToken::new();
  {
@@ -294,21 +296,11 @@ async fn execute_cloud_ai_task(
   if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
   active.insert(task_id.clone(), token.clone());
  }
- let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
-  Ok(slot) => slot,
-  Err(error) => {
-   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-   return Err(error);
-  }
- };
+ // Drop removes the registration even if this Tauri command future is aborted.
+ let active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+ let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
- let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
-  Ok(value) => value,
-  Err(error) => {
-   if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-   return Err(error);
-  }
- };
+ let budget = security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192)?;
  emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
@@ -321,24 +313,25 @@ async fn execute_cloud_ai_task(
    }
   }
  };
- if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
- if let Ok(output) = &result {
+ drop(active_task_guard);
+ if let Ok(execution) = &result {
   let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
    .map_err(|e| e.to_string())?.as_millis() as u64;
   let receipt = ExecutionReceipt {
-   schema_version: 1,
+   schema_version: 2,
    task_id: task_id.clone(),
    operation_id: "cloud.ai.generate".into(),
    location: ReceiptExecutionLocation::ExternalProvider,
    adapter_id: "byok.cloud-gateway".into(),
    adapter_version: env!("CARGO_PKG_VERSION").into(),
    model_id: Some(receipt_model_id),
-    model_version: Some("provider-reported-unverified".into()),
+   model_version: Some("provider-reported-unverified".into()),
    input_sha256: input_digest,
-   output_sha256: sha256_hex(output.as_bytes()),
+   output_sha256: sha256_hex(execution.output.as_bytes()),
    started_at_unix_ms,
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
+   network: execution.network.clone(),
   };
   receipt_slot.persist(receipt)
    .map_err(|e| format!("Cloud inference completed, but its provenance receipt could not be stored: {e}"))?;
@@ -349,7 +342,7 @@ async fn execute_cloud_ai_task(
   Err(error) if error.contains("95-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
  }
- result
+ result.map(|execution| execution.output)
 }
 /// Explicitly downloads a named model through the local Ollama service only.
 #[tauri::command]
@@ -389,6 +382,8 @@ async fn pull_ollama_model(
         if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
         active.insert(task_id.clone(), token.clone());
     }
+    // Drop removes the active ID even if the command future is cancelled while downloading.
+    let active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
@@ -399,7 +394,7 @@ async fn pull_ollama_model(
         _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
         outcome = download => outcome,
     };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
+    drop(active_task_guard);
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
@@ -544,7 +539,7 @@ where
             _ => ReceiptExecutionLocation::LocalUnverified,
         };
         let receipt = ExecutionReceipt {
-            schema_version: 1,
+            schema_version: 2,
             task_id: task_id.clone(),
             operation_id: receipt_context.operation_id.into(),
             location,
@@ -557,6 +552,7 @@ where
             started_at_unix_ms,
             completed_at_unix_ms,
             user_approval_id: None,
+            network: NetworkTelemetry::default(),
         };
         if let Err(error) = receipt_slot.persist(receipt) {
             let message = format!("{label} completed, but its provenance receipt could not be stored: {error}");
@@ -633,104 +629,17 @@ async fn execute_local_ai_task(
     mode: String,
     model: String,
 ) -> Result<task_engine::AiTaskResult, String> {
-    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier.".into());
-    }
-    if !validate_model_identifier(&model) {
-        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
-    }
-    let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
-    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
-    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
-    let input_digest = sha256_hex(prompt.as_bytes());
-    let receipt_model_id = model.clone();
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
-    emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
-    emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
-    let execution = LocalTaskEngine::execute(prompt, mode, model);
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(140), execution) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err("Local task exceeded the 140-second overall time budget. Try a smaller prompt or faster model.".into()),
-            }
-        }
-    };
-    if let Ok(mut active) = control.active.lock() { active.remove(&task_id); }
-    if let Ok(value) = &result {
-        let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?.as_millis() as u64;
-        let receipt = ExecutionReceipt {
-            schema_version: 1,
-            task_id: task_id.clone(),
-            operation_id: "local.ai.generate".into(),
-            location: match ollama::accelerator_observation().await.ok() {
-                Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
-                _ => ReceiptExecutionLocation::LocalUnverified,
-            },
-            adapter_id: "ollama.local".into(),
-            adapter_version: env!("CARGO_PKG_VERSION").into(),
-            model_id: Some(receipt_model_id),
-            model_version: Some("unknown".into()),
-            input_sha256: input_digest,
-            output_sha256: sha256_hex(value.output.as_bytes()),
-            started_at_unix_ms,
-            completed_at_unix_ms,
-            user_approval_id: None,
-        };
-        receipt_slot.persist(receipt)
-            .map_err(|e| format!("Local inference completed, but its provenance receipt could not be stored: {e}"))?;
-    }
-    match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed and provenance recorded.", 100),
-        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
-        Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
-        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
-    }
-    result
-}
-
-#[tauri::command]
-fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
-    if !valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
-    }
-    let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-    if let Some(token) = active.get(&task_id) { token.cancel(); Ok(true) } else { Ok(false) }
-}
-
-
-/// Processes text supplied by the user through the UI; never opens a path.
-#[tauri::command]
-fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis, String> {
-    LocalTaskEngine::analyze_text(&file_name, &content)
-}
-
-
-/// Summarises explicitly selected text with Ollama on loopback only.
-#[tauri::command]
-async fn summarize_selected_text(
-    app: AppHandle,
-    control: State<'_, TaskControlState>,
-    task_id: String,
-    file_name: String,
-    content: String,
-    mode: String,
-    model: String,
-) -> Result<String, String> {
     let receipt = local_receipt_context(
-        "document.summarize",
+        "local.ai.generate",
         &model,
-        &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes()],
+        &[prompt.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Text summary", receipt,
-        LocalTaskEngine::summarize(file_name, content, mode, model)).await
+    let progress_app = app.clone();
+    let progress_task = task_id.clone();
+    run_managed_task(app, &control, task_id, "Local inference", receipt, async move {
+        emit_task_progress(&progress_app, &progress_task, "inference", "Local model request sent; waiting for Ollama response.", 25);
+        LocalTaskEngine::execute(prompt, mode, model).await
+    }).await
 }
 
 /// Runs bounded text analysis followed by local-only Ollama summarisation.
