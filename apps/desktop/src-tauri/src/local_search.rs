@@ -169,7 +169,13 @@ fn collect_candidates(folder: &Path) -> Result<(PathBuf, Vec<Candidate>, usize, 
 
     while let Some((directory, depth)) = stack.pop() {
         if depth > MAX_DEPTH { truncated = true; continue; }
-        let iterator = fs::read_dir(&directory).map_err(|e| format!("Cannot read selected folder: {e}"))?;
+        let directory_meta = fs::symlink_metadata(&directory)
+            .map_err(|e| format!("Cannot inspect selected directory: {e}"))?;
+        if directory_meta.file_type().is_symlink() || !directory_meta.is_dir() { continue; }
+        let canonical_directory = fs::canonicalize(&directory)
+            .map_err(|e| format!("Cannot resolve selected directory: {e}"))?;
+        if !canonical_directory.starts_with(&root) { continue; }
+        let iterator = fs::read_dir(&canonical_directory).map_err(|e| format!("Cannot read selected folder: {e}"))?;
         for item in iterator {
             let item = item.map_err(|e| format!("Cannot inspect a folder entry: {e}"))?;
             entries_seen += 1;
