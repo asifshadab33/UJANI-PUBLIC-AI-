@@ -487,15 +487,20 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     let work = async move {
         let writer = tokio::spawn(async move { stdin.write_all(&data).await });
         // Drain stderr concurrently so a noisy parser cannot fill the OS pipe and
-        // deadlock child.wait(). Retain only a small, fixed metadata prefix.
+        // deadlock child.wait(). Retain only the final 4 KiB: the worker appends its
+        // fixed truncation marker after extraction diagnostics, so a noisy prefix
+        // cannot hide the status signal.
         let stderr_reader = tokio::spawn(async move {
-            let mut metadata = Vec::with_capacity(128);
+            let mut metadata = Vec::with_capacity(4096);
             let mut buffer = [0u8; 1024];
             loop {
                 let read = stderr.read(&mut buffer).await?;
                 if read == 0 { break; }
-                let remaining = 4096usize.saturating_sub(metadata.len());
-                metadata.extend_from_slice(&buffer[..read.min(remaining)]);
+                metadata.extend_from_slice(&buffer[..read]);
+                if metadata.len() > 4096 {
+                    let excess = metadata.len() - 4096;
+                    metadata.drain(..excess);
+                }
             }
             Ok::<Vec<u8>, std::io::Error>(metadata)
         });
@@ -519,13 +524,11 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         .map_err(|_| "PDF extraction exceeded 45 seconds and was stopped.".to_string())?
 }
 
-/// Interprets the worker's fixed, content-free stderr status protocol.
+/// Detects the worker's fixed, content-free truncation marker in bounded stderr metadata.
+/// Other bounded diagnostics are ignored; the worker's marker is appended after extraction.
 pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
-    match metadata {
-        b"" => Ok(false),
-        b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n" => Ok(true),
-        _ => Err("PDF worker returned unknown status metadata.".into()),
-    }
+    const MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+    Ok(metadata.windows(MARKER.len()).any(|window| window == MARKER))
 }
 
 #[cfg(test)]
@@ -543,8 +546,14 @@ mod pdf_worker_status_tests {
     }
 
     #[test]
-    fn rejects_unknown_worker_status_metadata() {
-        assert!(pdf_worker_output_was_truncated(b"unexpected").is_err());
+    fn detects_truncation_marker_after_bounded_diagnostics() {
+        let metadata = b"extractor warning\\nmore diagnostics\\nUJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+        assert!(pdf_worker_output_was_truncated(metadata).unwrap());
+    }
+
+    #[test]
+    fn ignores_non_marker_worker_diagnostics() {
+        assert!(!pdf_worker_output_was_truncated(b"extractor warning\\n").unwrap());
     }
 }
 
