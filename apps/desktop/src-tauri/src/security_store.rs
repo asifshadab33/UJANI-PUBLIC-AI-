@@ -1207,7 +1207,7 @@ mod tests {
                 reserve_budget_db(&mut connection, 1_000, 3_000, 86_400).is_ok()
             }));
         }
-        let accepted = workers.into_iter().filter(|worker| worker.join().unwrap()).count();
+        let accepted = workers.into_iter().map(|worker| worker.join().unwrap()).filter(|accepted| *accepted).count();
         assert_eq!(accepted, 5);
 
         let check = Connection::open(&path).unwrap();
