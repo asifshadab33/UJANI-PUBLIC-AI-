@@ -1179,6 +1179,48 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_cloud_reservations_cannot_overbook_the_daily_limit() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        use std::time::Duration;
+
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ujani-cloud-budget-concurrency-{}-{unique}.sqlite",
+            std::process::id()
+        ));
+        let mut setup = Connection::open(&path).unwrap();
+        setup.busy_timeout(Duration::from_secs(5)).unwrap();
+        initialize(&setup).unwrap();
+        set_cloud_budget_limit_db(&mut setup, 20_000, 86_400).unwrap();
+        drop(setup);
+
+        let barrier = Arc::new(Barrier::new(10));
+        let mut workers = Vec::new();
+        for _ in 0..10 {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            workers.push(thread::spawn(move || {
+                let mut connection = Connection::open(path).unwrap();
+                connection.busy_timeout(Duration::from_secs(5)).unwrap();
+                barrier.wait();
+                reserve_budget_db(&mut connection, 1_000, 3_000, 86_400).is_ok()
+            }));
+        }
+        let accepted = workers.into_iter().filter(|worker| worker.join().unwrap()).count();
+        assert_eq!(accepted, 5);
+
+        let check = Connection::open(&path).unwrap();
+        let used: i64 = check.query_row(
+            "SELECT reserved_tokens FROM cloud_budget WHERE utc_day=1", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(used, 20_000);
+        drop(check);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("sqlite-journal"));
+    }
+
+    #[test]
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
