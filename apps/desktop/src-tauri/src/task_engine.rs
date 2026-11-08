@@ -152,18 +152,6 @@ impl LocalTaskEngine {
         Ok(())
     }
 
-    /// Run a single local Ollama inference request under the selected execution mode.
-    pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
-        Self::validate_local_chat(&mode, &model).await?;
-        let output = ollama::generate(&model, &prompt).await?;
-        Ok(AiTaskResult {
-            mode_used: mode,
-            execution_location: "Local Ollama service (127.0.0.1)".into(),
-            model,
-            output,
-        })
-    }
-
     /// Stream a local chat response while preserving the same policy checks as buffered chat.
     pub async fn execute_stream<F>(
         prompt: String,
