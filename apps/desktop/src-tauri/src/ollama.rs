@@ -231,7 +231,7 @@ where F: FnMut(String) {
             Ok(Ok(Some(chunk))) => chunk,
         };
         for byte in chunk {
-            if byte == b'\\n' {
+            if byte == b'\n' {
                 if pending.is_empty() { continue; }
                 let (delta, finished) = parse_chat_stream_line(&pending)?;
                 pending.clear();
