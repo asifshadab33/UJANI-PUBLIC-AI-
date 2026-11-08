@@ -353,6 +353,7 @@ fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     denied
 }
 
+/// Resolves the dedicated PDF worker beside the running desktop executable.
 fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
     let app_executable = std::env::current_exe()
         .map_err(|error| format!("Could not locate UJANI executable: {error}"))?;
