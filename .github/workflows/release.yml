@@ -108,6 +108,7 @@ jobs:
           WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -121,7 +122,7 @@ jobs:
               test -n "$WINDOWS_TIMESTAMP_URL" || { echo "::error::Missing WINDOWS_TIMESTAMP_URL repository variable; refusing unsigned Windows release."; exit 1; }
               ;;
             macOS)
-              for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_KEYCHAIN_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
                 if [[ -z "${!name}" ]]; then
                   echo "::error::Missing $name; refusing unsigned/unnotarized macOS release."
                   exit 1
@@ -151,6 +152,31 @@ jobs:
           finally {
             Remove-Item -Path $pfxPath -Force -ErrorAction SilentlyContinue
           }
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          keychain_path="$RUNNER_TEMP/ujani-build.keychain-db"
+          p12_path="$RUNNER_TEMP/ujani-developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12_path"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$p12_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          identities="$(security find-identity -v -p codesigning "$keychain_path")"
+          grep -Fq ""$APPLE_SIGNING_IDENTITY"" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
+          grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
+          echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          rm -f "$p12_path"
       - name: Configure Tauri Authenticode signing
         if: runner.os == 'Windows'
         shell: bash
@@ -206,6 +232,34 @@ jobs:
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+      - name: Verify Developer ID signature and notarization on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_root="apps/desktop/src-tauri/target"
+          mapfile -d '' apps < <(find "$bundle_root" -type d -name '*.app' -print0)
+          mapfile -d '' dmgs < <(find "$bundle_root" -type f -name '*.dmg' -print0)
+          if [[ "${#apps[@]}" -eq 0 || "${#dmgs[@]}" -eq 0 ]]; then
+            echo "::error::Expected a macOS app bundle and DMG; refusing to publish."
+            exit 1
+          fi
+          for app in "${apps[@]}"; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+            details="$(codesign -dv --verbose=4 "$app" 2>&1)"
+            grep -q "Authority=Developer ID Application:" <<< "$details" || { echo "::error::App is not signed with a Developer ID Application certificate: $app"; exit 1; }
+            spctl --assess --type execute --verbose=2 "$app"
+          done
+          for dmg in "${dmgs[@]}"; do
+            xcrun stapler validate "$dmg"
+          done
+      - name: Delete temporary Apple signing keychain
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ -n "${APPLE_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$APPLE_KEYCHAIN_PATH" || true
+          fi
       - name: Verify Authenticode signatures on Windows installers
         if: runner.os == 'Windows'
         shell: pwsh
