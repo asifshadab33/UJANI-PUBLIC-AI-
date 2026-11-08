@@ -49,6 +49,9 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Build and stage the native PDF worker sidecar
+        working-directory: apps/desktop
+        run: npm run build:pdf-worker
       - name: Verify Rust core and desktop native code
         run: |
           cargo test --workspace --locked
