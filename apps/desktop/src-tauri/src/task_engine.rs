@@ -151,17 +151,6 @@ impl LocalTaskEngine {
         Ok(())
     }
 
-    pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
-        Self::validate_local_chat(&mode, &model).await?;
-        let output = ollama::generate(&model, &prompt).await?;
-        Ok(AiTaskResult {
-            mode_used: mode,
-            execution_location: "Local Ollama service (127.0.0.1)".into(),
-            model,
-            output,
-        })
-    }
-
     /// Executes the same local policy path while emitting bounded response deltas.
     pub async fn execute_stream<F>(
         prompt: String,
