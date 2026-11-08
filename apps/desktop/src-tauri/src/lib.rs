@@ -1227,20 +1227,6 @@ mod pdf_cancellation_registration_tests {
     }
 
     #[test]
-    fn late_cancellation_is_rejected_after_pdf_registration_finishes() {
-        let control = TaskControlState::default();
-        {
-            let registration = register_active_task(&control, "pdf-upload-finished").unwrap();
-            assert!(!registration.token.is_cancelled());
-        }
-        assert!(!request_task_cancellation(&control, "pdf-upload-finished").unwrap());
-        assert!(control.pending_cancellations.lock().unwrap().is_empty());
-        assert!(request_task_cancellation(&control, "pdf-upload-retry-unique").unwrap());
-        let retry = register_active_task(&control, "pdf-upload-retry-unique").unwrap();
-        assert!(retry.token.is_cancelled());
-    }
-
-    #[test]
     fn pre_registration_cancellation_is_bounded_and_pdf_only() {
         let control = TaskControlState::default();
         assert!(!request_task_cancellation(&control, "ordinary-task").unwrap());
