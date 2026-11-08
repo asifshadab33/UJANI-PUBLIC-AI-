@@ -288,8 +288,10 @@ async fn execute_cloud_ai_task(
  cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
  let preview: String = prompt.chars().take(600).collect();
  let truncated = prompt.chars().count() > 600;
+ let provider_host = cloud_gateway::endpoint_host(&endpoint)
+  .unwrap_or_else(|| "configured-provider-host".into());
  let consent_message = format!(
-  "UJANI is about to send this single request to an external provider.\n\nEndpoint: {endpoint}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
   prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
  );
  if !native_consent::confirm_native(&app, "Approve one-time cloud data transfer", consent_message).await {
