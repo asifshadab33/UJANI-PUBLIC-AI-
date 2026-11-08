@@ -121,14 +121,12 @@ pub(crate) struct WalkFile {
     pub path: PathBuf,
     pub name: OsString,
     pub size_bytes: u64,
-    pub depth: usize,
 }
 
 #[derive(Debug)]
 pub(crate) struct WalkResult {
     pub root: PathBuf,
     pub files: Vec<WalkFile>,
-    pub entries_seen: usize,
     pub truncated: bool,
 }
 
@@ -266,7 +264,6 @@ pub(crate) fn walk_directory(
                 path: canonical_file,
                 name: entry.file_name(),
                 size_bytes: canonical_metadata.len(),
-                depth,
             });
         }
         if entries_seen > options.max_entries {
@@ -274,5 +271,5 @@ pub(crate) fn walk_directory(
         }
     }
 
-    Ok(WalkResult { root, files, entries_seen, truncated })
+    Ok(WalkResult { root, files, truncated })
 }
