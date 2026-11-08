@@ -109,7 +109,8 @@ mod tests {
         assert!(upcoming_reminders(&[done, invalid], 100, 500).is_empty());
     }
     #[test] fn agenda_is_sorted_and_horizon_is_bounded() {
-        let items = upcoming_reminders(&[reminder("later", 300), reminder("soon", 150), reminder("outside", 999)], 100, 500);
+        let records = [reminder("later", 300), reminder("soon", 150), reminder("outside", 999)];
+        let items = upcoming_reminders(&records, 100, 500);
         assert_eq!(items.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(), vec!["soon", "later"]);
         assert!(upcoming_reminders(&[reminder("soon", 150)], 100, MAX_AGENDA_HORIZON_MS + 1).is_empty());
     }
