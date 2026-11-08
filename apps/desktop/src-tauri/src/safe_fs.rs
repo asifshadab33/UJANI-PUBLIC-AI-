@@ -298,7 +298,7 @@ mod tests {
             max_depth: 0, max_entries: 8, link_policy: LinkPolicy::Skip,
             error_policy: WalkErrorPolicy::BestEffort,
         }, || true);
-        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(matches!(result, Err(error) if error.contains("cancelled")));
         let _ = fs::remove_dir_all(root);
     }
 
