@@ -486,14 +486,27 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     let mut stderr = child.stderr.take().ok_or("PDF worker stderr unavailable")?;
     let work = async move {
         let writer = tokio::spawn(async move { stdin.write_all(&data).await });
+        // Drain stderr concurrently so a noisy parser cannot fill the OS pipe and
+        // deadlock child.wait(). Retain only a small, fixed metadata prefix.
+        let stderr_reader = tokio::spawn(async move {
+            let mut metadata = Vec::with_capacity(128);
+            let mut buffer = [0u8; 1024];
+            loop {
+                let read = stderr.read(&mut buffer).await?;
+                if read == 0 { break; }
+                let remaining = 4096usize.saturating_sub(metadata.len());
+                metadata.extend_from_slice(&buffer[..read.min(remaining)]);
+            }
+            Ok::<Vec<u8>, std::io::Error>(metadata)
+        });
         let mut output = Vec::new();
         (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
             .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
         writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
             .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
         let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
-        let mut worker_metadata = Vec::new();
-        stderr.read_to_end(&mut worker_metadata).await
+        let worker_metadata = stderr_reader.await
+            .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
             .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
         if !status.success() { return Err("PDF text extraction failed.".into()); }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
