@@ -460,7 +460,7 @@ jobs:
           find . -type f ! -name RELEASE_EVIDENCE.sha256 -print0 | sort -z | xargs -0 sha256sum > RELEASE_EVIDENCE.sha256
           sha256sum -c RELEASE_EVIDENCE.sha256
           digest="$(sha256sum RELEASE_EVIDENCE.sha256 | cut -d ' ' -f 1)"
-          printf 'sha256=%s\\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'sha256=%s\n' "$digest" >> "$GITHUB_OUTPUT"
       - name: Validate generated SBOM structure
         run: |
           set -euo pipefail
