@@ -152,6 +152,8 @@ pub fn validate_request(
     Ok(())
 }
 
+/// The dispatch callback is the durable boundary after all local validation and DNS checks.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String,on_dispatch:impl FnOnce())->Result<CloudExecutionResult,String>{
  let api_key = Zeroizing::new(api_key);
  validate_request(&endpoint,&model,api_key.as_str(),&prompt,&mode,approved,&token_parameter)?;
