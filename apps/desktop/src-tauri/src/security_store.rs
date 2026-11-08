@@ -354,7 +354,10 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
         return Err("Cloud token reservation request is outside the supported bounds.".into());
     }
     let day = (now / 86_400) as i64;
-    let prompt_tokens = prompt_bytes as i64;
+    // UTF-8 byte length is a conservative tokenizer-independent reservation
+    // estimate; reconcile it to provider-reported usage after successful dispatch.
+    let prompt_tokens = i64::try_from(prompt_bytes)
+        .map_err(|_| "Cloud prompt is too large to reserve safely.".to_string())?;
     let reservation = prompt_tokens.saturating_add(completion_tokens as i64);
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR IGNORE INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,0)", params![day])
@@ -437,6 +440,7 @@ fn settle_budget_reservation_db(db: &mut Connection, day: i64, reserved: i64, ac
 }
 
 /// Atomically reserve a conservative local token allowance before a BYOK request is sent.
+/// `prompt_bytes` is a conservative UTF-8 byte-length estimate, not an exact tokenizer count.
 pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetReservation, String> {
     let mut db = open(app)?;
     let now = now_seconds()?;
