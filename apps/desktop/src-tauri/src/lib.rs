@@ -12,6 +12,7 @@ mod history;
 mod model_runtime;
 mod ollama;
 mod resource_runtime;
+mod security_providers;
 mod safe_fs;
 // Peer enrollment/replay commands are not registered in the default IPC surface.
 #[allow(dead_code, unused_imports)]
@@ -1283,10 +1284,22 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
     })
 }
 
+/// Reads aggregate OS security-provider status after an explicit user request.
+#[tauri::command]
+fn get_security_provider_status(
+    provider_ids: Vec<String>,
+) -> Result<Vec<security_providers::SecurityProviderStatus>, String> {
+    if provider_ids.len() > 2 {
+        return Err("Security provider selection exceeds the supported limit.".into());
+    }
+    security_providers::read_only_status(&provider_ids)
+}
+
 macro_rules! ujani_invoke_handler {
     ($($peer_command:path),* $(,)?) => {
         tauri::generate_handler![
             execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
+            get_security_provider_status,
             plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
             run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
             get_model_recommendation, execute_document_workflow, execute_local_ai_task,

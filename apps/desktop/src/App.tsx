@@ -5,6 +5,7 @@ import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
 import ChatMessageContent from "./ChatMessageContent";
 import EverydayTools from "./EverydayTools";
+import SecurityCentre from "./SecurityCentre";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
@@ -79,7 +80,7 @@ function readFileAsBase64(file: File): Promise<string> {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
-  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources">("new-task");
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
@@ -895,6 +896,20 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={`nav ${activeSidebarSection === "security-centre" ? "active" : ""}`}
+          aria-label="Security Centre"
+          aria-current={activeSidebarSection === "security-centre" ? "page" : undefined}
+          onClick={(event) => {
+            setActiveSidebarSection("security-centre");
+            const target = document.getElementById("security-centre");
+            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (event.detail === 0) target?.focus({ preventScroll: true });
+          }}
+        >
+          <ShieldCheck size={17}/> Security Centre
+        </button>
+        <button
+          type="button"
           className={`nav ${activeSidebarSection === "resources" ? "active" : ""}`}
           aria-label="Local resources"
           aria-current={activeSidebarSection === "resources" ? "page" : undefined}
@@ -920,6 +935,7 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
+      <SecurityCentre />
       <section className="launcher-section" id="new-task" tabIndex={-1} aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
