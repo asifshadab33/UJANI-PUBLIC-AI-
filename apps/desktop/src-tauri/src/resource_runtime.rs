@@ -114,7 +114,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_task_can_be_cancelled_while_another_task_holds_the_device() {
-        use super::{semaphore, MemoryReservation};
+        use super::{semaphore, MemoryReservation, WAITING_TASKS};
         use tokio_util::sync::CancellationToken;
         let active = semaphore().clone().acquire_owned().await.unwrap();
         let cancellation = CancellationToken::new();
@@ -122,10 +122,17 @@ mod tests {
         let waiter = tokio::spawn(async move {
             MemoryReservation::acquire_queued("queued-task", &cancellation).await
         });
-        tokio::task::yield_now().await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while WAITING_TASKS.load(std::sync::atomic::Ordering::Acquire) != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("waiter must register in the queue before cancellation");
         cancel.cancel();
         let result = waiter.await.unwrap();
-        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert_eq!(WAITING_TASKS.load(std::sync::atomic::Ordering::Acquire), 0);
         drop(active);
     }
 
