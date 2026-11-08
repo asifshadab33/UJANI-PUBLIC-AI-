@@ -32,8 +32,8 @@ Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empt
 |---|---|---|---|
 | B-01 | Normal upload | Upload and process a small valid PDF. | Processing completes; progress and final result are shown. |
 | B-02 | FileReader cancellation | Select a larger valid PDF and press Cancel while the file is being read. | Read is aborted; UI returns to idle; no native task remains registered. |
-| B-03 | Native decode cancellation | Press Cancel during native base64 decoding/preparation. | UI returns promptly; task cancellation is observed; decode worker remains bounded. |
-| B-04 | Cancel and immediate retry | Cancel during preparation and immediately select the same file again. | No overlapping unbounded decoder work; a clear retry/busy message appears if the single decode slot is still occupied. |
+| B-03 | Native decode cancellation | Wait for an explicit native decode-start progress/diagnostic signal, then press Cancel. Do not infer decode start from elapsed time or a generic “preparing” message. If the build exposes no reliable decode-start signal, mark BLOCKED. | UI returns promptly; task cancellation is observed; decoder worker remains bounded. Without an observable decode-start signal, this case is BLOCKED, not PASS. |
+| B-04 | Cancel and immediate retry | Confirm native decode has started using an explicit phase signal. Cancel, immediately select the same file again, and observe whether the original decoder worker is still active using worker diagnostics or test instrumentation. If either phase or worker state cannot be confirmed, mark BLOCKED. | No overlapping decoder workers; retry is clearly rejected while the single decode slot remains occupied and succeeds after the original worker exits. Missing phase/worker observability is BLOCKED, not PASS. |
 | B-05 | Malformed and empty files | Upload malformed PDF bytes and an empty file. | Clear validation error; no hang, crash, or stale busy indicator. |
 | B-06 | Encrypted PDF | Upload a password-protected PDF. | Unsupported/password-required behavior is explicit; no false successful extraction. |
 | B-07 | Size limit | Test just below and above the documented upload limit. | Below-limit behavior is bounded; above-limit input is rejected before excessive allocation. |
@@ -73,7 +73,7 @@ Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empt
 | E-02 | History opt-in | Enable history and complete a test task. | Only the documented result metadata/content is stored under the selected policy. |
 | E-03 | History load partial failure | Simulate history-entry load failure while settings are readable. | Settings remain available; failure is surfaced without silently changing the user's preference. |
 | E-04 | Cache scope | Repeat an explicitly permitted local search. | Reuse occurs only within the documented user/workspace scope and freshness policy. |
-| E-05 | Cloud consent boundary | Test with cloud use disabled. | No cloud request is made; local-only behavior is accurately described. |
+| E-05 | Cloud consent boundary | Use a harmless synthetic prompt and a controlled, non-production HTTPS test endpoint. With cloud approval disabled, attempt the cloud path. Observe egress independently using OS network monitoring/firewall logs or the test endpoint's access log; separately record loopback traffic to Ollama (127.0.0.1:11434). Run a harmless positive-control request to prove the observer detects the test endpoint. If no independent observer or controlled endpoint is available, mark BLOCKED. | The unapproved cloud request is rejected before any external connection or HTTP request; no test-endpoint access is recorded for the negative case. Local Ollama loopback traffic is distinguished from external egress. An unverified absence of a request is not PASS. |
 
 ## F. Cross-platform execution record
 
@@ -88,4 +88,4 @@ Run applicable cases on each claimed platform and minimum supported OS baseline.
 
 ## Release gate
 
-Do not mark this matrix complete until the test record is filled by a human tester on actual devices. Any failure affecting data integrity, privacy, cancellation, application stability, or permission boundaries blocks broader distribution until fixed and retested. Unsigned CI preview installers must remain clearly labelled as previews.
+Do not mark this matrix complete until the test record is filled by a human tester on actual devices. Before broader distribution, every applicable release-critical case for data integrity, privacy, cancellation, application stability, screenshot/OS permissions, cloud egress, and filesystem boundaries must be marked PASS; BLOCKED or NOT RUN is insufficient. Any failure in these areas blocks distribution until fixed and retested. Platform code signing and notarization must be added and tested before broad public distribution. Unsigned CI preview installers may be used only for supervised preview testing and must remain clearly labelled as previews.
