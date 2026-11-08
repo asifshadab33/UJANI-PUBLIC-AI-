@@ -52,15 +52,12 @@ pub(crate) struct WalkOptions {
 pub(crate) struct WalkEntry {
     pub path: PathBuf,
     pub name: OsString,
-    pub metadata: fs::Metadata,
     pub is_file: bool,
-    pub is_dir: bool,
 }
 
 pub(crate) struct WalkReport {
     pub root: PathBuf,
     pub entries: Vec<WalkEntry>,
-    pub entries_seen: usize,
     pub truncated: bool,
 }
 
@@ -183,8 +180,7 @@ where
             let file_type = metadata.file_type();
             if file_type.is_dir() {
                 entries.push(WalkEntry {
-                    path: path.clone(), name: item.file_name(), metadata,
-                    is_file: false, is_dir: true,
+                    path: path.clone(), name: item.file_name(), is_file: false,
                 });
                 if depth < options.max_depth {
                     stack.push((path, depth + 1));
@@ -214,15 +210,14 @@ where
                 }
             };
             entries.push(WalkEntry {
-                path: canonical_file, name: item.file_name(), metadata,
-                is_file: true, is_dir: false,
+                path: canonical_file, name: item.file_name(), is_file: true,
             });
         }
         if entries_seen > options.max_entries {
             break;
         }
     }
-    Ok(WalkReport { root, entries, entries_seen, truncated })
+    Ok(WalkReport { root, entries, truncated })
 }
 
 /// Detects links and Windows reparse points from filesystem metadata.
