@@ -42,6 +42,7 @@ function statusDetail(status?: ProviderStatus) {
 export default function SecurityCentre() {
   const [step, setStep] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
+  const [enabledProviderIds, setEnabledProviderIds] = useState<string[]>([]);
   const [consent, setConsent] = useState(false);
   const [localChecksEnabled, setLocalChecksEnabled] = useState(false);
   const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
@@ -54,12 +55,17 @@ export default function SecurityCentre() {
   const toggle = (id: string) => setSelected((old) => old.includes(id) ? old.filter((x) => x !== id) : [...old, id]);
   const reset = () => { setStep(0); setSelected([]); setConsent(false); setError(""); };
 
-  const refreshStatus = async () => {
+  const refreshStatus = async (providerIds: string[] = enabledProviderIds) => {
+    if (providerIds.length === 0) {
+      setError("Select at least one provider category before checking status.");
+      return;
+    }
     setChecking(true);
     setError("");
     try {
-      const result = await invoke<ProviderStatus[]>("get_security_provider_status", { providerIds: selected });
+      const result = await invoke<ProviderStatus[]>("get_security_provider_status", { providerIds });
       setStatuses(result);
+      setEnabledProviderIds(providerIds);
       setLocalChecksEnabled(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The local status check failed. No system settings were changed.");
@@ -69,7 +75,7 @@ export default function SecurityCentre() {
   };
 
   const enableAndCheck = async () => {
-    await refreshStatus();
+    await refreshStatus(selected);
     setStep(4);
   };
 
