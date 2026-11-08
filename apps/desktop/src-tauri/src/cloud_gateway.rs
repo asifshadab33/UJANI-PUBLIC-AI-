@@ -187,7 +187,7 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
   bytes.extend_from_slice(&chunk);
  }
  let parsed:ChatResponse=serde_json::from_slice(&bytes).map_err(|e|format!("Provider response was not valid OpenAI-compatible Chat Completions JSON: {e}"))?;
- let total_tokens = parsed.usage.and_then(|usage| usage.total_tokens);
+ let total_tokens = parsed.usage.and_then(|usage| usage.total_tokens).filter(|tokens| *tokens > 0);
  let text = parsed.choices.into_iter().next().map(|c|c.message.content.into_text()).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".to_string())?;
  Ok(CloudExecutionResult { text, total_tokens })
 }
@@ -203,7 +203,9 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 }
 #[test]fn parses_provider_usage_when_available(){
  let response: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"answer"}}],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}"#).unwrap();
- assert_eq!(response.usage.and_then(|usage| usage.total_tokens),Some(20));
+ assert_eq!(response.usage.and_then(|usage| usage.total_tokens).filter(|tokens| *tokens > 0),Some(20));
+ let zero: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"answer"}}],"usage":{"total_tokens":0}}"#).unwrap();
+ assert_eq!(zero.usage.and_then(|usage| usage.total_tokens).filter(|tokens| *tokens > 0),None);
 }
 #[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}
