@@ -18,6 +18,7 @@ fn semaphore() -> &'static Arc<Semaphore> {
     LOCAL_EXECUTION.get_or_init(|| Arc::new(Semaphore::new(1)))
 }
 
+/// Validates a task identifier before it is admitted to the local resource queue.
 pub fn validate_task_id(task_id: &str) -> Result<(), String> {
     if task_id.is_empty() || task_id.len() > 96
         || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
@@ -65,6 +66,7 @@ pub struct MemoryReservation {
 
 impl MemoryReservation {
     /// Immediate admission for synchronous, one-shot native calls.
+    /// Attempts immediate admission for synchronous, one-shot native calls.
     pub fn acquire(task_id: &str) -> Result<Self, String> {
         validate_task_id(task_id)?;
         let permit = semaphore().clone().try_acquire_owned()
