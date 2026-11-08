@@ -18,7 +18,7 @@ fn semaphore() -> &'static Arc<Semaphore> {
     LOCAL_EXECUTION.get_or_init(|| Arc::new(Semaphore::new(1)))
 }
 
-fn validate_task_id(task_id: &str) -> Result<(), String> {
+pub fn validate_task_id(task_id: &str) -> Result<(), String> {
     if task_id.is_empty() || task_id.len() > 96
         || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
     {
