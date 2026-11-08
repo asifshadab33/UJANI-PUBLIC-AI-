@@ -221,6 +221,28 @@ Do not assume Microsoft Defender is the active antivirus when Windows reports a 
 ## 13. Delivery sequence
 
 **Phase A:** navigation, overview/empty states, provider data model, wizard shell and mock adapter.  
-**Phase B:** Windows Security Center, Defender and Windows Firewall read-only adapters.  
+**Phase B:** Windows Security Center aggregate health adapter (first slice); separate Defender detail and Windows Firewall profile adapters remain pending.  
 **Phase C:** Linux/macOS optional adapters and provider management.  
 **Phase D:** alert explanations, accessibility hardening, retention controls and cross-platform acceptance testing.
+
+
+## 14. Implementation status (2026-11-08)
+
+The current Public AI implementation is being delivered in draft PR #80. This status is intentionally narrower than the full roadmap above.
+
+Implemented in the current branch:
+- Security Centre navigation, responsive overview and provider catalogue.
+- Explicit, session-scoped opt-in wizard.
+- Native read-only Windows Security Center query for the antivirus and firewall *aggregate categories*.
+- User-selected category scoping, bounded identifier validation, source provenance and observation timestamp.
+- Honest mapping for healthy, not monitored, poor/alert, snoozed/attention, unavailable, unsupported and unknown results.
+- No background polling, provider-data upload, file scanning, threat-event ingestion or security-setting changes.
+
+Not implemented yet:
+- Individual antivirus product identity and product-specific Defender status/signature details.
+- Windows Firewall profile/rule details.
+- Threat events, ransomware protection details, scan history and update freshness.
+- Linux ClamAV/firewall and macOS/vendor adapters.
+- Persistent consent preferences, provider-specific permission management and platform manual acceptance tests.
+
+Important interpretation: Windows Security Center returns aggregate category health. A healthy result is not proof that every protection feature is enabled, current or effective, and it does not identify which product supplied protection. UJANI must retain that limitation in all labels and explanations.
