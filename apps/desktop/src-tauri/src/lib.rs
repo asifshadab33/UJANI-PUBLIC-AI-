@@ -916,7 +916,7 @@ mod local_receipt_context_tests {
         use std::sync::Mutex;
         use tokio_util::sync::CancellationToken;
 
-        let control = TaskControlState { active: Mutex::new(HashMap::new()) };
+        let control = TaskControlState::default();
         control.active.lock().unwrap().insert("cancel-me".into(), CancellationToken::new());
         {
             let _guard = ActiveTaskGuard { control: &control, task_id: "cancel-me".into() };
