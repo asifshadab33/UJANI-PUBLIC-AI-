@@ -50,11 +50,18 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Generate native Tauri icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
+      - name: Build and stage the native PDF worker sidecar
+        working-directory: apps/desktop
+        run: npm run build:pdf-worker
       - name: Verify Rust core and desktop native code
         run: |
           cargo test --workspace --locked
           cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin ujani-pdf-worker --features pdf-worker-build --locked
 
   build-and-upload:
     needs: verify
@@ -70,12 +77,16 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
+            target: ""
           - platform: ubuntu-24.04
             args: ""
+            target: ""
           - platform: macos-latest
             args: "--target x86_64-apple-darwin"
+            target: x86_64-apple-darwin
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
+            target: aarch64-apple-darwin
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -215,6 +226,15 @@ jobs:
       - name: Generate platform installer icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
+      - name: Build and stage the matching PDF worker architecture
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            node scripts/build-pdf-worker.mjs --target "${{ matrix.target }}"
+          else
+            npm run build:pdf-worker
+          fi
       - name: Build and upload signed installers and updater manifest
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
