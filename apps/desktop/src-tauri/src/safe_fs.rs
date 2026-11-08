@@ -114,6 +114,8 @@ pub(crate) struct WalkOptions {
     pub recursive: bool,
     pub links: LinkPolicy,
     pub errors: WalkErrorPolicy,
+    /// Optional predicate applied before opening regular files.
+    pub file_filter: Option<fn(&Path) -> bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +238,9 @@ pub(crate) fn walk_directory(
             if !metadata.is_file() {
                 continue;
             }
+            if options.file_filter.is_some_and(|filter| !filter(&path)) {
+                continue;
+            }
             // Open the final path without following links before canonicalizing it.
             // This closes the final-component symlink/reparse race at the file boundary.
             let handle = match open_regular_file(&path) {
@@ -297,6 +302,7 @@ mod walk_tests {
             recursive: true,
             links,
             errors: WalkErrorPolicy::SkipAndMarkTruncated,
+            file_filter: None,
         }
     }
 
@@ -335,6 +341,19 @@ mod walk_tests {
         assert!(rejected.is_err());
         fs::remove_dir_all(folder).unwrap();
         fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn shared_walker_filters_before_opening_files() {
+        let folder = root("filter");
+        fs::write(folder.join("keep.txt"), "keep").unwrap();
+        fs::write(folder.join("ignore.exe"), "ignore").unwrap();
+        let mut configured = options(0, 20, LinkPolicy::Skip);
+        configured.file_filter = Some(|path| path.extension().is_some_and(|ext| ext == "txt"));
+        let walked = walk_directory(&folder, configured, &CancellationToken::new()).unwrap();
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "keep.txt");
+        fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]
