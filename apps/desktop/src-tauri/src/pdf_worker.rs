@@ -38,8 +38,8 @@ mod tests {
     use super::{bounded_output, extract_pdf_text, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
 
     fn minimal_pdf_with_text() -> Vec<u8> {
-        let stream = b"BT /F1 12 Tf 72 200 Td (UJANI worker test) Tj ET\\n";
-        let mut content = format!("<< /Length {} >>\\nstream\\n", stream.len()).into_bytes();
+        let stream = b"BT /F1 12 Tf 72 200 Td (UJANI worker test) Tj ET\n";
+        let mut content = format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes();
         content.extend_from_slice(stream);
         content.extend_from_slice(b"endstream");
         let objects = vec![
@@ -49,20 +49,20 @@ mod tests {
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
             content,
         ];
-        let mut pdf = b"%PDF-1.4\\n".to_vec();
+        let mut pdf = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
         for (index, object) in objects.iter().enumerate() {
             offsets.push(pdf.len());
-            pdf.extend_from_slice(format!("{} 0 obj\\n", index + 1).as_bytes());
+            pdf.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
             pdf.extend_from_slice(object);
-            pdf.extend_from_slice(b"\\nendobj\\n");
+            pdf.extend_from_slice(b"\nendobj\n");
         }
         let xref_offset = pdf.len();
-        pdf.extend_from_slice(format!("xref\\n0 {}\\n0000000000 65535 f \\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
         for offset in offsets {
-            pdf.extend_from_slice(format!("{offset:010} 00000 n \\n").as_bytes());
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
         }
-        pdf.extend_from_slice(format!("trailer\\n<< /Size {} /Root 1 0 R >>\\nstartxref\\n{xref_offset}\\n%%EOF\\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n", objects.len() + 1).as_bytes());
         pdf
     }
 
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn rejects_non_pdf_and_malformed_pdf_bytes() {
         assert!(extract_pdf_text(b"not a pdf").is_err());
-        assert!(extract_pdf_text(b"%PDF-1.7\\nnot a valid document").is_err());
+        assert!(extract_pdf_text(b"%PDF-1.7\nnot a valid document").is_err());
     }
 
     #[test]
