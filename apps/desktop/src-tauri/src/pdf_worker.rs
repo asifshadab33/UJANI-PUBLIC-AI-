@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 
 const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const OUTPUT_TRUNCATED_MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+const OUTPUT_TRUNCATED_MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
 
 /// Extracts text from a validated PDF while enforcing the worker's input-size ceiling.
 fn extract_pdf_text(data: &[u8]) -> Result<String, ()> {
