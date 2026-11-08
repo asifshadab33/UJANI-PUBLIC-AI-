@@ -465,6 +465,22 @@ mod tests {
     }
 
     #[test]
+    fn worker_truncation_marker_reaches_search_and_prevents_negative_cache() {
+        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+        let extraction = match crate::task_engine::pdf_worker_output_was_truncated(marker) {
+            Ok(true) => Err("PDF text extraction exceeded the 1 MiB worker output limit.".into()),
+            Ok(false) => Ok(String::new()),
+            Err(error) => Err(error),
+        };
+        let mut matches = Vec::new();
+        let mut incomplete = false;
+        record_pdf_search_result(extraction, "needle", &mut matches, &mut incomplete);
+        assert!(matches.is_empty());
+        assert!(incomplete);
+        assert!(!search_result_is_cacheable(false, incomplete));
+    }
+
+    #[test]
     fn complete_pdf_non_match_remains_a_cacheable_negative_result() {
         let mut matches = Vec::new();
         let mut incomplete = false;
