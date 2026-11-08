@@ -442,9 +442,14 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
 }
 
 
+const MAX_PENDING_CANCELLATIONS: usize = 64;
+const PENDING_CANCELLATION_TTL: Duration = Duration::from_secs(30);
+
 #[derive(Default)]
 struct TaskControlState {
     active: Mutex<HashMap<String, CancellationToken>>,
+    /// Bounded, short-lived cancellation requests that arrive before task registration.
+    pending_cancellations: Mutex<HashMap<String, Instant>>,
 }
 
 /// Removes a task registration even if its command future is cancelled or unwinds.
@@ -480,12 +485,23 @@ fn register_active_task<'a>(
         return Err("Invalid task identifier.".into());
     }
     let token = CancellationToken::new();
+    // Keep the active -> pending lock order identical to request_task_cancellation.
+    // This closes the race where cancellation arrives just before registration.
     let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
     if active.contains_key(task_id) {
         return Err("Task identifier is already active.".into());
     }
+    let now = Instant::now();
+    let mut pending = control.pending_cancellations.lock()
+        .map_err(|_| "Pending cancellation registry unavailable.".to_string())?;
+    pending.retain(|_, requested_at| now.duration_since(*requested_at) <= PENDING_CANCELLATION_TTL);
+    let cancellation_was_requested = pending.remove(task_id).is_some();
     active.insert(task_id.to_string(), token.clone());
+    drop(pending);
     drop(active);
+    if cancellation_was_requested {
+        token.cancel();
+    }
     Ok(ActiveTaskRegistration {
         task_id: task_id.to_string(),
         token,
@@ -930,6 +946,30 @@ mod managed_task_liveness_tests {
         drop(first);
         assert!(super::register_active_task(&control, "same-task").is_ok());
     }
+
+    /// Confirms cancellation received before native registration is applied to the new token.
+    #[test]
+    fn cancellation_before_registration_is_retained_and_applied() {
+        let control = super::TaskControlState::default();
+        assert!(super::request_task_cancellation(&control, "pdf-pending").unwrap());
+        let registration = super::register_active_task(&control, "pdf-pending").unwrap();
+        assert!(registration.token.is_cancelled());
+        drop(registration);
+        assert!(!control.active.lock().unwrap().contains_key("pdf-pending"));
+        assert!(!control.pending_cancellations.lock().unwrap().contains_key("pdf-pending"));
+    }
+
+    /// Confirms unclaimed cancellation requests cannot grow the registry without bound.
+    #[test]
+    fn pending_cancellation_registry_is_bounded() {
+        let control = super::TaskControlState::default();
+        for index in 0..super::MAX_PENDING_CANCELLATIONS {
+            let task_id = format!("pending-{index}");
+            assert!(super::request_task_cancellation(&control, &task_id).unwrap());
+        }
+        assert!(!super::request_task_cancellation(&control, "pending-overflow").unwrap());
+        assert_eq!(control.pending_cancellations.lock().unwrap().len(), super::MAX_PENDING_CANCELLATIONS);
+    }
 }
 
 #[cfg(test)]
@@ -1058,13 +1098,31 @@ async fn execute_local_ai_task(
     result
 }
 
+/// Requests cancellation of an active task or queues a bounded request for its registration handoff.
+fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Result<bool, String> {
+    let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+    if let Some(token) = active.get(task_id) {
+        token.cancel();
+        return Ok(true);
+    }
+
+    let now = Instant::now();
+    let mut pending = control.pending_cancellations.lock()
+        .map_err(|_| "Pending cancellation registry unavailable.".to_string())?;
+    pending.retain(|_, requested_at| now.duration_since(*requested_at) <= PENDING_CANCELLATION_TTL);
+    if !pending.contains_key(task_id) && pending.len() >= MAX_PENDING_CANCELLATIONS {
+        return Ok(false);
+    }
+    pending.insert(task_id.to_string(), now);
+    Ok(true)
+}
+
 #[tauri::command]
 fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
     if !valid_command_identifier(&task_id, 96) {
         return Err("Invalid task identifier.".into());
     }
-    let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-    if let Some(token) = active.get(&task_id) { token.cancel(); Ok(true) } else { Ok(false) }
+    request_task_cancellation(&control, &task_id)
 }
 
 
