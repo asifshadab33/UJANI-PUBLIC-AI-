@@ -178,6 +178,10 @@ mod tests {
 
 /// Four-mode execution policy preview; no execution or networking occurs here.
 pub mod router;
+
+/// Bounded, side-effect-free reminder and agenda contracts.
+pub mod reminders;
+pub use reminders::{upcoming_reminders, LocalReminder, ReminderState, ReminderValidationError};
 pub mod file_processor;
 pub mod image_processor;
 pub mod capability;
