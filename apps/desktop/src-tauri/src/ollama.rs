@@ -21,6 +21,12 @@ const NUM_CTX: u32 = 8192;
 #[derive(Serialize)] struct ChatBody<'a> { model: &'a str, messages: Vec<ChatMsg<'a>>, stream: bool, options: ChatOptions, keep_alive: &'a str }
 #[derive(Deserialize)] struct ChatReply { message: ChatReplyMsg }
 #[derive(Deserialize)] struct ChatReplyMsg { content: String }
+#[derive(Deserialize)]
+struct ChatStreamReply {
+    #[serde(default)] message: Option<ChatReplyMsg>,
+    #[serde(default)] done: bool,
+    #[serde(default)] error: Option<String>,
+}
 pub struct Turn<'a> { pub role: &'a str, pub content: &'a str }
 
 fn build_client(total_timeout: Option<Duration>) -> Result<reqwest::Client, String> {
@@ -184,6 +190,84 @@ pub async fn chat(
     Err(format!("Local Ollama request failed after {MAX_ATTEMPTS} attempts: {last_error}"))
 }
 
+fn parse_chat_stream_line(line: &[u8]) -> Result<(String, bool), String> {
+    let event: ChatStreamReply = serde_json::from_slice(line)
+        .map_err(|_| "Local Ollama returned an invalid streaming event.".to_string())?;
+    if let Some(error) = event.error {
+        return Err(format!("Local Ollama streaming error: {error}"));
+    }
+    Ok((event.message.map(|message| message.content).unwrap_or_default(), event.done))
+}
+
+/// Stream bounded NDJSON response fragments from the loopback Ollama service.
+/// The callback receives only newly generated text; the returned value is the full response.
+pub async fn generate_stream<F>(model: &str, prompt: &str, mut on_delta: F) -> Result<String, String>
+where F: FnMut(String) {
+    if !valid_model(model) { return Err("Invalid local model identifier.".into()); }
+    if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT_BYTES {
+        return Err("Prompt must be non-empty and no larger than the 32 KiB local limit.".into());
+    }
+    let body = ChatBody {
+        model,
+        messages: vec![ChatMsg { role: "user", content: prompt }],
+        stream: true,
+        options: ChatOptions { num_ctx: NUM_CTX, temperature: 0.3 },
+        keep_alive: "5m",
+    };
+    let response = client()?.post(format!("{BASE_URL}/api/chat")).json(&body).send().await
+        .map_err(|error| format!("Local Ollama streaming request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Local Ollama returned HTTP {} for the streaming request.", response.status()));
+    }
+    let mut response = response;
+    let mut pending = Vec::<u8>::new();
+    let mut output = String::new();
+    let mut done = false;
+    while !done {
+        let chunk = match tokio::time::timeout(Duration::from_secs(35), response.chunk()).await {
+            Err(_) => return Err("Local Ollama stream stalled for 35 seconds.".into()),
+            Ok(Err(error)) => return Err(format!("Local Ollama stream failed: {error}")),
+            Ok(Ok(None)) => break,
+            Ok(Ok(Some(chunk))) => chunk,
+        };
+        for byte in chunk {
+            if byte == b'\\n' {
+                if pending.is_empty() { continue; }
+                let (delta, finished) = parse_chat_stream_line(&pending)?;
+                pending.clear();
+                if !delta.is_empty() {
+                    if output.len().saturating_add(delta.len()) > MAX_RESPONSE_BYTES {
+                        return Err("Local Ollama response exceeded the 2 MiB safety limit.".into());
+                    }
+                    output.push_str(&delta);
+                    on_delta(delta);
+                }
+                done = finished;
+                if done { break; }
+            } else {
+                pending.push(byte);
+                if pending.len() > 64 * 1024 {
+                    return Err("Local Ollama streaming event exceeded the 64 KiB safety limit.".into());
+                }
+            }
+        }
+    }
+    if !done && !pending.is_empty() {
+        let (delta, finished) = parse_chat_stream_line(&pending)?;
+        if !delta.is_empty() {
+            if output.len().saturating_add(delta.len()) > MAX_RESPONSE_BYTES {
+                return Err("Local Ollama response exceeded the 2 MiB safety limit.".into());
+            }
+            output.push_str(&delta);
+            on_delta(delta);
+        }
+        done = finished;
+    }
+    if !done { return Err("Local Ollama stream ended before its completion event.".into()); }
+    if output.trim().is_empty() { return Err("Local Ollama returned an empty response.".into()); }
+    Ok(output)
+}
+
 pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     chat(model, None, &[Turn { role: "user", content: prompt }]).await
 }
@@ -274,6 +358,22 @@ where F: FnMut(String, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_local_chat_stream_fragments_and_completion() {
+        let (delta, done) = parse_chat_stream_line(br#"{"message":{"content":"Hello"},"done":false}"#).unwrap();
+        assert_eq!(delta, "Hello");
+        assert!(!done);
+        let (delta, done) = parse_chat_stream_line(br#"{"message":{"content":""},"done":true}"#).unwrap();
+        assert!(delta.is_empty());
+        assert!(done);
+    }
+
+    #[test]
+    fn rejects_malformed_and_error_chat_stream_events() {
+        assert!(parse_chat_stream_line(b"not-json").is_err());
+        assert!(parse_chat_stream_line(br#"{"error":"model unavailable"}"#).unwrap_err().contains("model unavailable"));
+    }
 
     #[test]
     fn accepts_only_bounded_local_model_identifiers() {
