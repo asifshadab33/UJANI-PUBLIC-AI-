@@ -354,7 +354,13 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             file_filter: None,
         },
         token,
-    ).map_err(|error| format!("Cannot scan selected folder: {error}"))?;
+    ).map_err(|error| {
+        if error.contains("cancelled") {
+            "File search cancelled by user.".to_string()
+        } else {
+            format!("Cannot scan selected folder: {error}")
+        }
+    })?;
 
     let mut candidates = Vec::with_capacity(walked.files.len());
     let mut scanned_files = 0usize;
