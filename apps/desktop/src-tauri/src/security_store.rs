@@ -349,6 +349,13 @@ fn claim_nonce_db(db: &mut Connection, peer_id: &str, nonce: &str, expires_at: u
     tx.commit().map_err(|e| e.to_string())
 }
 
+/// Computes the exact reservation amount used by both the database and RAII guard.
+fn cloud_reservation_tokens(prompt_bytes: usize, completion_tokens: u16) -> Result<i64, String> {
+    let prompt_tokens = i64::try_from(prompt_bytes)
+        .map_err(|_| "Cloud prompt is too large to reserve safely.".to_string())?;
+    Ok(prompt_tokens.saturating_add(completion_tokens as i64))
+}
+
 fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens: u16, now: u64) -> Result<CloudBudgetStatus, String> {
     if prompt_bytes == 0 || prompt_bytes > 32 * 1024 || completion_tokens == 0 || completion_tokens > 8_192 {
         return Err("Cloud token reservation request is outside the supported bounds.".into());
@@ -356,9 +363,7 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
     let day = (now / 86_400) as i64;
     // UTF-8 byte length is a conservative tokenizer-independent reservation
     // estimate; reconcile it to provider-reported usage after successful dispatch.
-    let prompt_tokens = i64::try_from(prompt_bytes)
-        .map_err(|_| "Cloud prompt is too large to reserve safely.".to_string())?;
-    let reservation = prompt_tokens.saturating_add(completion_tokens as i64);
+    let reservation = cloud_reservation_tokens(prompt_bytes, completion_tokens)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR IGNORE INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,0)", params![day])
         .map_err(|e| e.to_string())?;
@@ -447,7 +452,7 @@ pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tok
     let mut db = open(app)?;
     let now = now_seconds()?;
     let status = reserve_budget_db(&mut db, prompt_bytes, completion_tokens, now)?;
-    let reserved_tokens = (prompt_bytes as i64).saturating_add(completion_tokens as i64);
+    let reserved_tokens = cloud_reservation_tokens(prompt_bytes, completion_tokens)?;
     Ok(CloudBudgetReservation {
         app: app.clone(), utc_day: status.utc_day, reserved_tokens, status,
         dispatched: false, settled: false,
