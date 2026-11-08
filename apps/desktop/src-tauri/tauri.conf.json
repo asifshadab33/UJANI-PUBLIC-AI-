@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "org.ujani.publicai",
   "build": {
-    "beforeDevCommand": "npm run build:pdf-worker && npm run dev",
+    "beforeDevCommand": "npm run build:pdf-worker:dev && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build && npm run build:pdf-worker",
     "frontendDist": "../dist"
