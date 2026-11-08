@@ -961,11 +961,19 @@ mod managed_task_liveness_tests {
     fn pending_cancellation_registry_is_bounded() {
         let control = super::TaskControlState::default();
         for index in 0..super::MAX_PENDING_CANCELLATIONS {
-            let task_id = format!("pending-{index}");
+            let task_id = format!("pdf-pending-{index}");
             assert!(super::request_task_cancellation(&control, &task_id).unwrap());
         }
-        assert!(!super::request_task_cancellation(&control, "pending-overflow").unwrap());
+        assert!(!super::request_task_cancellation(&control, "pdf-pending-overflow").unwrap());
         assert_eq!(control.pending_cancellations.lock().unwrap().len(), super::MAX_PENDING_CANCELLATIONS);
+    }
+
+    /// Confirms pre-registration queuing is restricted to the PDF handoff path.
+    #[test]
+    fn unknown_task_cancellation_is_not_queued() {
+        let control = super::TaskControlState::default();
+        assert!(!super::request_task_cancellation(&control, "duplicates-early").unwrap());
+        assert!(control.pending_cancellations.lock().unwrap().is_empty());
     }
 }
 
@@ -1095,12 +1103,18 @@ async fn execute_local_ai_task(
     result
 }
 
-/// Requests cancellation of an active task or queues a bounded request for its registration handoff.
+/// Cancels an active task or queues a bounded pre-registration request for PDF task IDs.
 fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Result<bool, String> {
     let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
     if let Some(token) = active.get(task_id) {
         token.cancel();
         return Ok(true);
+    }
+    // Only PDF preparation has a deliberate FileReader-to-IPC handoff window.
+    // Other task types keep the historical "not active" result rather than
+    // accumulating a cancellation that their registration path does not consume.
+    if !task_id.starts_with("pdf-") {
+        return Ok(false);
     }
 
     let now = Instant::now();
