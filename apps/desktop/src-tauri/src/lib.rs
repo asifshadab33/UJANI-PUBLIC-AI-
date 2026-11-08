@@ -292,8 +292,8 @@ async fn execute_cloud_ai_task(
  let preview: String = prompt.chars().take(600).collect();
  let truncated = prompt.chars().count() > 600;
  let consent_message = format!(
-  "UJANI is about to send this single request to an external provider.\\n\\nProvider host: {provider_host}\\nModel: {model}\\nPrompt size: {} characters\\n\\nPrompt preview:\\n{}{}\\n\\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
-  prompt.chars().count(), preview, if truncated { "\\n[preview truncated]" } else { "" }
+  "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
  );
  // Register before showing consent so the user can cancel while the native dialog is pending.
  let token = CancellationToken::new();
