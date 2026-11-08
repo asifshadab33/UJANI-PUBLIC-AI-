@@ -79,7 +79,7 @@ where
     let root_metadata = fs::symlink_metadata(selected_root)
         .map_err(|error| format!("Cannot inspect selected folder: {error}"))?;
     if is_reparse_point(&root_metadata) || !root_metadata.is_dir() {
-        return Err("Choose a real directory, not a symbolic link or reparse point.".into());
+        return Err("Choose a real directory, not a symlink, symbolic link, or reparse point.".into());
     }
     let root = fs::canonicalize(selected_root)
         .map_err(|error| format!("Cannot resolve selected folder: {error}"))?;
