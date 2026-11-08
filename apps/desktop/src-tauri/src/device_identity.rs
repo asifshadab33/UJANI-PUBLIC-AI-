@@ -66,7 +66,7 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
 #[tauri::command]
 pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
     let current = get_or_create_device_identity(app.clone())?;
-    let approved = confirm_native(&app, "Confirm device identity rotation", format!("Rotate this device's Ed25519 identity?\n\nCurrent fingerprint: {}\n\nOther devices will need to re-enrol this device before peer tasks can be verified.", current.device_id)).await;
+    let approved = confirm_native(&app, "Confirm device identity rotation", format!("Rotate this device's Ed25519 identity?\n\nCurrent fingerprint: {}\n\nOther devices will need to re-enrol this device before peer tasks can be verified.", current.device_id), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved {
         return Err("Device identity rotation was cancelled.".into());
     }
@@ -118,7 +118,7 @@ pub async fn sign_peer_task_envelope(
     }
     let scopes = requested_scopes.join(", ");
     let digest = ujani_core::sha256_hex(&payload);
-    let approved = confirm_native(&app, "Approve peer task consent", format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nRecipient: {recipient_device_id}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len())).await;
+    let approved = confirm_native(&app, "Approve peer task consent", format!("Approve preparing a signed UJANI peer task?\n\nOperation: {operation}\nRecipient: {recipient_device_id}\nTask: {task_id}\nPayload: {} bytes\nSHA-256: {digest}\nData scopes: {scopes}\n\nThis creates a signed consent envelope only; it does not send data.", payload.len()), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved {
         return Err("Peer task signing was not approved. No data was sent.".into());
     }

@@ -758,7 +758,7 @@ pub async fn enroll_trusted_peer(
         return Err("Peer identifier does not match the supplied public key.".into());
     }
     let label = label.trim().to_string();
-    let approved = confirm_native(&app, "Approve trusted device enrollment", format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}")).await;
+    let approved = confirm_native(&app, "Approve trusted device enrollment", format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}"), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
@@ -793,7 +793,7 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer identifier.".into());
     }
-    let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}")).await;
+    let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved { return Err("Peer revocation was cancelled.".into()); }
     let changed = open(&app)?.execute(
         "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
