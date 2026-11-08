@@ -53,3 +53,8 @@ The platform matrix remains a **proposed baseline**, not a certified support lis
 ## Maintenance
 
 When changing Tauri, WebView2, WebKitGTK, Rust or native dependencies, rerun the minimum-version matrix and update this document. Record exact OS image/version, architecture, installer type, app version and test outcome in release evidence.
+
+
+## Legal and customer-facing status
+
+This matrix is a proposed technical support policy, not a compatibility certification, warranty, SLA or promise of support. A package build does not prove that a customer device or operating-system version is supported. Users must verify the exact environment and retain independent backups. Read [the UJANI Public AI legal and operational notice](LEGAL-DISCLAIMER.md) and the applicable [GPLv3 licence](../LICENSE). This notice is informational and does not exclude any rights or liabilities that applicable law does not permit to be excluded.
