@@ -82,33 +82,52 @@ fn windows_category(
 
 /// Read the supported provider categories on this platform. No polling occurs;
 /// callers invoke this only after the user explicitly requests a status check.
-pub fn read_only_status() -> Vec<SecurityProviderStatus> {
+pub fn read_only_status(
+    requested_provider_ids: &[String],
+) -> Result<Vec<SecurityProviderStatus>, String> {
+    if requested_provider_ids.is_empty()
+        || requested_provider_ids.len() > 2
+        || requested_provider_ids.iter().any(|id| {
+            !matches!(id.as_str(), "windows.antivirus" | "windows.firewall")
+        })
+        || requested_provider_ids
+            .iter()
+            .enumerate()
+            .any(|(index, id)| requested_provider_ids[..index].contains(id))
+    {
+        return Err("Security provider selection is invalid or exceeds the supported limit.".into());
+    }
+
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::System::SecurityCenter::{
             WSC_SECURITY_PROVIDER_ANTIVIRUS, WSC_SECURITY_PROVIDER_FIREWALL,
         };
 
-        vec![
-            windows_category(
-                "windows.antivirus",
-                "Windows Security Center — antivirus category",
-                WSC_SECURITY_PROVIDER_ANTIVIRUS as u32,
-            ),
-            windows_category(
-                "windows.firewall",
-                "Windows Security Center — firewall category",
-                WSC_SECURITY_PROVIDER_FIREWALL as u32,
-            ),
-        ]
+        Ok(requested_provider_ids
+            .iter()
+            .map(|provider_id| match provider_id.as_str() {
+                "windows.antivirus" => windows_category(
+                    provider_id,
+                    "Windows Security Center — antivirus category",
+                    WSC_SECURITY_PROVIDER_ANTIVIRUS as u32,
+                ),
+                "windows.firewall" => windows_category(
+                    provider_id,
+                    "Windows Security Center — firewall category",
+                    WSC_SECURITY_PROVIDER_FIREWALL as u32,
+                ),
+                _ => unreachable!("provider identifiers were validated above"),
+            })
+            .collect())
     }
     #[cfg(not(target_os = "windows"))]
     {
-        ["windows.antivirus", "windows.firewall"]
-            .into_iter()
+        Ok(requested_provider_ids
+            .iter()
             .map(|provider_id| SecurityProviderStatus {
-                provider_id: provider_id.into(),
-                label: if provider_id.ends_with("antivirus") {
+                provider_id: provider_id.clone(),
+                label: if provider_id == "windows.antivirus" {
                     "Windows Security Center — antivirus category".into()
                 } else {
                     "Windows Security Center — firewall category".into()
@@ -118,7 +137,7 @@ pub fn read_only_status() -> Vec<SecurityProviderStatus> {
                 detail: "This provider adapter is available only on Windows.".into(),
                 observed_at_unix_ms: observed_at_unix_ms(),
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -133,6 +152,24 @@ mod tests {
         assert_eq!(status_from_windows_result(0, 2).0, "alert");
         assert_eq!(status_from_windows_result(0, 3).0, "attention");
         assert_eq!(status_from_windows_result(0, 99).0, "unknown");
+    }
+
+    #[test]
+    fn rejects_empty_unknown_and_duplicate_provider_selections() {
+        assert!(super::read_only_status(&[]).is_err());
+        assert!(super::read_only_status(&["windows.defender".into()]).is_err());
+        assert!(super::read_only_status(&[
+            "windows.antivirus".into(),
+            "windows.antivirus".into()
+        ]).is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn reports_windows_categories_as_unsupported_on_other_platforms() {
+        let result = super::read_only_status(&["windows.firewall".into()]).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].status, "unsupported");
     }
 
     #[test]
