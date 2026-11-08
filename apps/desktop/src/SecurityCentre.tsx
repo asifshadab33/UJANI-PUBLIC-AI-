@@ -58,7 +58,7 @@ export default function SecurityCentre() {
     setChecking(true);
     setError("");
     try {
-      const result = await invoke<ProviderStatus[]>("get_security_provider_status");
+      const result = await invoke<ProviderStatus[]>("get_security_provider_status", { providerIds: selected });
       setStatuses(result);
       setLocalChecksEnabled(true);
     } catch (cause) {
