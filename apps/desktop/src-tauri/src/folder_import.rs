@@ -6,7 +6,6 @@
 
 use serde::Serialize;
 use std::{
-    fs,
     io::Read,
     path::Path,
 };
