@@ -34,6 +34,7 @@ type ExecutionReceipt = { schema_version: number; task_id: string; operation_id:
 type ReceiptLedgerStatus = { entries: number; valid: boolean; head_sha256: string };
 type ReceiptLedgerEntry = { receipt: ExecutionReceipt; record_hash: string };
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type ChatDeltaEvent = { task_id: string; delta: string };
 function composeConversationPrompt(messages: ChatMessage[], current: string): string {
   const currentText = current.trim();
   const context = messages.slice(-8).map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content.slice(0, 2400)}`).join("\n\n");
@@ -82,6 +83,7 @@ export default function App() {
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
   const [localChatMessages, setLocalChatMessages] = useState<ChatMessage[]>([]);
+  const [localStreamingText, setLocalStreamingText] = useState("");
   const [cloudChatMessages, setCloudChatMessages] = useState<ChatMessage[]>([]);
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -211,6 +213,17 @@ export default function App() {
       }
     }).then((stop) => { unlisten = stop; })
       .catch((error) => setOllamaError(String(error)));
+    return () => { unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    listen<ChatDeltaEvent>("ujani-chat-delta", (event) => {
+      // This event is emitted only by the local Ollama task; cloud output uses a separate path.
+      setLocalStreamingText((current) => current + event.payload.delta);
+    }).then((stop) => { unlisten = stop; })
+      .catch((error) => setOllamaError("Local response stream unavailable: " + String(error)));
     return () => { unlisten?.(); };
   }, []);
 
@@ -544,7 +557,7 @@ export default function App() {
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
-    setAiBusy(true); setOllamaError(""); setAiResult(null);
+    setAiBusy(true); setOllamaError(""); setAiResult(null); setLocalStreamingText("");
     try {
       const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: chatPrompt, mode: executionMode, model: ollamaModel });
       setAiResult(result);
@@ -552,7 +565,7 @@ export default function App() {
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
       setRequest("");
     } catch (error) { setOllamaError(String(error)); }
-    finally { setAiBusy(false); setActiveTaskId(null); }
+    finally { setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
   }
 
   async function cancelLocalAi() {
@@ -1032,6 +1045,7 @@ export default function App() {
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             <div className="chat-thread" aria-live="polite">
               {localChatMessages.length === 0 ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><ChatMessageContent content={message.content} /></div>)}
+              {aiBusy && <div className="chat-message assistant streaming-message"><b>Local AI · generating</b><ChatMessageContent content={localStreamingText || "Thinking…"} /></div>}
             </div>
             <div className="chat-footer"><small>{localChatMessages.length ? "Recent conversation context is sent only to your local Ollama service." : "No conversation has started yet."}</small><button type="button" onClick={() => { setLocalChatMessages([]); setAiResult(null); }} disabled={!localChatMessages.length || aiBusy}>Clear local chat</button></div>
             {aiResult && <small className="muted">{aiResult.mode_used} · {aiResult.model} · local Ollama · no cloud fallback</small>}
