@@ -917,10 +917,7 @@ mod managed_task_liveness_tests {
     fn registered_upload_task_can_be_cancelled_before_preparation_finishes() {
         let control = super::TaskControlState::default();
         let registration = super::register_active_task(&control, "pdf-upload-test").unwrap();
-        {
-            let active = control.active.lock().unwrap();
-            active.get("pdf-upload-test").unwrap().cancel();
-        }
+        assert!(super::request_task_cancellation(&control, "pdf-upload-test").unwrap());
         assert!(registration.token.is_cancelled());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
