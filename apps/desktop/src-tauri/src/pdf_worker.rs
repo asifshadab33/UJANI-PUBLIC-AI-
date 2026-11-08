@@ -91,7 +91,9 @@ mod tests {
     fn output_limit_preserves_utf8_boundaries() {
         let text = format!("{}x", "م".repeat(MAX_OUTPUT_BYTES / 2 + 10));
         let output = bounded_output(&text);
-        assert!(output.len() <= MAX_OUTPUT_BYTES);
+        assert_eq!(output.len(), MAX_OUTPUT_BYTES);
         assert!(text.is_char_boundary(output.len()));
+        let expected = "م".repeat(MAX_OUTPUT_BYTES / "م".len());
+        assert_eq!(output, expected);
     }
 }
