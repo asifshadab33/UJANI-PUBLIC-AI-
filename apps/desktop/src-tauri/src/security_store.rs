@@ -1141,6 +1141,40 @@ mod tests {
     }
 
     #[test]
+    fn cloud_budget_limit_is_configurable_and_cannot_drop_below_reserved_usage() {
+        let mut db = db();
+        let configured = set_cloud_budget_limit_db(&mut db, 100_000, 86_400).unwrap();
+        assert_eq!(configured.daily_limit_tokens, 100_000);
+        let used = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
+        assert_eq!(used.reserved_tokens, 12_192);
+        assert!(set_cloud_budget_limit_db(&mut db, 10_000, 86_400).is_err());
+        let status = set_cloud_budget_limit_db(&mut db, 50_000, 86_400).unwrap();
+        assert_eq!(status.remaining_tokens, 37_808);
+        assert!(set_cloud_budget_limit_db(&mut db, 5_000_001, 86_400).is_err());
+    }
+
+    #[test]
+    fn cloud_budget_settlement_refunds_only_unused_reservation() {
+        let mut db = db();
+        let day = 86_400_i64;
+        reserve_budget_db(&mut db, 4_000, 8_000, day as u64).unwrap();
+        reserve_budget_db(&mut db, 1_000, 1_000, day as u64).unwrap();
+        settle_budget_reservation_db(&mut db, day, 12_000, 3_000).unwrap();
+        let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
+        assert_eq!(used, 5_000);
+    }
+
+    #[test]
+    fn cloud_budget_refunds_a_reservation_that_was_never_dispatched() {
+        let mut db = db();
+        let day = 86_400_i64;
+        reserve_budget_db(&mut db, 2_000, 2_000, day as u64).unwrap();
+        settle_budget_reservation_db(&mut db, day, 4_000, 0).unwrap();
+        let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
+        assert_eq!(used, 0);
+    }
+
+    #[test]
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
