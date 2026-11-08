@@ -477,6 +477,15 @@ struct ActiveTaskRegistration<'a> {
 }
 
 /// Registers a task before preparation so cancellation is available from the first native step.
+/// Rejects an already-cancelled task before any expensive preparation is started.
+fn ensure_task_not_cancelled(token: &CancellationToken) -> Result<(), String> {
+    if token.is_cancelled() {
+        Err("Task cancelled by user.".into())
+    } else {
+        Ok(())
+    }
+}
+
 fn register_active_task<'a>(
     control: &'a TaskControlState,
     task_id: &str,
@@ -915,7 +924,7 @@ mod managed_task_liveness_tests {
 
 #[cfg(test)]
 mod task_registration_tests {
-    use super::{await_task_with_limits, request_task_cancellation, register_active_task, TaskControlState, MAX_PENDING_CANCELLATIONS};
+    use super::{await_task_with_limits, ensure_task_not_cancelled, request_task_cancellation, register_active_task, TaskControlState, MAX_PENDING_CANCELLATIONS};
     use std::time::Duration;
 
     #[test]
@@ -937,6 +946,17 @@ mod task_registration_tests {
         assert_eq!(result, Err("Task cancelled by user.".to_string()));
         drop(registration);
         assert!(!control.active.lock().unwrap().contains_key("pdf-upload-test"));
+    }
+
+    #[test]
+    fn already_cancelled_registration_is_rejected_before_pdf_decode() {
+        let control = TaskControlState::default();
+        let registration = register_active_task(&control, "pdf-cancel-before-decode").unwrap();
+        assert!(request_task_cancellation(&control, "pdf-cancel-before-decode").unwrap());
+        assert_eq!(
+            ensure_task_not_cancelled(&registration.token),
+            Err("Task cancelled by user.".to_string())
+        );
     }
 
     #[test]
@@ -1388,6 +1408,8 @@ async fn process_selected_pdf(
     // or cancellation returns this command early, but the worker may retain the encoded
     // input and decoded buffer until it exits. The permit lives inside that worker, so the
     // global single-decoder limit rejects retries until it finishes; decoders never overlap.
+    // Do not start a bounded blocking decode when cancellation was queued before registration.
+    ensure_task_not_cancelled(&registration.token)?;
     let data = await_task_with_limits(
         &registration.token,
         Duration::from_secs(30),
