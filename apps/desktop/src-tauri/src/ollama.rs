@@ -211,6 +211,7 @@ pub async fn chat(
 
 /// Stream local chat deltas from Ollama's NDJSON response. The callback receives
 /// plain text only; output and per-event sizes are bounded before forwarding.
+/// Streams bounded local Ollama chat deltas with per-event, total-output, and idle-time limits.
 pub async fn chat_stream<F>(
     model: &str,
     system: Option<&str>,
