@@ -728,18 +728,8 @@ where
     if !valid_command_identifier(&task_id, 96) {
         return Err("Invalid task identifier.".into());
     }
-    // Keep document, PDF, summary and translation tasks under the same native
-    // single-task / 1 GiB admission gate as interactive inference.
-    let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
-    flush_pending_receipts(&app).await;
-    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
-    if let Some(warning) = receipt_slot.archive_warning() {
-        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
-    }
-    let started_at_unix_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_millis() as u64;
+    // Register before queue admission so a waiting task can be cancelled by the user.
+    resource_runtime::validate_task_id(&task_id)?;
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -749,6 +739,17 @@ where
         active.insert(task_id.clone(), token.clone());
     }
     let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
+    emit_task_progress(&app, &task_id, "queued", &format!("{label}: waiting for local device capacity (up to four tasks may wait)."), 1);
+    let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
+    flush_pending_receipts(&app).await;
+    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+    }
+    let started_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64;
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
     let result = await_task_with_limits(
         &token,
@@ -922,7 +923,16 @@ async fn execute_local_ai_task(
     if !validate_model_identifier(&model) {
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
-    let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
+    resource_runtime::validate_task_id(&task_id)?;
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+        active.insert(task_id.clone(), token.clone());
+    }
+    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 1);
+    let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     if let Some(warning) = receipt_slot.archive_warning() {
@@ -931,13 +941,6 @@ async fn execute_local_ai_task(
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
     let receipt_model_id = model.clone();
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
     emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
     let execution = LocalTaskEngine::execute(prompt, mode, model);
