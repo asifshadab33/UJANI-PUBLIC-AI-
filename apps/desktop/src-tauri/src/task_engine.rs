@@ -119,15 +119,16 @@ fn is_installed_model(model: &str, installed_names: &[&str]) -> bool {
 
 
 impl LocalTaskEngine {
-    /// Run a single local Ollama inference request under the selected execution mode.
-    pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
-        let execution_mode = match mode.as_str() {
+    /// Validate the shared local-only policy and runtime prerequisites once for
+    /// both buffered and streaming chat paths.
+    async fn validate_local_chat(mode: &str, model: &str) -> Result<(), String> {
+        let execution_mode = match mode {
             "fortress" => ExecutionMode::Fortress,
             "smart" => ExecutionMode::Smart,
             "worker" | "partner" => return Err("Worker and Partner execution require a secure external gateway, which is not implemented. No cloud request was made.".into()),
             _ => return Err("Unknown execution mode.".into()),
         };
-        ensure_local_model_ready("local.ai.generate", &model).await?;
+        ensure_local_model_ready("local.ai.generate", model).await?;
         let mut system = System::new();
         system.refresh_memory();
         let mut available = BTreeSet::new();
@@ -148,10 +149,37 @@ impl LocalTaskEngine {
         if !decision.allowed || decision.action != RouteAction::ExecuteLocally {
             return Err(format!("Local execution blocked by policy: {}", decision.reason));
         }
+        Ok(())
+    }
+
+    /// Run a single local Ollama inference request under the selected execution mode.
+    pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
+        Self::validate_local_chat(&mode, &model).await?;
         let output = ollama::generate(&model, &prompt).await?;
         Ok(AiTaskResult {
             mode_used: mode,
             execution_location: "Local Ollama service (127.0.0.1)".into(),
+            model,
+            output,
+        })
+    }
+
+    /// Stream a local chat response while preserving the same policy checks as buffered chat.
+    pub async fn execute_stream<F>(
+        prompt: String,
+        mode: String,
+        model: String,
+        on_chunk: F,
+    ) -> Result<AiTaskResult, String>
+    where
+        F: FnMut(&str),
+    {
+        Self::validate_local_chat(&mode, &model).await?;
+        let turn = ollama::Turn { role: "user", content: &prompt };
+        let output = ollama::chat_stream(&model, None, &[turn], on_chunk).await?;
+        Ok(AiTaskResult {
+            mode_used: mode,
+            execution_location: "Local Ollama service (127.0.0.1), streamed".into(),
             model,
             output,
         })
