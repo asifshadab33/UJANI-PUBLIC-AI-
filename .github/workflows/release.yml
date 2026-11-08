@@ -175,7 +175,7 @@ jobs:
           security list-keychains -d user -s "$keychain_path"
           security default-keychain -s "$keychain_path"
           identities="$(security find-identity -v -p codesigning "$keychain_path")"
-          grep -Fq ""$APPLE_SIGNING_IDENTITY"" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
+          grep -Fq -- "$APPLE_SIGNING_IDENTITY" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
           grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
       - name: Configure Tauri Authenticode signing
         if: runner.os == 'Windows'
