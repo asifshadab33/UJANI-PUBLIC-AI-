@@ -110,7 +110,7 @@ jobs:
       - name: Lint core
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Lint desktop
-        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --features pdf-worker-build --locked -- -D warnings
 
   workflow-lint:
     name: GitHub Actions workflow lint
