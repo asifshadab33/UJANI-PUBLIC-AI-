@@ -89,6 +89,8 @@ impl MemoryReservation {
                 return Err("Local task waited more than 10 minutes for device capacity and was removed from the queue.".into());
             }
         };
+        // This task is no longer waiting once it owns the execution permit.
+        drop(_queue_ticket);
         if cancellation.is_cancelled() {
             return Err("Task cancelled while waiting for local device capacity.".into());
         }
