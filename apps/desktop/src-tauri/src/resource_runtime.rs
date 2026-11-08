@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 const MIN_FREE_MEMORY_MB: u64 = 1_024;
 const MAX_WAITING_TASKS: usize = 4;
+const MAX_QUEUE_WAIT_SECONDS: u64 = 600;
 static LOCAL_EXECUTION: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static WAITING_TASKS: AtomicUsize = AtomicUsize::new(0);
 
@@ -84,6 +85,9 @@ impl MemoryReservation {
             acquired = semaphore().clone().acquire_owned() => acquired
                 .map_err(|_| "Local task queue is unavailable.".to_string())?,
             _ = cancellation.cancelled() => return Err("Task cancelled while waiting for local device capacity.".into()),
+            _ = tokio::time::sleep(std::time::Duration::from_secs(MAX_QUEUE_WAIT_SECONDS)) => {
+                return Err("Local task waited more than 10 minutes for device capacity and was removed from the queue.".into());
+            }
         };
         if cancellation.is_cancelled() {
             return Err("Task cancelled while waiting for local device capacity.".into());
@@ -104,6 +108,23 @@ mod tests {
         assert!(validate_task_id("../escape").is_err());
         assert!(validate_task_id("").is_err());
         assert!(validate_available_memory("task-1", MIN_FREE_MEMORY_MB).is_ok());
+    }
+
+    #[tokio::test]
+    async fn queued_task_can_be_cancelled_while_another_task_holds_the_device() {
+        use super::{semaphore, MemoryReservation};
+        use tokio_util::sync::CancellationToken;
+        let active = semaphore().clone().acquire_owned().await.unwrap();
+        let cancellation = CancellationToken::new();
+        let cancel = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            MemoryReservation::acquire_queued("queued-task", &cancellation).await
+        });
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        let result = waiter.await.unwrap();
+        assert!(result.is_err());
+        drop(active);
     }
 
     #[test]
