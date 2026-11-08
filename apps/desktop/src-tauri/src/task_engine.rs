@@ -498,7 +498,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         if !status.success() { return Err("PDF text extraction failed.".into()); }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
         if pdf_worker_output_was_truncated(&worker_metadata)? {
-            return Err("PDF text extraction was truncated at 1 MiB; search results are incomplete. Narrow the document or search query.".into());
+            return Err("PDF text extraction exceeded the 1 MiB worker output limit. The incomplete result was rejected; split the PDF into smaller sections and retry.".into());
         }
         String::from_utf8(output).map_err(|_| "PDF worker returned invalid UTF-8.".into())
     };
