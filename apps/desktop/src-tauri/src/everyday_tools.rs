@@ -229,22 +229,6 @@ fn hash_file(path: &Path, limit: u64) -> Result<String, String> {
     Ok(super::sha256_hex(&bytes))
 }
 
-#[cfg(unix)]
-fn open_no_follow(path: &Path) -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
-}
-
-#[cfg(windows)]
-fn open_no_follow(path: &Path) -> io::Result<File> {
-    use std::os::windows::fs::OpenOptionsExt;
-    OpenOptions::new().read(true).custom_flags(0x0020_0000).open(path)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn open_no_follow(path: &Path) -> io::Result<File> {
-    File::open(path)
-}
 
 #[cfg(test)]
 mod tests {
