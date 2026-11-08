@@ -942,8 +942,10 @@ async fn execute_local_ai_task(
     let input_digest = sha256_hex(prompt.as_bytes());
     let receipt_model_id = model.clone();
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
-    emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
-    let execution = LocalTaskEngine::execute(prompt, mode, model);
+    emit_task_progress(&app, &task_id, "inference", "Local model request sent; streaming the response from Ollama.", 25);
+    let execution = LocalTaskEngine::execute_stream(prompt, mode, model, |chunk| {
+        emit_task_progress(&app, &task_id, "streaming", chunk, 25);
+    });
     let result = tokio::select! {
         _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
         outcome = tokio::time::timeout(std::time::Duration::from_secs(140), execution) => {
