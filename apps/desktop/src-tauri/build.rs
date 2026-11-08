@@ -1,6 +1,13 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=UJANI_PDF_WORKER_BUILD");
+    println!("cargo:rerun-if-changed=build.rs");
+    // The isolated worker shares the package manifest but does not need Tauri's
+    // application context, icon processing, or bundle validation.
+    if env::var_os("UJANI_PDF_WORKER_BUILD").is_some() {
+        return;
+    }
     // Tauri's context macro expects a source icon even during a development
     // compile. Keep a tiny valid fallback for clean checkouts; a real icon
     // supplied by the project always takes precedence.
