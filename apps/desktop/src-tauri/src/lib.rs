@@ -1213,7 +1213,7 @@ mod pdf_cancellation_registration_tests {
     }
 
     #[test]
-    fn duplicate_active_pdf_registration_is_rejected_and_cleanup_allows_retry() {
+    fn duplicate_active_pdf_registration_is_rejected_and_fresh_id_allows_retry() {
         let control = TaskControlState::default();
         let first = register_active_task(&control, "pdf-upload-duplicate").unwrap();
         assert!(register_active_task(&control, "pdf-upload-duplicate").is_err());
