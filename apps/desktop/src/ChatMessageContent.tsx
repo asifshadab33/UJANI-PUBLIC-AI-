@@ -76,11 +76,15 @@ function ChatMessageContentImpl({ content }: { content: string }) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
 
-    if (line.trimStart().startsWith("\x60\x60\x60")) {
-      const language = line.trim().slice(3).trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+    const openingFence = /^ {0,3}(`{3,})(.*)$/.exec(line);
+    if (openingFence && !openingFence[2].includes("`")) {
+      const fenceLength = openingFence[1].length;
+      const language = openingFence[2].trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
       index += 1;
       const code: string[] = [];
-      while (index < lines.length && !lines[index].trimStart().startsWith("\x60\x60\x60")) {
+      while (index < lines.length) {
+        const closingFence = /^ {0,3}(`+)\s*$/.exec(lines[index]);
+        if (closingFence && closingFence[1].length >= fenceLength) break;
         code.push(lines[index]);
         index += 1;
       }
