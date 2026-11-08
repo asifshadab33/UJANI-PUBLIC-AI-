@@ -76,6 +76,7 @@ function readFileAsBase64(file: File): Promise<string> {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
@@ -176,6 +177,26 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    let cancelled = false;
+    setHistoryBusy(true);
+    const settingsRequest = invoke<HistorySettings>("get_task_history_settings")
+      .then((settings) => { if (!cancelled) setHistorySettings(settings); })
+      .catch((error) => {
+        if (!cancelled) setHistoryError("History settings unavailable: " + String(error));
+      });
+    const entriesRequest = invoke<HistoryEntry[]>("list_task_history")
+      .then((entries) => { if (!cancelled) setPersistentHistory(entries); })
+      .catch((error) => {
+        if (!cancelled) setHistoryError("Saved task entries unavailable: " + String(error));
+      });
+    Promise.all([settingsRequest, entriesRequest]).finally(() => {
+      if (!cancelled) setHistoryBusy(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
     listen<TaskProgressEvent>("ujani-task-progress", (event) => {
       const progress = event.payload;
@@ -205,34 +226,48 @@ export default function App() {
     }
   }
 
+  /** Navigate to local chat and refresh model availability when needed. */
   function openLocalChat() {
+    setActiveSidebarSection("new-task");
     document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
+  /** Open file tools without requiring a local model for file inspection. */
   function openFileTools() {
+    setActiveSidebarSection("new-task");
     document.getElementById("document-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     // File inspection works without Ollama; check local AI only when the user opens file tools.
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
-  function openLocalSetup() {
-    document.getElementById("local-resources")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  /** Open local setup guidance and lazily refresh device/model information. */
+  function openLocalSetup(focusTarget = false) {
+    setActiveSidebarSection("resources");
+    const target = document.getElementById("local-resources");
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (focusTarget) target?.focus({ preventScroll: true });
     void loadDeviceInfo();
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
+  /** Refresh the opt-in setting independently from the encrypted history entries. */
   async function refreshPersistentHistory() {
     if (!isTauri()) return;
     setHistoryBusy(true); setHistoryError("");
     try {
-      const [settings, entries] = await Promise.all([
-        invoke<HistorySettings>("get_task_history_settings"),
-        invoke<HistoryEntry[]>("list_task_history")
-      ]);
-      setHistorySettings(settings); setPersistentHistory(entries);
-    } catch (error) { setHistoryError("Local history unavailable: " + String(error)); }
-    finally { setHistoryBusy(false); }
+      const settings = await invoke<HistorySettings>("get_task_history_settings");
+      setHistorySettings(settings);
+    } catch (error) {
+      setHistoryError("History settings unavailable: " + String(error));
+      setHistoryBusy(false);
+      return;
+    }
+    try {
+      setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+    } catch (error) {
+      setHistoryError("Saved task entries unavailable: " + String(error));
+    } finally { setHistoryBusy(false); }
   }
 
   async function refreshExecutionReceipts() {
@@ -281,11 +316,24 @@ export default function App() {
     finally { setHistoryBusy(false); }
   }
 
+  /** Save a completed task only when the latest persisted opt-in setting allows it. */
   async function saveToPersistentHistory(prompt: string, output: string, kind: string, model: string) {
-    if (!isTauri() || !historySettings?.enabled) return;
+    if (!isTauri()) return;
     try {
+      // Read the persisted opt-in setting at completion time; React state may
+      // still be null or stale immediately after startup or a settings change.
+      const settings = await invoke<HistorySettings>("get_task_history_settings");
+      setHistorySettings(settings);
+      if (!settings.enabled) {
+        setPersistentHistory([]);
+        return;
+      }
       await invoke<number>("save_task_history", { prompt, output, mode: executionMode, model, kind });
-      setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+      try {
+        setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+      } catch (error) {
+        setHistoryError("Task saved, but saved history could not be refreshed: " + String(error));
+      }
     } catch (error) { setHistoryError("Could not save this task: " + String(error)); }
   }
 
@@ -754,10 +802,49 @@ export default function App() {
     <UpdateNotice />
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">U</div><div><b>UJANI</b><small>PUBLIC AI</small></div></div>
-      <div className="nav-label">WORKSPACE</div>
-      <div className="nav active"><Sparkles size={17}/> New task</div>
-      <div className="nav"><Activity size={17}/> Activity</div>
-      <div className="nav"><HardDrive size={17}/> Local resources</div>
+      <nav aria-label="Workspace navigation">
+        <div className="nav-label">WORKSPACE</div>
+        <button
+          type="button"
+          className={`nav ${activeSidebarSection === "new-task" ? "active" : ""}`}
+          aria-label="New task"
+          aria-current={activeSidebarSection === "new-task" ? "page" : undefined}
+          onClick={(event) => {
+            setActiveSidebarSection("new-task");
+            const target = document.getElementById("new-task");
+            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (event.detail === 0) target?.focus({ preventScroll: true });
+          }}
+        >
+          <Sparkles size={17}/> New task
+        </button>
+        <button
+          type="button"
+          className={`nav ${activeSidebarSection === "activity" ? "active" : ""}`}
+          aria-label="Activity"
+          aria-current={activeSidebarSection === "activity" ? "page" : undefined}
+          onClick={(event) => {
+            setActiveSidebarSection("activity");
+            const target = document.getElementById("activity-panel");
+            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (event.detail === 0) target?.focus({ preventScroll: true });
+          }}
+        >
+          <Activity size={17}/> Activity
+        </button>
+        <button
+          type="button"
+          className={`nav ${activeSidebarSection === "resources" ? "active" : ""}`}
+          aria-label="Local resources"
+          aria-current={activeSidebarSection === "resources" ? "page" : undefined}
+          onClick={(event) => {
+            setActiveSidebarSection("resources");
+            openLocalSetup(event.detail === 0);
+          }}
+        >
+          <HardDrive size={17}/> Local resources
+        </button>
+      </nav>
       <div className="sidebar-bottom"><ShieldCheck size={17}/><span>Local-first mode<br/><small>Your device, your control</small></span></div>
     </aside>
     <section className="main">
@@ -772,7 +859,7 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
-      <section className="launcher-section" aria-labelledby="launcher-title">
+      <section className="launcher-section" id="new-task" tabIndex={-1} aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
           <button className="launcher-card launcher-primary" onClick={openLocalChat}>
@@ -784,7 +871,7 @@ export default function App() {
           <button className="launcher-card" onClick={openFileTools}>
             <span className="launcher-icon"><HardDrive size={21}/></span><b>Work with my files</b><small>Analyze documents, PDFs, folders and image metadata using local tools.</small><span className="launcher-action">Open file tools →</span>
           </button>
-          <button className="launcher-card" onClick={openLocalSetup}>
+          <button className="launcher-card" onClick={() => openLocalSetup()}>
             <span className="launcher-icon"><Cpu size={21}/></span><b>Set up local AI</b><small>Check Ollama, installed models, memory and available device capabilities.</small><span className="launcher-action">View device setup →</span>
           </button>
           <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
@@ -805,7 +892,7 @@ export default function App() {
         <div className="metric"><HardDrive/><small>SYSTEM MEMORY</small><b>{memory}</b><span>{device ? `${(device.available_memory_mb / 1024).toFixed(1)} GB currently available` : "Native runtime required"}</span></div>
         <div className="metric"><Monitor/><small>PLATFORM</small><b>{device?.os ?? "Not detected"}</b><span>GPU / NPU detection not yet implemented</span></div>
       </div>
-      <div className="model-box resource-box" id="local-resources">
+      <div className="model-box resource-box" id="local-resources" tabIndex={-1}>
         <div className="section-heading"><div><h2><Cpu size={18}/> Computer resource & capability centre</h2><p>Read-only information UJANI can use to select local work.</p></div><span className="muted">NO BACKGROUND COMPUTE</span></div>
         <div className="metrics">
           <div className="metric"><small>CPU</small><b>{device?.logical_cpus ?? "—"} logical cores</b><span>Available to local applications; usage is not reserved by UJANI.</span></div>
@@ -1046,7 +1133,7 @@ export default function App() {
           </div>
         </div>
         <div className="side-panel"><h3>Execution principles</h3><div className="principle"><CheckCircle2/><div><b>Local by default</b><small>Local requests stay on this device; online transfers require task approval.</small></div></div><div className="principle"><ShieldCheck/><div><b>Permission first</b><small>No shell commands or hidden device sharing.</small></div></div><div className="principle"><CircleHelp/><div><b>Honest capability status</b><small>The bundled adapter is a mock, not a language model.</small></div></div>
-          <div className="history"><h3>Recent tasks</h3>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>Your recent tasks will appear here.</small>}</div>
+          <div className="history" id="activity-panel" tabIndex={-1} role="region" aria-labelledby="recent-tasks-title"><h3 id="recent-tasks-title">Browser demo task previews</h3><p>These temporary word-count previews are not AI chat history. Completed local AI tasks appear in Saved task history below only when optional history recording is enabled.</p>{history.length ? history.map((item, index) => <button key={index} onClick={() => setRequest(item)}>{item}</button>) : <small>No browser demo previews in this session.</small>}<button className="activity-history-link" onClick={() => { const target = document.getElementById("saved-task-history"); target?.scrollIntoView({ behavior: "smooth", block: "start" }); target?.focus({ preventScroll: true }); void refreshPersistentHistory(); }}>View saved task history</button></div>
           <div className="history receipt-history">
             <h3>Privacy & execution receipts</h3>
             <p>Metadata-only receipts cover local chat, the fixed document workflow, selected documents/PDFs, local translation, selected-folder import and approved cloud chat. Model downloads are not receipt-backed yet. Prompts and outputs are never stored in this ledger.</p>
@@ -1075,7 +1162,7 @@ export default function App() {
             {!executionReceipts.length && !receiptError && <small>No execution receipts recorded yet. Run a supported AI task, then refresh this panel.</small>}
             <small>The ledger is hash-chained and tamper-evident, not digitally signed or independently anchored. A local administrator with database access may still replace the entire store.</small>
           </div>
-          <div className="history persistent-history">
+          <div className="history persistent-history" id="saved-task-history" tabIndex={-1}>
             <h3>Saved task history</h3>
             <p>Optional local history. Saved prompts and outputs are encrypted on this device using AES-256-GCM with a key held in the operating-system credential vault.</p>
             {historySettings && <label className="consent-row"><input type="checkbox" checked={historySettings.enabled} disabled={historyBusy} onChange={(event) => togglePersistentHistory(event.target.checked)}/> Save future task prompts and results on this device</label>}
