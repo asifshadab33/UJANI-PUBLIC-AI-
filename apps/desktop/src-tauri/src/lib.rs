@@ -1284,6 +1284,34 @@ mod pdf_cancellation_registration_tests {
     }
 
     #[test]
+    fn concurrent_late_cancel_cannot_leave_stale_pending_registration() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        for index in 0..32 {
+            let control = TaskControlState::default();
+            let task_id = format!("pdf-cancel-race-{index}");
+            let registration = register_active_task(&control, &task_id).unwrap();
+            let barrier = std::sync::Arc::new(Barrier::new(2));
+            let cancel_barrier = barrier.clone();
+
+            thread::scope(|scope| {
+                let cancel = scope.spawn(|| {
+                    cancel_barrier.wait();
+                    request_task_cancellation(&control, &task_id).unwrap()
+                });
+                barrier.wait();
+                drop(registration);
+                let _ = cancel.join().unwrap();
+            });
+
+            assert!(control.pending_cancellations.lock().unwrap().is_empty());
+            assert!(control.finished_pdf_tasks.lock().unwrap().contains_key(&task_id));
+            assert!(!request_task_cancellation(&control, &task_id).unwrap());
+        }
+    }
+
+    #[test]
     fn pre_registration_cancellation_is_bounded_and_pdf_only() {
         let control = TaskControlState::default();
         assert!(!request_task_cancellation(&control, "ordinary-task").unwrap());
