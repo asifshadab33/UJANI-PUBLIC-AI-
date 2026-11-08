@@ -17,7 +17,8 @@ const ARCHIVE_TRIGGER: i64 = MAX_RECEIPTS - 100;
 const RECEIPT_SLOT_TTL_SECONDS: u64 = 900;
 const MAX_REPLAY_ENTRIES: i64 = 4_096;
 const MAX_NONCE_TTL_SECONDS: u64 = 300;
-const DAILY_CLOUD_TOKEN_RESERVATION: i64 = 250_000;
+const MIN_DAILY_CLOUD_TOKEN_LIMIT: i64 = 10_000;
+const MAX_DAILY_CLOUD_TOKEN_LIMIT: i64 = 5_000_000;
 const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Verification summary for the local hash-chained execution receipt ledger.
@@ -112,6 +113,11 @@ fn initialize(db: &Connection) -> Result<(), String> {
            utc_day INTEGER PRIMARY KEY,
            reserved_tokens INTEGER NOT NULL CHECK(reserved_tokens >= 0)
          );
+         CREATE TABLE IF NOT EXISTS cloud_budget_settings(
+           id INTEGER PRIMARY KEY CHECK(id=1),
+           daily_limit_tokens INTEGER NOT NULL CHECK(daily_limit_tokens BETWEEN 10000 AND 5000000)
+         );
+         INSERT OR IGNORE INTO cloud_budget_settings(id,daily_limit_tokens) VALUES(1,250000);
          CREATE TABLE IF NOT EXISTS trusted_peers(
            peer_id TEXT PRIMARY KEY,
            public_key_hex TEXT NOT NULL,
@@ -348,16 +354,21 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
         return Err("Cloud token reservation request is outside the supported bounds.".into());
     }
     let day = (now / 86_400) as i64;
-    let prompt_tokens = prompt_bytes as i64;
+    // UTF-8 byte length is a conservative tokenizer-independent reservation
+    // estimate; reconcile it to provider-reported usage after successful dispatch.
+    let prompt_tokens = i64::try_from(prompt_bytes)
+        .map_err(|_| "Cloud prompt is too large to reserve safely.".to_string())?;
     let reservation = prompt_tokens.saturating_add(completion_tokens as i64);
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("INSERT OR IGNORE INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,0)", params![day])
         .map_err(|e| e.to_string())?;
     let used: i64 = tx.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |r| r.get(0))
         .map_err(|e| e.to_string())?;
-    if used.saturating_add(reservation) > DAILY_CLOUD_TOKEN_RESERVATION {
+    let daily_limit: i64 = tx.query_row("SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if used.saturating_add(reservation) > daily_limit {
         return Err(format!(
-            "Daily cloud token safety limit reached ({used}/{DAILY_CLOUD_TOKEN_RESERVATION} reserved tokens). Try again after the UTC day resets."
+            "Daily cloud token safety limit reached ({used}/{daily_limit} reserved tokens). Try again after the UTC day resets or adjust the local budget limit."
         ));
     }
     let next = used.saturating_add(reservation);
@@ -367,14 +378,101 @@ fn reserve_budget_db(db: &mut Connection, prompt_bytes: usize, completion_tokens
     Ok(CloudBudgetStatus {
         utc_day: day,
         reserved_tokens: next,
-        daily_limit_tokens: DAILY_CLOUD_TOKEN_RESERVATION,
-        remaining_tokens: DAILY_CLOUD_TOKEN_RESERVATION - next,
+        daily_limit_tokens: daily_limit,
+        remaining_tokens: daily_limit.saturating_sub(next),
     })
 }
 
+/// A daily cloud quota reservation. Unsent requests are refunded on drop;
+/// dispatched requests remain charged unless the provider reports actual usage.
+pub struct CloudBudgetReservation {
+    app: AppHandle,
+    utc_day: i64,
+    reserved_tokens: i64,
+    status: CloudBudgetStatus,
+    dispatched: bool,
+    settled: bool,
+}
+
+impl CloudBudgetReservation {
+    pub fn status(&self) -> &CloudBudgetStatus { &self.status }
+    pub fn mark_dispatched(&mut self) { self.dispatched = true; }
+
+    /// Reconcile an authoritative provider usage count. Missing usage keeps the
+    /// conservative reservation; lower usage refunds only the unused difference.
+    pub fn settle(mut self, actual_tokens: Option<u64>) -> Result<(), String> {
+        if !self.dispatched {
+            release_budget_reservation(&self.app, self.utc_day, self.reserved_tokens)?;
+        } else if let Some(actual) = actual_tokens {
+            settle_budget_reservation(&self.app, self.utc_day, self.reserved_tokens, actual)?;
+        }
+        self.settled = true;
+        Ok(())
+    }
+}
+
+impl Drop for CloudBudgetReservation {
+    fn drop(&mut self) {
+        if !self.settled && !self.dispatched {
+            let _ = release_budget_reservation(&self.app, self.utc_day, self.reserved_tokens);
+        }
+    }
+}
+
+fn release_budget_reservation(app: &AppHandle, day: i64, reserved: i64) -> Result<(), String> {
+    let mut db = open(app)?;
+    settle_budget_reservation_db(&mut db, day, reserved, 0)
+}
+
+fn settle_budget_reservation(app: &AppHandle, day: i64, reserved: i64, actual: u64) -> Result<(), String> {
+    let mut db = open(app)?;
+    settle_budget_reservation_db(&mut db, day, reserved, actual.min(i64::MAX as u64) as i64)
+}
+
+fn settle_budget_reservation_db(db: &mut Connection, day: i64, reserved: i64, actual: i64) -> Result<(), String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let current: i64 = tx.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0))
+        .optional().map_err(|e| e.to_string())?.unwrap_or(0);
+    let next = current.saturating_sub(reserved.max(0)).saturating_add(actual.max(0));
+    tx.execute("INSERT INTO cloud_budget(utc_day,reserved_tokens) VALUES(?1,?2) ON CONFLICT(utc_day) DO UPDATE SET reserved_tokens=excluded.reserved_tokens", params![day, next])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
 /// Atomically reserve a conservative local token allowance before a BYOK request is sent.
-pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetStatus, String> {
-    reserve_budget_db(&mut open(app)?, prompt_bytes, completion_tokens, now_seconds()?)
+/// `prompt_bytes` is a conservative UTF-8 byte-length estimate, not an exact tokenizer count.
+pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tokens: u16) -> Result<CloudBudgetReservation, String> {
+    let mut db = open(app)?;
+    let now = now_seconds()?;
+    let status = reserve_budget_db(&mut db, prompt_bytes, completion_tokens, now)?;
+    let reserved_tokens = (prompt_bytes as i64).saturating_add(completion_tokens as i64);
+    Ok(CloudBudgetReservation {
+        app: app.clone(), utc_day: status.utc_day, reserved_tokens, status,
+        dispatched: false, settled: false,
+    })
+}
+
+fn set_cloud_budget_limit_db(db: &mut Connection, daily_limit: i64, now: u64) -> Result<CloudBudgetStatus, String> {
+    if !(MIN_DAILY_CLOUD_TOKEN_LIMIT..=MAX_DAILY_CLOUD_TOKEN_LIMIT).contains(&daily_limit) {
+        return Err(format!("Daily cloud token limit must be between {MIN_DAILY_CLOUD_TOKEN_LIMIT} and {MAX_DAILY_CLOUD_TOKEN_LIMIT}."));
+    }
+    let day = (now / 86_400) as i64;
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let used: i64 = tx.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0))
+        .optional().map_err(|e| e.to_string())?.unwrap_or(0);
+    if daily_limit < used {
+        return Err(format!("The new limit cannot be lower than today's {used} already reserved tokens."));
+    }
+    tx.execute("UPDATE cloud_budget_settings SET daily_limit_tokens=?1 WHERE id=1", params![daily_limit])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(CloudBudgetStatus { utc_day: day, reserved_tokens: used, daily_limit_tokens: daily_limit, remaining_tokens: daily_limit.saturating_sub(used) })
+}
+
+/// Set the per-installation UTC-day BYOK token limit. This never changes historical usage.
+#[tauri::command]
+pub fn set_cloud_budget_limit(app: AppHandle, daily_limit_tokens: i64) -> Result<CloudBudgetStatus, String> {
+    set_cloud_budget_limit_db(&mut open(&app)?, daily_limit_tokens, now_seconds()?)
 }
 
 /// Holds one durable ledger slot while a local or cloud inference is in flight.
@@ -706,11 +804,13 @@ pub fn get_cloud_budget_status(app: AppHandle) -> Result<CloudBudgetStatus, Stri
     let used: i64 = db.query_row(
         "SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |r| r.get(0)
     ).optional().map_err(|e| e.to_string())?.unwrap_or(0);
+    let daily_limit: i64 = db.query_row("SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
     Ok(CloudBudgetStatus {
         utc_day: day,
         reserved_tokens: used,
-        daily_limit_tokens: DAILY_CLOUD_TOKEN_RESERVATION,
-        remaining_tokens: DAILY_CLOUD_TOKEN_RESERVATION - used,
+        daily_limit_tokens: daily_limit,
+        remaining_tokens: daily_limit.saturating_sub(used),
     })
 }
 
@@ -758,7 +858,7 @@ pub async fn enroll_trusted_peer(
         return Err("Peer identifier does not match the supplied public key.".into());
     }
     let label = label.trim().to_string();
-    let approved = confirm_native(&app, "Approve trusted device enrollment", format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}")).await;
+    let approved = confirm_native(&app, "Approve trusted device enrollment", format!("Trust this device for UJANI peer tasks?\n\nDevice: {label}\nFingerprint: {expected_id}"), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
@@ -793,7 +893,7 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid peer identifier.".into());
     }
-    let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}")).await;
+    let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved { return Err("Peer revocation was cancelled.".into()); }
     let changed = open(&app)?.execute(
         "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
@@ -1103,7 +1203,41 @@ mod tests {
         fs::remove_dir_all(archive_dir).unwrap();
     }
 
+#[test]
+    fn cloud_budget_limit_is_configurable_and_cannot_drop_below_reserved_usage() {
+        let mut db = db();
+        let configured = set_cloud_budget_limit_db(&mut db, 100_000, 86_400).unwrap();
+        assert_eq!(configured.daily_limit_tokens, 100_000);
+        let used = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
+        assert_eq!(used.reserved_tokens, 12_192);
+        assert!(set_cloud_budget_limit_db(&mut db, 10_000, 86_400).is_err());
+        let status = set_cloud_budget_limit_db(&mut db, 50_000, 86_400).unwrap();
+        assert_eq!(status.remaining_tokens, 37_808);
+        assert!(set_cloud_budget_limit_db(&mut db, 5_000_001, 86_400).is_err());
+    }
+
     #[test]
+    fn cloud_budget_settlement_refunds_only_unused_reservation() {
+        let mut db = db();
+        let day = 1_i64;
+        reserve_budget_db(&mut db, 4_000, 8_000, day as u64 * 86_400).unwrap();
+        reserve_budget_db(&mut db, 1_000, 1_000, day as u64 * 86_400).unwrap();
+        settle_budget_reservation_db(&mut db, day, 12_000, 3_000).unwrap();
+        let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
+        assert_eq!(used, 5_000);
+    }
+
+    #[test]
+    fn cloud_budget_refunds_a_reservation_that_was_never_dispatched() {
+        let mut db = db();
+        let day = 1_i64;
+        reserve_budget_db(&mut db, 2_000, 2_000, day as u64 * 86_400).unwrap();
+        settle_budget_reservation_db(&mut db, day, 4_000, 0).unwrap();
+        let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
+        assert_eq!(used, 0);
+    }
+
+        #[test]
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
