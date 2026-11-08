@@ -6,18 +6,25 @@
 
 use serde::Serialize;
 use std::{
-    fs,
     io::Read,
     path::Path,
 };
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILES: usize = 10;
+const MAX_DIRECTORY_ENTRIES: usize = 5_000;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
+
+/// Returns whether a direct-child path has an extension accepted by folder import.
+fn is_supported_text_file(path: &Path) -> bool {
+    let extension = path.extension().and_then(|value| value.to_str())
+        .unwrap_or_default().to_ascii_lowercase();
+    SUPPORTED_EXTENSIONS.contains(&extension.as_str())
+}
 
 #[derive(Debug)]
 struct SelectedTextFile {
@@ -171,51 +178,38 @@ pub async fn process_selected_folder(
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
 fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
-    let folder_metadata = fs::symlink_metadata(folder)
-        .map_err(|error| format!("Cannot inspect the selected folder: {error}"))?;
-    if crate::safe_fs::is_reparse_point(&folder_metadata) || !folder_metadata.is_dir() {
-        return Err("The selected location must be a real directory, not a symlink.".into());
+    let walked = crate::safe_fs::walk_directory(
+        folder,
+        crate::safe_fs::WalkOptions {
+            max_depth: 0,
+            max_entries: MAX_DIRECTORY_ENTRIES,
+            recursive: false,
+            links: crate::safe_fs::LinkPolicy::Reject,
+            errors: crate::safe_fs::WalkErrorPolicy::Reject,
+            file_filter: Some(is_supported_text_file),
+        },
+        &tokio_util::sync::CancellationToken::new(),
+    )?;
+    if walked.truncated {
+        return Err(format!("The selected folder contains more than {MAX_DIRECTORY_ENTRIES} entries; choose a smaller folder."));
     }
 
-    let canonical_root = fs::canonicalize(folder)
-        .map_err(|error| format!("Cannot resolve the selected folder: {error}"))?;
-    let entries = fs::read_dir(&canonical_root)
-        .map_err(|error| format!("Cannot read the selected folder: {error}"))?;
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
-
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
-        let path = entry.path();
-        let entry_metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
-        let file_type = entry_metadata.file_type();
-
-        if crate::safe_fs::is_reparse_point(&entry_metadata) {
-            return Err("The selected folder contains a symbolic link. Remove it and try again.".into());
-        }
-        if !file_type.is_file() {
-            continue;
+    for entry in walked.files {
+        // The walker returns canonical paths. Require the canonical file to remain an
+        // immediate child, closing the path-replacement race that could otherwise
+        // turn a selected direct child into a nested target before this reopen.
+        if entry.path.parent() != Some(walked.root.as_path()) {
+            return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
 
-        let extension = path.extension().and_then(|value| value.to_str())
-            .unwrap_or_default().to_ascii_lowercase();
-        if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
-            continue;
-        }
-
-        let canonical_file = fs::canonicalize(&path)
-            .map_err(|error| format!("Cannot resolve selected file: {error}"))?;
-        if canonical_file.parent() != Some(canonical_root.as_path()) {
-            return Err("A selected file resolves outside the chosen folder.".into());
-        }
-
-        let handle = crate::safe_fs::open_regular_file(&canonical_file)
+        let handle = crate::safe_fs::open_regular_file(&entry.path)
             .map_err(|error| format!("Cannot safely open selected file: {error}"))?;
         let metadata = handle.metadata()
             .map_err(|error| format!("Cannot inspect selected file handle: {error}"))?;
         if metadata.len() > MAX_FILE_BYTES as u64 {
-            return Err(format!("{} exceeds the 256 KiB per-file limit.", entry.file_name().to_string_lossy()));
+            return Err(format!("{} exceeds the 256 KiB per-file limit.", entry.name.to_string_lossy()));
         }
 
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
@@ -231,10 +225,10 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             return Err("The selected folder exceeds the 1 MiB total import limit.".into());
         }
         let content = String::from_utf8(bytes)
-            .map_err(|_| format!("{} is not valid UTF-8 text.", entry.file_name().to_string_lossy()))?;
+            .map_err(|_| format!("{} is not valid UTF-8 text.", entry.name.to_string_lossy()))?;
 
         files.push(SelectedTextFile {
-            name: entry.file_name().to_string_lossy().into_owned(),
+            name: entry.name.to_string_lossy().into_owned(),
             size_bytes: content.len(),
             content,
         });
@@ -335,7 +329,7 @@ mod tests {
         std::os::unix::fs::symlink(&folder.0, &link).unwrap();
 
         let error = collect_selected_folder(&link).unwrap_err();
-        assert!(error.contains("symlink"));
+        assert!(error.contains("symbolic link") || error.contains("reparse point"));
         let _ = fs::remove_file(link);
     }
 
