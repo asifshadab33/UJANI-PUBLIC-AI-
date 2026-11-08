@@ -65,7 +65,7 @@ function boundedUtf8Text(content: string, maximumBytes: number): string {
   return content.slice(0, end);
 }
 
-export default function ChatMessageContent({ content }: { content: string }) {
+function ChatMessageContentImpl({ content }: { content: string }) {
   const source = boundedUtf8Text(content, 128 * 1024);
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
@@ -128,7 +128,9 @@ export default function ChatMessageContent({ content }: { content: string }) {
       continue;
     }
 
-    const paragraph: string[] = [];
+    // No block rule matched this line. Consume it so the outer loop always progresses.
+    const paragraph: string[] = [line];
+    index += 1;
     while (index < lines.length && lines[index].trim()
       && !lines[index].trimStart().startsWith("\x60\x60\x60")
       && !/^(#{1,3})\s+/.test(lines[index])
@@ -143,3 +145,5 @@ export default function ChatMessageContent({ content }: { content: string }) {
 
   return <div className="chat-markdown">{blocks}</div>;
 }
+
+export default React.memo(ChatMessageContentImpl);
