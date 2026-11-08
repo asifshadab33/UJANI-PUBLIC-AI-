@@ -65,12 +65,48 @@ fn windows_category(
     label: &str,
     provider_mask: u32,
 ) -> SecurityProviderStatus {
-    use windows_sys::Win32::System::SecurityCenter::WscGetSecurityProviderHealth;
+    use windows_sys::Win32::System::LibraryLoader::{
+        FreeLibrary, GetProcAddress, LoadLibraryW,
+    };
 
-    let mut health = -1i32;
-    // This documented Windows API reads aggregate category health only.
-    let hresult = unsafe { WscGetSecurityProviderHealth(provider_mask, &mut health) };
-    let (status, detail) = status_from_windows_result(hresult, health);
+    // Load WSC dynamically: Windows Server and some reduced Windows images do
+    // not ship wscapi.dll. A missing optional provider must not prevent UJANI
+    // or its unit-test binary from loading.
+    let library_name: Vec<u16> = "wscapi.dll".encode_utf16().chain(std::iter::once(0)).collect();
+    let module = unsafe { LoadLibraryW(library_name.as_ptr()) };
+
+    let (status, detail) = if module.is_null() {
+        (
+            "unavailable",
+            "Windows Security Center API library is not available on this Windows installation.",
+        )
+    } else {
+        let function = unsafe {
+            GetProcAddress(module, b"WscGetSecurityProviderHealth\0".as_ptr())
+        };
+        let result = match function {
+            Some(function) => {
+                type QueryHealth = unsafe extern "system" fn(u32, *mut i32) -> i32;
+                let query: QueryHealth = unsafe {
+                    std::mem::transmute::<windows_sys::Win32::Foundation::FARPROC, QueryHealth>(
+                        Some(function),
+                    )
+                };
+                let mut health = -1i32;
+                let hresult = unsafe { query(provider_mask, &mut health) };
+                status_from_windows_result(hresult, health)
+            }
+            None => (
+                "unsupported",
+                "Windows Security Center health API is not exported by this installation.",
+            ),
+        };
+        unsafe {
+            FreeLibrary(module);
+        }
+        result
+    };
+
     SecurityProviderStatus {
         provider_id: provider_id.into(),
         label: label.into(),
