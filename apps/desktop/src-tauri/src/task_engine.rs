@@ -353,11 +353,27 @@ fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     denied
 }
 
+fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
+    let app_executable = std::env::current_exe()
+        .map_err(|error| format!("Could not locate UJANI executable: {error}"))?;
+    let executable_dir = app_executable.parent()
+        .ok_or_else(|| "UJANI executable has no parent directory.".to_string())?;
+    #[cfg(windows)]
+    let worker_name = "ujani-pdf-worker.exe";
+    #[cfg(not(windows))]
+    let worker_name = "ujani-pdf-worker";
+    let worker = executable_dir.join(worker_name);
+    if !worker.is_file() {
+        return Err(format!("Dedicated PDF worker is missing beside UJANI ({}) ; reinstall or repair the application.", worker.display()));
+    }
+    Ok(worker)
+}
+
 pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if data.len() > 10 * 1024 * 1024 { return Err("PDF input exceeds the 10 MiB limit.".into()); }
-    let exe = std::env::current_exe().map_err(|e| format!("Could not locate PDF worker executable: {e}"))?;
+    let exe = pdf_worker_executable()?;
 
     #[cfg(windows)]
     let worker_job = create_pdf_worker_job()?;
@@ -369,13 +385,12 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         // This is a worker profile, not a full application sandbox; fail closed if absent.
         const PDF_PROFILE: &str = "(version 1) (allow default) (deny network*) (deny file-write*)";
         let mut sandboxed = tokio::process::Command::new("/usr/bin/sandbox-exec");
-        sandboxed.arg("-p").arg(PDF_PROFILE).arg(exe);
+        sandboxed.arg("-p").arg(PDF_PROFILE).arg(&exe);
         sandboxed
     };
     #[cfg(not(target_os = "macos"))]
     let mut command = tokio::process::Command::new(exe);
-    command.arg("--pdf-extract-worker")
-        .env_clear()
+    command.env_clear()
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .kill_on_drop(true);
 
