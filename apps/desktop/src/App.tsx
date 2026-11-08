@@ -3,12 +3,11 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
-import ChatMessageContent from "./ChatMessageContent";
 import EverydayTools from "./EverydayTools";
+import SecurityCentre from "./SecurityCentre";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
-type ChatDeltaEvent = { task_id: string; delta: string };
 type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number; system_locale: string };
 type CapabilityRecord = { id: string; category: string; state: "available" | "unavailable" | "unknown"; source: string; detail: string };
 type OperationDescriptor = { id: string; description: string; required_capabilities: string[]; minimum_available_memory_mb: number };
@@ -33,7 +32,6 @@ type HistorySettings = { enabled: boolean; retention_days: number; max_entries: 
 type NetworkActivity = { observation: "measured" | "inferred" | "unknown"; destinations: string[]; bytes_sent: number | null; bytes_received: number | null };
 type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null; network_activity?: NetworkActivity };
 type ReceiptLedgerStatus = { entries: number; valid: boolean; head_sha256: string };
-type CloudBudgetStatus = { utc_day: number; reserved_tokens: number; daily_limit_tokens: number; remaining_tokens: number };
 type ReceiptLedgerEntry = { receipt: ExecutionReceipt; record_hash: string };
 type ChatMessage = { role: "user" | "assistant"; content: string };
 function composeConversationPrompt(messages: ChatMessage[], current: string): string {
@@ -79,12 +77,11 @@ function readFileAsBase64(file: File): Promise<string> {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
-  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources">("new-task");
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
   const [localChatMessages, setLocalChatMessages] = useState<ChatMessage[]>([]);
-  const [localStreamingText, setLocalStreamingText] = useState("");
   const [cloudChatMessages, setCloudChatMessages] = useState<ChatMessage[]>([]);
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -168,19 +165,6 @@ export default function App() {
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
   const [cloudError, setCloudError] = useState("");
-  const [cloudBudgetStatus, setCloudBudgetStatus] = useState<CloudBudgetStatus | null>(null);
-  const [cloudBudgetLimitInput, setCloudBudgetLimitInput] = useState("250000");
-  const [cloudBudgetBusy, setCloudBudgetBusy] = useState(false);
-  const [cloudBudgetError, setCloudBudgetError] = useState("");
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-    invoke<CloudBudgetStatus>("get_cloud_budget_status")
-      .then((status) => { if (!cancelled) { setCloudBudgetStatus(status); setCloudBudgetLimitInput(String(status.daily_limit_tokens)); } })
-      .catch((error) => { if (!cancelled) setCloudBudgetError("Cloud budget status unavailable: " + String(error)); });
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     // Deliberately do not invoke native services during first render. The launcher
@@ -228,24 +212,6 @@ export default function App() {
     }).then((stop) => { unlisten = stop; })
       .catch((error) => setOllamaError(String(error)));
     return () => { unlisten?.(); };
-  }, []);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen<ChatDeltaEvent>("ujani-chat-delta", (event) => {
-      setLocalStreamingText((current) => current + event.payload.delta);
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unlisten = stop;
-    }).catch((error) => {
-      if (!cancelled) setOllamaError("Local response stream unavailable: " + String(error));
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
   }, []);
 
   async function loadDeviceInfo() {
@@ -540,34 +506,28 @@ export default function App() {
     if (!request.trim() || routeBusy) return;
     setRouteBusy(true); setRouteError(""); setRouteDecision(null);
     try {
-      if (!isTauri()) {
+      const args = {
+        taskId: "desktop-task-preview",
+        operation: "local.ai.generate",
+        mode: executionMode,
+        requiredCapabilities: ["cpu"],
+        availableCapabilities: device?.logical_cpus ? ["cpu"] : [],
+        localMemoryRequiredMb: 128,
+        availableMemoryMb: device?.available_memory_mb ?? 0,
+        externalDataApproved: externalApproved,
+        requestedCollaborationRounds: 2
+      };
+      if (isTauri()) {
+        setRouteDecision(await invoke<RouteDecision>("evaluate_task_route", args));
+      } else {
+        const local = !!device;
         setRouteDecision({
           mode: executionMode, action: "blocked",
           allowed: false, external_data_transfer_permitted: false, collaboration_rounds: 0,
           reason: "Browser preview cannot evaluate native capabilities. Open the desktop runtime for policy evaluation.",
           enforcement_boundary_required: true
         });
-        return;
       }
-      // Use the same live OS/runtime capability inventory as native execution.
-      // A CPU alone is not sufficient: local chat also needs the local model service.
-      const snapshot = await invoke<CapabilitySnapshot>("get_capability_snapshot");
-      setCapabilitySnapshot(snapshot);
-      const operation = snapshot.operations.find((item) => item.id === "local.ai.generate");
-      const args = {
-        taskId: "desktop-task-preview",
-        operation: "local.ai.generate",
-        mode: executionMode,
-        requiredCapabilities: operation?.required_capabilities ?? ["cpu", "ollama.local"],
-        availableCapabilities: snapshot.capabilities
-          .filter((item) => item.state === "available")
-          .map((item) => item.id),
-        localMemoryRequiredMb: operation?.minimum_available_memory_mb ?? 512,
-        availableMemoryMb: snapshot.available_memory_mb,
-        externalDataApproved: externalApproved,
-        requestedCollaborationRounds: 2
-      };
-      setRouteDecision(await invoke<RouteDecision>("evaluate_task_route", args));
     } catch (error) { setRouteError(String(error)); }
     finally { setRouteBusy(false); }
   }
@@ -583,18 +543,16 @@ export default function App() {
     const userMessage = request.trim();
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
-    setLocalStreamingText("");
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null);
     try {
       const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: chatPrompt, mode: executionMode, model: ollamaModel });
       setAiResult(result);
-      setLocalStreamingText("");
       setLocalChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: result.output }]);
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
       setRequest("");
     } catch (error) { setOllamaError(String(error)); }
-    finally { setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
+    finally { setAiBusy(false); setActiveTaskId(null); }
   }
 
   async function cancelLocalAi() {
@@ -800,21 +758,6 @@ export default function App() {
     }
   }
 
-  async function saveCloudBudgetLimit() {
-    const limit = Number(cloudBudgetLimitInput);
-    if (!Number.isSafeInteger(limit) || limit < 10_000 || limit > 5_000_000) {
-      setCloudBudgetError("Choose a whole-number daily limit between 10,000 and 5,000,000 tokens.");
-      return;
-    }
-    setCloudBudgetBusy(true); setCloudBudgetError("");
-    try {
-      const status = await invoke<CloudBudgetStatus>("set_cloud_budget_limit", { dailyLimitTokens: limit });
-      setCloudBudgetStatus(status);
-      setCloudBudgetLimitInput(String(status.daily_limit_tokens));
-    } catch (error) { setCloudBudgetError(String(error)); }
-    finally { setCloudBudgetBusy(false); }
-  }
-
   async function runCloudAi() {
     if (!isTauri() || !request.trim() || cloudBusy) return;
     if (executionMode !== "smart") {
@@ -838,10 +781,7 @@ export default function App() {
       setCloudChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: response }]);
       setRequest("");
     } catch (error) { setCloudError(String(error)); }
-    finally {
-      setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); setCloudConsentSnapshot("");
-      invoke<CloudBudgetStatus>("get_cloud_budget_status").then(setCloudBudgetStatus).catch(() => undefined);
-    }
+    finally { setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); setCloudConsentSnapshot(""); }
   }
 
   async function cancelCloudAi() {
@@ -895,6 +835,20 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={`nav ${activeSidebarSection === "security-centre" ? "active" : ""}`}
+          aria-label="Security Centre"
+          aria-current={activeSidebarSection === "security-centre" ? "page" : undefined}
+          onClick={(event) => {
+            setActiveSidebarSection("security-centre");
+            const target = document.getElementById("security-centre");
+            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (event.detail === 0) target?.focus({ preventScroll: true });
+          }}
+        >
+          <ShieldCheck size={17}/> Security Centre
+        </button>
+        <button
+          type="button"
           className={`nav ${activeSidebarSection === "resources" ? "active" : ""}`}
           aria-label="Local resources"
           aria-current={activeSidebarSection === "resources" ? "page" : undefined}
@@ -920,6 +874,7 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
+      <SecurityCentre />
       <section className="launcher-section" id="new-task" tabIndex={-1} aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
@@ -1091,8 +1046,7 @@ export default function App() {
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             <div className="chat-thread" aria-live="polite">
-              {localChatMessages.length === 0 && !aiBusy ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><ChatMessageContent content={message.content} /></div>)}
-              {aiBusy && !aiResult && <div className="chat-message assistant" aria-label="Streaming local AI response"><b>Local AI · responding</b><ChatMessageContent content={localStreamingText || "Waiting for the first response chunk…"} /></div>}
+              {localChatMessages.length === 0 ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><p>{message.content}</p></div>)}
             </div>
             <div className="chat-footer"><small>{localChatMessages.length ? "Recent conversation context is sent only to your local Ollama service." : "No conversation has started yet."}</small><button type="button" onClick={() => { setLocalChatMessages([]); setAiResult(null); }} disabled={!localChatMessages.length || aiBusy}>Clear local chat</button></div>
             {aiResult && <small className="muted">{aiResult.mode_used} · {aiResult.model} · local Ollama · no cloud fallback</small>}
@@ -1162,14 +1116,6 @@ export default function App() {
           <div className="model-box" id="online-ai-workspace">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Online AI chat — no local model required</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
             <p className="muted">This sends your prompt to an AI model hosted by your chosen provider over the internet. You do not need to install or run a local model. Choose a preset or enter your own OpenAI-compatible HTTPS endpoint, model ID and API key. Some providers may offer free tiers or promotional credits; availability, limits, billing and data retention are controlled by that provider. UJANI never supplies keys or promises free usage. Each request requires fresh approval. Smart mode only; Fortress is local-only.</p>
-            <div className="result cloud-budget-panel">
-              <div className="result-title">Local daily cloud safety limit <span>DEVICE-LOCAL</span></div>
-              {cloudBudgetStatus ? <p>{cloudBudgetStatus.reserved_tokens.toLocaleString()} tokens reserved today · {cloudBudgetStatus.remaining_tokens.toLocaleString()} remaining of {cloudBudgetStatus.daily_limit_tokens.toLocaleString()}.</p> : <p>Loading this device's cloud quota…</p>}
-              <label className="model-select">Daily token limit (10,000–5,000,000)<input type="number" min={10000} max={5000000} step={1000} value={cloudBudgetLimitInput} onChange={(event) => setCloudBudgetLimitInput(event.target.value)}/></label>
-              <button className="model-run" onClick={saveCloudBudgetLimit} disabled={!isTauri() || cloudBudgetBusy}>{cloudBudgetBusy ? "Saving local limit…" : "Save daily cloud limit"}</button>
-              {cloudBudgetError && <p className="error" role="alert">{cloudBudgetError}</p>}
-              <small className="muted">UJANI reserves a conservative UTF-8 byte-length estimate plus the maximum completion allowance before sending; this is not an exact tokenizer count. When the provider reports actual token usage, UJANI reconciles the estimate to that count. Requests that may have reached the provider remain conservatively counted when usage is unavailable.</small>
-            </div>
             <label className="model-select">Provider preset<select value={cloudProviderPreset} onChange={(event) => {
               const preset = CLOUD_PROVIDER_PRESETS.find((item) => item.id === event.target.value);
               setCloudProviderPreset(event.target.value);
@@ -1187,7 +1133,7 @@ export default function App() {
             {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
             <div className="chat-thread cloud-thread" aria-live="polite">
-              {cloudChatMessages.length === 0 ? <p className="chat-empty">Your online conversation will appear here. Each new message includes recent turns and requires fresh approval before it is sent.</p> : cloudChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : cloudModel || "Online AI"}</b><ChatMessageContent content={message.content} /></div>)}
+              {cloudChatMessages.length === 0 ? <p className="chat-empty">Your online conversation will appear here. Each new message includes recent turns and requires fresh approval before it is sent.</p> : cloudChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : cloudModel || "Online AI"}</b><p>{message.content}</p></div>)}
             </div>
             <div className="chat-footer"><small>{cloudChatMessages.length ? "Recent conversation context is sent to your selected provider after each approval." : "No online conversation has started."}</small><button type="button" onClick={() => { setCloudChatMessages([]); setCloudResult(""); }} disabled={!cloudChatMessages.length || cloudBusy}>Clear online chat</button></div>
             {cloudResult && <small className="muted">Last response received from {cloudModel}. Online chat is not automatically saved to UJANI history.</small>}
