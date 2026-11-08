@@ -1,7 +1,7 @@
 # UJANI Public AI — Manual Smoke-Test Matrix
 
 Status: **test procedure only; no manual device results are claimed**  
-Related tracking: [#70 — PDF upload, screenshot capture and UI freeze recovery](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/70), [#72 — PDF upload cancellation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/72), [#67 — desktop support baseline](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/67).
+Related tracking: [#70 — PDF upload, screenshot capture and UI freeze recovery](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/70), [#117 — PDF sidecar and upload cancellation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/117), [#67 — desktop support baseline](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/67).
 
 ## Purpose and rules
 
@@ -34,7 +34,7 @@ Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empt
 | B-01 | Normal sidecar upload | Install the platform preview package; process a small synthetic valid PDF. | The packaged `ujani-pdf-worker` is found beside the app, starts successfully, and returns extracted text; the local model then summarises it. No document is uploaded to a cloud service. |
 | B-02 | FileReader cancellation | Select a larger valid PDF and press Cancel while the file is being read. | The browser reader aborts; UI returns to idle; no native decoder or sidecar starts. |
 | B-02a | Pre-registration cancellation handoff | Run native regression `cancellation_in_ipc_handoff_is_applied_on_registration`; verify it consumes the pending cancellation when the native task registers. | The task token is cancelled before expensive preparation begins and the pending entry is consumed. This deterministic test does not claim that a normal UI click can interleave between FileReader completion and the synchronous IPC invocation. |
-| B-03 | Blocking decoder lifecycle | Run `cancelled_pdf_worker_retains_decoder_permit_until_exit`. The test drops the async waiter while the blocking decoder thread is held, then releases that thread. | The decoder permit remains held until the blocking worker exits; a second decoder is rejected while the first is active. |
+| B-03 | Blocking decoder lifecycle | Run `cancelled_pdf_worker_retains_decoder_permit_until_exit`. The test drops the async waiter while the blocking decoder thread is held, then releases that thread. | The decoder permit remains held until the blocking thread exits; a second decoder is rejected while the first is active. |
 | B-04 | Sidecar parser cancellation | Start processing a synthetic PDF, then cancel during extraction on each installed OS build. | The parent drops/kills the sidecar child; UI returns to idle; no orphan worker remains. Record OS-specific behaviour and any failure to terminate. |
 | B-05 | Malformed and empty files | Upload malformed PDF bytes and an empty file. | Clear validation error; no hang, crash, or stale busy indicator. |
 | B-06 | Encrypted PDF | Upload a password-protected PDF. | Unsupported/password-required behaviour is explicit; no false successful extraction. |
