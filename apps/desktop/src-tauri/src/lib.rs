@@ -1214,6 +1214,36 @@ mod pdf_upload_tests {
         assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
     }
 
+    /// Dropping the async waiter must not release the single-decoder permit before its worker exits.
+    #[tokio::test]
+    async fn cancelled_pdf_worker_retains_decoder_permit_until_exit() {
+        use super::spawn_bounded_pdf_worker;
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let worker = spawn_bounded_pdf_worker(slots.clone(), move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        drop(worker);
+        assert!(spawn_bounded_pdf_worker(slots.clone(), || ()).is_err());
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(permit) = slots.clone().try_acquire_owned() {
+                    drop(permit);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        assert!(spawn_bounded_pdf_worker(slots, || ()).unwrap().await.is_ok());
+    }
+
     #[test]
     fn maximum_upload_decode_runs_on_blocking_pool_not_async_executor_thread() {
         use std::thread;
