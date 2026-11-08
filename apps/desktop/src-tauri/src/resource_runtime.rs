@@ -1,72 +1,122 @@
-//! Process-local atomic reservations for interactive UJANI inference.
-//! This is a conservative admission gate, not an OS memory limit: other processes
-//! can consume RAM after the snapshot and model runtimes may need substantially more.
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+//! Process-local bounded admission and queueing for interactive UJANI inference.
+//! The semaphore coordinates UJANI tasks only; OS memory observations remain advisory.
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, OnceLock,
+};
 use sysinfo::System;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_util::sync::CancellationToken;
 
 const MIN_FREE_MEMORY_MB: u64 = 1_024;
-static RESERVATIONS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+const MAX_WAITING_TASKS: usize = 4;
+static LOCAL_EXECUTION: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static WAITING_TASKS: AtomicUsize = AtomicUsize::new(0);
 
-fn reservations() -> &'static Mutex<HashMap<String, u64>> {
-    RESERVATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+fn semaphore() -> &'static Arc<Semaphore> {
+    LOCAL_EXECUTION.get_or_init(|| Arc::new(Semaphore::new(1)))
 }
 
-fn validate_admission(task_id: &str, available_mb: u64, active: &HashMap<String, u64>) -> Result<(), String> {
-    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
+fn validate_task_id(task_id: &str) -> Result<(), String> {
+    if task_id.is_empty() || task_id.len() > 96
+        || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
+    {
         return Err("Invalid task identifier for resource reservation.".into());
-    }
-    if active.contains_key(task_id) { return Err("This task already holds a local resource reservation.".into()); }
-    if !active.is_empty() { return Err("Another local inference task holds the device reservation; retry after it completes.".into()); }
-    if available_mb < MIN_FREE_MEMORY_MB {
-        return Err(format!("Local inference requires at least {MIN_FREE_MEMORY_MB} MiB of currently available RAM; only {available_mb} MiB is available."));
     }
     Ok(())
 }
 
-/// Process-local admission guard that serializes UJANI local AI work and checks free RAM.
-pub struct MemoryReservation {
-    task_id: String,
+fn validate_available_memory(task_id: &str, available_mb: u64) -> Result<(), String> {
+    if available_mb < MIN_FREE_MEMORY_MB {
+        return Err(format!("Local inference requires at least {MIN_FREE_MEMORY_MB} MiB of currently available RAM; only {available_mb} MiB is available for task {task_id}."));
+    }
+    Ok(())
 }
 
-impl MemoryReservation {
-    /// Reserve the single local-AI execution slot if the 1 GiB free-memory floor is met.
-    pub fn acquire(task_id: &str) -> Result<Self, String> {
-        let mut system = System::new();
-        system.refresh_memory();
-        let available_mb = system.available_memory() / (1024 * 1024);
-        let mut active = reservations().lock().map_err(|_| "Local resource reservation registry is unavailable.".to_string())?;
-        validate_admission(task_id, available_mb, &active)?;
-        active.insert(task_id.to_string(), MIN_FREE_MEMORY_MB);
-        Ok(Self { task_id: task_id.to_string() })
+fn current_available_memory_mb() -> u64 {
+    let mut system = System::new();
+    system.refresh_memory();
+    system.available_memory() / (1024 * 1024)
+}
+
+struct QueueTicket<'a> { counter: &'a AtomicUsize }
+
+impl<'a> QueueTicket<'a> {
+    fn reserve(counter: &'a AtomicUsize, maximum: usize) -> Result<Self, String> {
+        let waiting = counter.fetch_add(1, Ordering::AcqRel);
+        if waiting >= maximum {
+            counter.fetch_sub(1, Ordering::AcqRel);
+            return Err(format!("UJANI's local task queue is full ({maximum} waiting tasks). Wait for a task to finish and try again."));
+        }
+        Ok(Self { counter })
     }
 }
 
-impl Drop for MemoryReservation {
-    fn drop(&mut self) {
-        if let Ok(mut active) = reservations().lock() {
-            active.remove(&self.task_id);
+impl Drop for QueueTicket<'_> {
+    fn drop(&mut self) { self.counter.fetch_sub(1, Ordering::AcqRel); }
+}
+
+/// Holds the single local inference slot for the lifetime of a task.
+pub struct MemoryReservation {
+    _task_id: String,
+    _permit: OwnedSemaphorePermit,
+}
+
+impl MemoryReservation {
+    /// Immediate admission for synchronous, one-shot native calls.
+    pub fn acquire(task_id: &str) -> Result<Self, String> {
+        validate_task_id(task_id)?;
+        let permit = semaphore().clone().try_acquire_owned()
+            .map_err(|_| "Another local inference task is using the device. Managed tasks are queued; retry this one after it completes.".to_string())?;
+        validate_available_memory(task_id, current_available_memory_mb())?;
+        Ok(Self { _task_id: task_id.to_string(), _permit: permit })
+    }
+
+    /// FIFO semaphore admission with a bounded waiting queue and cancellation.
+    /// The caller registers the cancellation token before entering this method.
+    pub async fn acquire_queued(task_id: &str, cancellation: &CancellationToken) -> Result<Self, String> {
+        validate_task_id(task_id)?;
+        if cancellation.is_cancelled() {
+            return Err("Task cancelled while waiting for local device capacity.".into());
         }
+        let _queue_ticket = QueueTicket::reserve(&WAITING_TASKS, MAX_WAITING_TASKS)?;
+        let permit = tokio::select! {
+            acquired = semaphore().clone().acquire_owned() => acquired
+                .map_err(|_| "Local task queue is unavailable.".to_string())?,
+            _ = cancellation.cancelled() => return Err("Task cancelled while waiting for local device capacity.".into()),
+        };
+        if cancellation.is_cancelled() {
+            return Err("Task cancelled while waiting for local device capacity.".into());
+        }
+        validate_available_memory(task_id, current_available_memory_mb())?;
+        Ok(Self { _task_id: task_id.to_string(), _permit: permit })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{validate_available_memory, validate_task_id, QueueTicket, MIN_FREE_MEMORY_MB};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     #[test]
     fn admission_rejects_low_memory_and_invalid_identifiers() {
-        let active = HashMap::new();
-        assert!(validate_admission("task-1", MIN_FREE_MEMORY_MB - 1, &active).is_err());
-        assert!(validate_admission("../escape", MIN_FREE_MEMORY_MB + 1, &active).is_err());
-        assert!(validate_admission("", MIN_FREE_MEMORY_MB + 1, &active).is_err());
+        assert!(validate_available_memory("task-1", MIN_FREE_MEMORY_MB - 1).is_err());
+        assert!(validate_task_id("../escape").is_err());
+        assert!(validate_task_id("").is_err());
+        assert!(validate_available_memory("task-1", MIN_FREE_MEMORY_MB).is_ok());
     }
+
     #[test]
-    fn admission_is_exclusive_and_accepts_a_safe_request() {
-        let active = HashMap::new();
-        assert!(validate_admission("task-1", MIN_FREE_MEMORY_MB, &active).is_ok());
-        let mut occupied = HashMap::new();
-        occupied.insert("task-1".to_string(), MIN_FREE_MEMORY_MB);
-        assert!(validate_admission("task-2", MIN_FREE_MEMORY_MB * 8, &occupied).is_err());
-        assert!(validate_admission("task-1", MIN_FREE_MEMORY_MB * 8, &occupied).is_err());
+    fn waiting_queue_is_bounded_and_slots_are_released() {
+        let waiting = AtomicUsize::new(0);
+        let first = QueueTicket::reserve(&waiting, 2).unwrap();
+        let second = QueueTicket::reserve(&waiting, 2).unwrap();
+        assert!(QueueTicket::reserve(&waiting, 2).is_err());
+        drop(first);
+        assert_eq!(waiting.load(Ordering::Acquire), 1);
+        let third = QueueTicket::reserve(&waiting, 2).unwrap();
+        drop(second);
+        drop(third);
+        assert_eq!(waiting.load(Ordering::Acquire), 0);
     }
 }
