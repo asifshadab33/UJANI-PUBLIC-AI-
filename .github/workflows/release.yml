@@ -457,7 +457,9 @@ jobs:
           # This manifest covers every release asset, including SHA256SUMS,
           # and excludes itself to avoid a recursive digest. Its digest is
           # carried as a workflow output across the approval boundary.
-          find . -type f ! -name RELEASE_EVIDENCE.sha256 -print0 | sort -z | xargs -0 sha256sum > RELEASE_EVIDENCE.sha256
+          manifest_tmp="$(mktemp)"
+          find . -type f ! -name RELEASE_EVIDENCE.sha256 -print0 | sort -z | xargs -0 sha256sum > "$manifest_tmp"
+          mv "$manifest_tmp" RELEASE_EVIDENCE.sha256
           sha256sum -c RELEASE_EVIDENCE.sha256
           digest="$(sha256sum RELEASE_EVIDENCE.sha256 | cut -d ' ' -f 1)"
           printf 'sha256=%s\n' "$digest" >> "$GITHUB_OUTPUT"
