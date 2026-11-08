@@ -802,6 +802,7 @@ where
     run_managed_task_registered(app, task_id, label, receipt_context, network_activity, future, registration).await
 }
 
+/// Runs a task using an existing cancellation registration through admission, execution, and receipt handling.
 async fn run_managed_task_registered<T, F>(app: AppHandle, task_id: String, label: &'static str, receipt_context: LocalReceiptContext, network_activity: NetworkActivity, future: F, registration: ActiveTaskRegistration<'_>) -> Result<T, String>
 where
     T: Serialize,
