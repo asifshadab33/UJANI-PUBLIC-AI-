@@ -1221,6 +1221,23 @@ mod tests {
     }
 
     #[test]
+    fn late_cloud_usage_settlement_updates_the_original_utc_day() {
+        let mut db = db();
+        reserve_budget_db(&mut db, 1_000, 1_000, 86_399).unwrap();
+        reserve_budget_db(&mut db, 2_000, 1_000, 86_400).unwrap();
+        // The first request completes after midnight; settle against its stored day.
+        settle_budget_reservation_db(&mut db, 0, 2_000, 1_500).unwrap();
+        let previous_day: i64 = db.query_row(
+            "SELECT reserved_tokens FROM cloud_budget WHERE utc_day=0", [], |row| row.get(0)
+        ).unwrap();
+        let current_day: i64 = db.query_row(
+            "SELECT reserved_tokens FROM cloud_budget WHERE utc_day=1", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(previous_day, 1_500);
+        assert_eq!(current_day, 3_000);
+    }
+
+    #[test]
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
