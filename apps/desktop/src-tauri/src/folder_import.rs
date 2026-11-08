@@ -171,78 +171,58 @@ pub async fn process_selected_folder(
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
 fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
-    let folder_metadata = fs::symlink_metadata(folder)
-        .map_err(|error| format!("Cannot inspect the selected folder: {error}"))?;
-    if crate::safe_fs::is_reparse_point(&folder_metadata) || !folder_metadata.is_dir() {
-        return Err("The selected location must be a real directory, not a symlink.".into());
-    }
-
-    let canonical_root = fs::canonicalize(folder)
-        .map_err(|error| format!("Cannot resolve the selected folder: {error}"))?;
-    let entries = fs::read_dir(&canonical_root)
-        .map_err(|error| format!("Cannot read the selected folder: {error}"))?;
+    const MAX_FOLDER_ENTRIES: usize = 2_048;
+    let report = crate::safe_fs::walk_directory(
+        folder,
+        crate::safe_fs::WalkOptions {
+            max_depth: 0,
+            max_entries: MAX_FOLDER_ENTRIES,
+            link_policy: crate::safe_fs::LinkPolicy::Reject,
+            error_policy: crate::safe_fs::WalkErrorPolicy::Strict,
+        },
+        || false,
+    )?;
+    let canonical_root = report.root;
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
 
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
-        let path = entry.path();
-        let entry_metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
-        let file_type = entry_metadata.file_type();
-
-        if crate::safe_fs::is_reparse_point(&entry_metadata) {
-            return Err("The selected folder contains a symbolic link. Remove it and try again.".into());
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-
+    for entry in report.entries {
+        if !entry.is_file { continue; }
+        let path = entry.path;
+        let name = entry.name.to_string_lossy().into_owned();
         let extension = path.extension().and_then(|value| value.to_str())
             .unwrap_or_default().to_ascii_lowercase();
         if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
             continue;
         }
-
-        let canonical_file = fs::canonicalize(&path)
-            .map_err(|error| format!("Cannot resolve selected file: {error}"))?;
-        if canonical_file.parent() != Some(canonical_root.as_path()) {
+        if path.parent() != Some(canonical_root.as_path()) {
             return Err("A selected file resolves outside the chosen folder.".into());
         }
-
-        let handle = crate::safe_fs::open_regular_file(&canonical_file)
+        let handle = crate::safe_fs::open_regular_file(&path)
             .map_err(|error| format!("Cannot safely open selected file: {error}"))?;
         let metadata = handle.metadata()
             .map_err(|error| format!("Cannot inspect selected file handle: {error}"))?;
         if metadata.len() > MAX_FILE_BYTES as u64 {
-            return Err(format!("{} exceeds the 256 KiB per-file limit.", entry.file_name().to_string_lossy()));
+            return Err(format!("{name} exceeds the 256 KiB per-file limit."));
         }
-
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
         handle.take((MAX_FILE_BYTES + 1) as u64).read_to_end(&mut bytes)
             .map_err(|error| format!("Cannot read selected file: {error}"))?;
         if bytes.len() > MAX_FILE_BYTES {
             return Err("A selected file grew beyond the 256 KiB limit while being read.".into());
         }
-
         total_bytes = total_bytes.checked_add(bytes.len())
             .ok_or_else(|| "Folder size overflow.".to_string())?;
         if total_bytes > MAX_TOTAL_BYTES {
             return Err("The selected folder exceeds the 1 MiB total import limit.".into());
         }
         let content = String::from_utf8(bytes)
-            .map_err(|_| format!("{} is not valid UTF-8 text.", entry.file_name().to_string_lossy()))?;
-
-        files.push(SelectedTextFile {
-            name: entry.file_name().to_string_lossy().into_owned(),
-            size_bytes: content.len(),
-            content,
-        });
+            .map_err(|_| format!("{name} is not valid UTF-8 text."))?;
+        files.push(SelectedTextFile { name, size_bytes: content.len(), content });
         if files.len() > MAX_FILES {
             return Err("The selected folder contains more than 10 supported text files.".into());
         }
     }
-
     files.sort_by_cached_key(|file| file.name.to_lowercase());
     Ok(files)
 }
