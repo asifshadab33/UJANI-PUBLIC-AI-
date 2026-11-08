@@ -277,7 +277,8 @@ jobs:
   publish-release:
     name: Publish completed multi-platform release
     needs: build-and-upload
-    # Configure this environment with required reviewers before enabling production releases.
+    # This gate only protects publication when repository admins configure required reviewers and disable self-review.
+    # Reviewers must inspect the manual device-test matrix and OS-signing/notarization evidence; the workflow cannot attest to physical-device tests.
     environment: production-release
     runs-on: ubuntu-24.04
     permissions:
