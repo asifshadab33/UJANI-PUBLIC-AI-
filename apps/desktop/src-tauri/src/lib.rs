@@ -471,6 +471,7 @@ struct ActiveTaskRegistration<'a> {
     _guard: ActiveTaskGuard<'a>,
 }
 
+/// Registers a task before preparation so cancellation is available from the first native step.
 fn register_active_task<'a>(
     control: &'a TaskControlState,
     task_id: &str,
@@ -895,6 +896,7 @@ mod managed_task_liveness_tests {
         assert_eq!(result, Err("Task cancelled by user.".to_string()));
     }
 
+    /// Confirms a task registered before preparation can be cancelled and cleaned up.
     #[test]
     fn registered_upload_task_can_be_cancelled_before_preparation_finishes() {
         let control = super::TaskControlState::default();
@@ -919,6 +921,7 @@ mod managed_task_liveness_tests {
         assert!(!control.active.lock().unwrap().contains_key("pdf-upload-test"));
     }
 
+    /// Confirms duplicate task IDs cannot replace an existing cancellation token.
     #[test]
     fn duplicate_active_task_registration_is_rejected() {
         let control = super::TaskControlState::default();
@@ -1140,12 +1143,17 @@ fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
 const MAX_CONCURRENT_PDF_DECODERS: usize = 1;
 static PDF_DECODE_SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
+/// Returns the process-wide semaphore that permits only one PDF decoder at a time.
 fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
     Arc::clone(PDF_DECODE_SLOTS.get_or_init(|| {
         Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PDF_DECODERS))
     }))
 }
 
+/// Decodes a bounded PDF payload on Tokio's blocking pool under the global decoder permit.
+///
+/// A started blocking worker cannot be aborted by dropping this future; it retains the
+/// permit until decoding finishes so a retry cannot start an overlapping decoder.
 async fn decode_pdf_upload_off_thread(data_base64: String) -> Result<Vec<u8>, String> {
     // A cancelled spawn_blocking task cannot be aborted. Keep its permit inside
     // the worker so a quick retry cannot start another large decode in parallel.
@@ -1187,6 +1195,7 @@ mod pdf_upload_tests {
         assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
     }
 
+    /// Confirms the process-wide permit blocks a retry while a decoder worker is active.
     #[test]
     fn pdf_decode_worker_permit_prevents_cancel_and_retry_overlap() {
         let slots = super::pdf_decode_slots();
@@ -1236,6 +1245,10 @@ async fn process_selected_pdf(
     // Cancellation/timeout stops awaiting this result, but Tokio's spawn_blocking
     // closure itself cannot be aborted. Its shared decode permit remains held until
     // the worker exits, preventing cancel-and-retry from overlapping large decodes.
+    // A started spawn_blocking worker cannot be stopped by dropping its future. A timeout
+    // or cancellation returns this command early, but the worker may retain the encoded
+    // input and decoded buffer until it exits. The permit lives inside that worker, so the
+    // global single-decoder limit rejects retries until it finishes; decoders never overlap.
     let data = await_task_with_limits(
         &registration.token,
         Duration::from_secs(30),
