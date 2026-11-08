@@ -267,6 +267,7 @@ jobs:
             test -n "$APPLE_SIGNING_IDENTITY_HASH"
             codesign --force --sign "$APPLE_SIGNING_IDENTITY_HASH" --timestamp "$dmg"
             codesign --verify --verbose=2 "$dmg"
+            hdiutil verify "$dmg"
             # Tauri notarizes the app bundle; submit the distributable DMG separately.
             xcrun notarytool submit "$dmg" --wait --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
             xcrun stapler staple "$dmg"
