@@ -472,6 +472,7 @@ struct ActiveTaskGuard<'a> {
 }
 
 impl Drop for ActiveTaskGuard<'_> {
+    /// Removes active registration and remembers completion to reject late PDF cancellation.
     fn drop(&mut self) {
         if let Ok(mut active) = self.control.active.lock() { active.remove(&self.task_id); }
         if self.task_id.starts_with("pdf-") {
@@ -502,7 +503,7 @@ fn ensure_task_not_cancelled(token: &CancellationToken) -> Result<(), String> {
     if token.is_cancelled() { Err("Task cancelled by user.".into()) } else { Ok(()) }
 }
 
-/// Registers a task and consumes any bounded cancellation request received before registration.
+/// Registers a task, consumes a pending cancellation, and rejects reused completed PDF IDs.
 fn register_active_task<'a>(control: &'a TaskControlState, task_id: &str) -> Result<ActiveTaskRegistration<'a>, String> {
     if !valid_command_identifier(task_id, 96) { return Err("Invalid task identifier.".into()); }
     // Preserve the stricter identifier contract required by the resource reservation queue.
@@ -785,6 +786,7 @@ where
     }
 }
 
+/// Registers and executes a managed task with cancellation, resource admission, and provenance handling.
 async fn run_managed_task<T, F>(
     app: AppHandle,
     control: &TaskControlState,
@@ -1173,6 +1175,7 @@ fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec
     Ok(data)
 }
 
+/// Decodes a non-empty PDF upload after enforcing the encoded and decoded 10 MiB bounds.
 fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
     decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)
 }
@@ -1185,8 +1188,7 @@ fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
     Arc::clone(PDF_DECODE_SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PDF_DECODERS))))
 }
 
-/// Runs a bounded blocking worker while retaining its permit until the worker exits.
-/// Runs bounded PDF upload decoding while holding its admission permit through worker exit.
+/// Runs bounded blocking work while retaining its admission permit until the worker exits.
 fn spawn_bounded_pdf_worker<T, F, R>(slots: Arc<tokio::sync::Semaphore>, work: F, on_permit_released: R) -> Result<tokio::task::JoinHandle<T>, String>
 where
     T: Send + 'static,
@@ -1202,8 +1204,7 @@ where
     }))
 }
 
-/// Decodes the bounded PDF payload off the async executor under a single-worker limit.
-/// Decodes the upload payload on the blocking pool and reports decoder lifecycle stages.
+/// Decodes the bounded PDF payload off the async executor and reports decoder lifecycle stages.
 async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base64: String) -> Result<Vec<u8>, String> {
     let release_app = app.clone();
     let release_task_id = task_id.clone();
