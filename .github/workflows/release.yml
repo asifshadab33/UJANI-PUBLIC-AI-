@@ -164,8 +164,10 @@ jobs:
           set -euo pipefail
           keychain_path="$RUNNER_TEMP/ujani-build.keychain-db"
           p12_path="$RUNNER_TEMP/ujani-developer-id.p12"
+          trap 'rm -f "$p12_path"' EXIT
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12_path"
           security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
           security import "$p12_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
@@ -175,8 +177,6 @@ jobs:
           identities="$(security find-identity -v -p codesigning "$keychain_path")"
           grep -Fq ""$APPLE_SIGNING_IDENTITY"" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
           grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
-          echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
-          rm -f "$p12_path"
       - name: Configure Tauri Authenticode signing
         if: runner.os == 'Windows'
         shell: bash
