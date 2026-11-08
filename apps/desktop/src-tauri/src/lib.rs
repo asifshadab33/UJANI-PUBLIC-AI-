@@ -22,7 +22,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::{Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
@@ -463,6 +463,35 @@ impl Drop for ActiveTaskGuard<'_> {
     }
 }
 
+/// A task becomes cancellable as soon as its native command accepts the task ID,
+/// including while bounded upload preparation is still running.
+struct ActiveTaskRegistration<'a> {
+    task_id: String,
+    token: CancellationToken,
+    _guard: ActiveTaskGuard<'a>,
+}
+
+fn register_active_task<'a>(
+    control: &'a TaskControlState,
+    task_id: &str,
+) -> Result<ActiveTaskRegistration<'a>, String> {
+    if !valid_command_identifier(task_id, 96) {
+        return Err("Invalid task identifier.".into());
+    }
+    let token = CancellationToken::new();
+    let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+    if active.contains_key(task_id) {
+        return Err("Task identifier is already active.".into());
+    }
+    active.insert(task_id.to_string(), token.clone());
+    drop(active);
+    Ok(ActiveTaskRegistration {
+        task_id: task_id.to_string(),
+        token,
+        _guard: ActiveTaskGuard { control, task_id: task_id.to_string() },
+    })
+}
+
 #[derive(Clone, Serialize)]
 struct TaskProgressEvent {
     task_id: String,
@@ -721,35 +750,53 @@ where
     T: Serialize,
     F: std::future::Future<Output = Result<T, String>>,
 {
-    if !valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
+    let registration = register_active_task(control, &task_id)?;
+    run_managed_task_registered(
+        app, task_id, label, receipt_context, network_activity, future, registration
+    ).await
+}
+
+/// Runs a task whose cancellation registration may have been created before
+/// upload decoding or other bounded preparation.
+async fn run_managed_task_registered<T, F>(
+    app: AppHandle,
+    task_id: String,
+    label: &'static str,
+    receipt_context: LocalReceiptContext,
+    network_activity: NetworkActivity,
+    future: F,
+    registration: ActiveTaskRegistration<'_>,
+) -> Result<T, String>
+where
+    T: Serialize,
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    if registration.task_id != task_id {
+        return Err("Task registration does not match the requested task identifier.".into());
+    }
+    if registration.token.is_cancelled() {
+        return Err("Task cancelled by user.".into());
     }
     // Keep document, PDF, summary and translation tasks under the same native
     // single-task / 1 GiB admission gate as interactive inference.
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
     flush_pending_receipts(&app).await;
+    if registration.token.is_cancelled() {
+        return Err("Task cancelled by user.".into());
+    }
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
     let started_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis() as u64;
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let active_task_guard = ActiveTaskGuard { control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", &format!("{label}: starting locally."), 5);
     let result = await_task_with_limits(
-        &token,
+        &registration.token,
         std::time::Duration::from_secs(240),
         &format!("{label} exceeded the 240-second overall time budget."),
         future,
     ).await;
-    drop(active_task_guard);
+    drop(registration);
     let mut receipt_warning = None;
     if let Ok(value) = &result {
         let output_bytes = serde_json::to_vec(value)
@@ -846,6 +893,39 @@ mod managed_task_liveness_tests {
             result
         });
         assert_eq!(result, Err("Task cancelled by user.".to_string()));
+    }
+
+    #[test]
+    fn registered_upload_task_can_be_cancelled_before_preparation_finishes() {
+        let control = super::TaskControlState::default();
+        let registration = super::register_active_task(&control, "pdf-upload-test").unwrap();
+        {
+            let active = control.active.lock().unwrap();
+            active.get("pdf-upload-test").unwrap().cancel();
+        }
+        assert!(registration.token.is_cancelled());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(await_task_with_limits(
+            &registration.token,
+            Duration::from_secs(1),
+            "test task timed out",
+            std::future::pending::<Result<(), String>>(),
+        ));
+        assert_eq!(result, Err("Task cancelled by user.".to_string()));
+        drop(registration);
+        assert!(!control.active.lock().unwrap().contains_key("pdf-upload-test"));
+    }
+
+    #[test]
+    fn duplicate_active_task_registration_is_rejected() {
+        let control = super::TaskControlState::default();
+        let first = super::register_active_task(&control, "same-task").unwrap();
+        assert!(super::register_active_task(&control, "same-task").is_err());
+        drop(first);
+        assert!(super::register_active_task(&control, "same-task").is_ok());
     }
 }
 
@@ -1057,10 +1137,27 @@ fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
     decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)
 }
 
+const MAX_CONCURRENT_PDF_DECODERS: usize = 1;
+static PDF_DECODE_SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
+    Arc::clone(PDF_DECODE_SLOTS.get_or_init(|| {
+        Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PDF_DECODERS))
+    }))
+}
+
 async fn decode_pdf_upload_off_thread(data_base64: String) -> Result<Vec<u8>, String> {
-    tokio::task::spawn_blocking(move || decode_pdf_upload(&data_base64))
-        .await
-        .map_err(|error| format!("PDF decode worker failed: {error}"))?
+    // A cancelled spawn_blocking task cannot be aborted. Keep its permit inside
+    // the worker so a quick retry cannot start another large decode in parallel.
+    let permit = pdf_decode_slots().try_acquire_owned().map_err(|_| {
+        "Another PDF upload is still being prepared. Please wait before retrying.".to_string()
+    })?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        decode_pdf_upload(&data_base64)
+    })
+    .await
+    .map_err(|error| format!("PDF decode worker failed: {error}"))?
 }
 
 #[cfg(test)]
@@ -1088,6 +1185,15 @@ mod pdf_upload_tests {
     fn pdf_upload_decoder_rejects_encoded_payloads_over_the_predecode_bound() {
         let too_large = "A".repeat(16);
         assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
+    }
+
+    #[test]
+    fn pdf_decode_worker_permit_prevents_cancel_and_retry_overlap() {
+        let slots = super::pdf_decode_slots();
+        let first = slots.clone().try_acquire_owned().unwrap();
+        assert!(slots.clone().try_acquire_owned().is_err());
+        drop(first);
+        assert!(slots.clone().try_acquire_owned().is_ok());
     }
 
     #[test]
@@ -1123,9 +1229,19 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    // Base64 decoding can allocate and briefly occupy CPU for a large upload.
-    // Keep it off the async runtime so a maximum-size PDF cannot stall other commands.
-    let data = decode_pdf_upload_off_thread(data_base64).await?;
+    // Register before decoding so cancel_active_task can stop the pipeline even
+    // while a maximum-size base64 upload is being prepared off the async runtime.
+    let registration = register_active_task(&control, &task_id)?;
+    emit_task_progress(&app, &task_id, "preparing", "Preparing the selected PDF upload…", 5);
+    // Cancellation/timeout stops awaiting this result, but Tokio's spawn_blocking
+    // closure itself cannot be aborted. Its shared decode permit remains held until
+    // the worker exits, preventing cancel-and-retry from overlapping large decodes.
+    let data = await_task_with_limits(
+        &registration.token,
+        Duration::from_secs(30),
+        "PDF upload decoding exceeded its 30-second time budget.",
+        decode_pdf_upload_off_thread(data_base64),
+    ).await?;
 
     let language = translation_language.as_deref().unwrap_or("");
     let receipt = local_receipt_context(
@@ -1133,8 +1249,15 @@ async fn process_selected_pdf(
         &model,
         &[file_name.as_bytes(), data.as_slice(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "PDF extraction and summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language)).await
+    run_managed_task_registered(
+        app,
+        task_id,
+        "PDF extraction and summary",
+        receipt,
+        NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+        LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language),
+        registration,
+    ).await
 }
 
 /// Translates user-provided text through the selected local Ollama model.
