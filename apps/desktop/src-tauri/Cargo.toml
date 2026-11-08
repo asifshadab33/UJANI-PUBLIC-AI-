@@ -1,6 +1,7 @@
 [package]
 name = "ujani-desktop"
 version = "0.1.0"
+default-run = "ujani-desktop"
 description = "UJANI Public AI desktop application"
 license = "GPL-3.0-only"
 authors = ["UJANI contributors"]
