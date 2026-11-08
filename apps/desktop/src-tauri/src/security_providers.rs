@@ -65,9 +65,8 @@ fn windows_category(
     label: &str,
     provider_mask: u32,
 ) -> SecurityProviderStatus {
-    use windows_sys::Win32::System::LibraryLoader::{
-        FreeLibrary, GetProcAddress, LoadLibraryW,
-    };
+    use windows_sys::Win32::Foundation::FreeLibrary;
+    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
     // Load WSC dynamically: Windows Server and some reduced Windows images do
     // not ship wscapi.dll. A missing optional provider must not prevent UJANI
