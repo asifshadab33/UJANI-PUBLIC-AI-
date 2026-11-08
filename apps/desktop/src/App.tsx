@@ -177,6 +177,25 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    let cancelled = false;
+    setHistoryBusy(true);
+    Promise.all([
+      invoke<HistorySettings>("get_task_history_settings"),
+      invoke<HistoryEntry[]>("list_task_history")
+    ]).then(([settings, entries]) => {
+      if (cancelled) return;
+      setHistorySettings(settings);
+      setPersistentHistory(entries);
+    }).catch((error) => {
+      if (!cancelled) setHistoryError("Local history unavailable: " + String(error));
+    }).finally(() => {
+      if (!cancelled) setHistoryBusy(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
     listen<TaskProgressEvent>("ujani-task-progress", (event) => {
       const progress = event.payload;
@@ -288,8 +307,16 @@ export default function App() {
   }
 
   async function saveToPersistentHistory(prompt: string, output: string, kind: string, model: string) {
-    if (!isTauri() || !historySettings?.enabled) return;
+    if (!isTauri()) return;
     try {
+      // Read the persisted opt-in setting at completion time; React state may
+      // still be null or stale immediately after startup or a settings change.
+      const settings = await invoke<HistorySettings>("get_task_history_settings");
+      setHistorySettings(settings);
+      if (!settings.enabled) {
+        setPersistentHistory([]);
+        return;
+      }
       await invoke<number>("save_task_history", { prompt, output, mode: executionMode, model, kind });
       setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
     } catch (error) { setHistoryError("Could not save this task: " + String(error)); }
