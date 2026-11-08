@@ -403,6 +403,7 @@ async fn pull_ollama_model(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
+    resource_runtime::validate_task_id(&task_id)?;
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -724,6 +725,8 @@ where
     if !valid_command_identifier(&task_id, 96) {
         return Err("Invalid task identifier.".into());
     }
+    // Validate before placing an identifier in the active-task registry.
+    resource_runtime::validate_task_id(&task_id)?;
     // Register first so a task waiting in the bounded device queue can be cancelled.
     let token = CancellationToken::new();
     {
