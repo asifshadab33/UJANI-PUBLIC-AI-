@@ -527,7 +527,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
 /// Detects the worker's fixed, content-free truncation marker in bounded stderr metadata.
 /// Other bounded diagnostics are ignored; the worker's marker is appended after extraction.
 pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
-    const MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+    const MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
     Ok(metadata.windows(MARKER.len()).any(|window| window == MARKER))
 }
 
@@ -547,13 +547,13 @@ mod pdf_worker_status_tests {
 
     #[test]
     fn detects_truncation_marker_after_bounded_diagnostics() {
-        let metadata = b"extractor warning\\nmore diagnostics\\nUJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+        let metadata = b"extractor warning\nmore diagnostics\nUJANI_PDF_OUTPUT_TRUNCATED_V1\n";
         assert!(pdf_worker_output_was_truncated(metadata).unwrap());
     }
 
     #[test]
     fn ignores_non_marker_worker_diagnostics() {
-        assert!(!pdf_worker_output_was_truncated(b"extractor warning\\n").unwrap());
+        assert!(!pdf_worker_output_was_truncated(b"extractor warning\n").unwrap());
     }
 }
 
@@ -735,7 +735,7 @@ mod local_capability_tests {
     fn display_file_names_reject_paths_and_control_characters() {
         assert!(super::validate_display_filename("notes.md").is_ok());
         assert!(super::validate_display_filename("../notes.md").is_err());
-        assert!(super::validate_display_filename("folder\\\notes.md").is_err());
+        assert!(super::validate_display_filename("folder\\notes.md").is_err());
         assert!(super::validate_display_filename("notes\nsecret.md").is_err());
         assert!(super::validate_display_filename("..").is_err());
     }
