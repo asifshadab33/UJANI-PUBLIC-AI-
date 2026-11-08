@@ -241,7 +241,7 @@ where
             return Err("Local Ollama streaming response exceeded the 2 MiB output limit.".into());
         }
         for byte in chunk {
-            if byte == b'\\n' {
+            if byte == b'\n' {
                 if pending.is_empty() { continue; }
                 let (delta, finished) = parse_chat_stream_line(&pending)?;
                 pending.clear();
