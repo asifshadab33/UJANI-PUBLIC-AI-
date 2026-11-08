@@ -63,6 +63,10 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      - name: Generate platform installer icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
+
       - name: Build and stage the target-specific PDF worker sidecar
         working-directory: apps/desktop
         shell: bash
