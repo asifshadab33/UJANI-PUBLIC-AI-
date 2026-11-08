@@ -44,7 +44,12 @@ fn token_limits(model: &str, preference: &str) -> Result<(Option<u16>, Option<u1
  Ok(if use_completion_tokens { (None, Some(budget)) } else { (Some(budget), None) })
 }
 #[derive(Serialize)] struct ChatMessage<'a>{role:&'static str,content:&'a str}
-#[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>}
+#[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>, #[serde(default)] usage: Option<Usage>}
+#[derive(Deserialize)] struct Usage { total_tokens: Option<u64> }
+
+/// Text and optional provider-reported token usage returned by one approved cloud request.
+#[derive(Debug)]
+pub struct CloudExecutionResult { pub text: String, pub total_tokens: Option<u64> }
 #[derive(Deserialize)] struct Choice{message:Message}
 #[derive(Deserialize)] struct Message{content:MessageContent}
 #[derive(Deserialize)]
@@ -148,7 +153,10 @@ pub fn validate_request(
     Ok(())
 }
 
-pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String)->Result<String,String>{
+/// The dispatch callback is the durable boundary after all local validation and DNS checks.
+/// Sends one validated, user-approved BYOK request and marks the exact dispatch boundary.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String,on_dispatch:impl FnOnce())->Result<CloudExecutionResult,String>{
  let api_key = Zeroizing::new(api_key);
  validate_request(&endpoint,&model,api_key.as_str(),&prompt,&mode,approved,&token_parameter)?;
  let url=validate(&endpoint,&model,api_key.as_str(),&prompt,approved)?;
@@ -168,6 +176,7 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
   max_completion_tokens,
   stream:false,
  };
+ on_dispatch();
  let response=client.post(url).json(&body).send().await.map_err(|e|format!("Cloud request failed: {e}"))?;
  let status=response.status(); if !status.is_success(){return Err(format!("Cloud provider returned HTTP {status}. Check endpoint, model, key, quota, and billing."));}
  if response.content_length().is_some_and(|n|n>MAX_OUTPUT as u64){return Err("Cloud response exceeds the 64 KiB output limit.".into());}
@@ -180,7 +189,9 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
   bytes.extend_from_slice(&chunk);
  }
  let parsed:ChatResponse=serde_json::from_slice(&bytes).map_err(|e|format!("Provider response was not valid OpenAI-compatible Chat Completions JSON: {e}"))?;
- parsed.choices.into_iter().next().map(|c|c.message.content.into_text()).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".into())
+ let total_tokens = parsed.usage.and_then(|usage| usage.total_tokens).filter(|tokens| *tokens > 0);
+ let text = parsed.choices.into_iter().next().map(|c|c.message.content.into_text()).filter(|s|!s.trim().is_empty()).ok_or_else(||"Cloud provider returned no assistant message.".to_string())?;
+ Ok(CloudExecutionResult { text, total_tokens })
 }
 #[cfg(test)] mod tests{use super::*;#[test]fn provider_content_accepts_string_and_text_parts(){
  let plain: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"hello"}}]}"#).unwrap();
@@ -191,6 +202,12 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
 #[test]fn provider_content_ignores_non_text_parts_without_failing(){
  let parts: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":[{"type":"image","image_url":"data:image/png;base64,AAAA"},{"type":"text","text":"answer"}]}}]}"#).unwrap();
  assert_eq!(parts.choices.into_iter().next().unwrap().message.content.into_text(),"answer");
+}
+#[test]fn parses_provider_usage_when_available(){
+ let response: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"answer"}}],"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20}}"#).unwrap();
+ assert_eq!(response.usage.and_then(|usage| usage.total_tokens).filter(|tokens| *tokens > 0),Some(20));
+ let zero: ChatResponse=serde_json::from_str(r#"{"choices":[{"message":{"content":"answer"}}],"usage":{"total_tokens":0}}"#).unwrap();
+ assert_eq!(zero.usage.and_then(|usage| usage.total_tokens).filter(|tokens| *tokens > 0),None);
 }
 #[test]fn requires_consent(){assert!(validate("https://api.example.com/v1/chat/completions","m","k","hi",false).is_err());}
 #[test]fn only_smart_mode_can_use_the_byok_cloud_gateway(){assert!(validate_mode("fortress").is_err());assert!(validate_mode("smart").is_ok());assert!(validate_mode("worker").is_err());assert!(validate_mode("partner").is_err());assert!(validate_mode("unknown").is_err());}

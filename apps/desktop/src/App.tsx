@@ -33,6 +33,7 @@ type HistorySettings = { enabled: boolean; retention_days: number; max_entries: 
 type NetworkActivity = { observation: "measured" | "inferred" | "unknown"; destinations: string[]; bytes_sent: number | null; bytes_received: number | null };
 type ExecutionReceipt = { schema_version: number; task_id: string; operation_id: string; location: string; adapter_id: string; adapter_version: string; model_id: string | null; model_version: string | null; input_sha256: string; output_sha256: string; started_at_unix_ms: number; completed_at_unix_ms: number; user_approval_id: string | null; network_activity?: NetworkActivity };
 type ReceiptLedgerStatus = { entries: number; valid: boolean; head_sha256: string };
+type CloudBudgetStatus = { utc_day: number; reserved_tokens: number; daily_limit_tokens: number; remaining_tokens: number };
 type ReceiptLedgerEntry = { receipt: ExecutionReceipt; record_hash: string };
 type ChatMessage = { role: "user" | "assistant"; content: string };
 function composeConversationPrompt(messages: ChatMessage[], current: string): string {
@@ -167,6 +168,19 @@ export default function App() {
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
   const [cloudError, setCloudError] = useState("");
+  const [cloudBudgetStatus, setCloudBudgetStatus] = useState<CloudBudgetStatus | null>(null);
+  const [cloudBudgetLimitInput, setCloudBudgetLimitInput] = useState("250000");
+  const [cloudBudgetBusy, setCloudBudgetBusy] = useState(false);
+  const [cloudBudgetError, setCloudBudgetError] = useState("");
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    invoke<CloudBudgetStatus>("get_cloud_budget_status")
+      .then((status) => { if (!cancelled) { setCloudBudgetStatus(status); setCloudBudgetLimitInput(String(status.daily_limit_tokens)); } })
+      .catch((error) => { if (!cancelled) setCloudBudgetError("Cloud budget status unavailable: " + String(error)); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     // Deliberately do not invoke native services during first render. The launcher
@@ -780,6 +794,21 @@ export default function App() {
     }
   }
 
+  async function saveCloudBudgetLimit() {
+    const limit = Number(cloudBudgetLimitInput);
+    if (!Number.isSafeInteger(limit) || limit < 10_000 || limit > 5_000_000) {
+      setCloudBudgetError("Choose a whole-number daily limit between 10,000 and 5,000,000 tokens.");
+      return;
+    }
+    setCloudBudgetBusy(true); setCloudBudgetError("");
+    try {
+      const status = await invoke<CloudBudgetStatus>("set_cloud_budget_limit", { dailyLimitTokens: limit });
+      setCloudBudgetStatus(status);
+      setCloudBudgetLimitInput(String(status.daily_limit_tokens));
+    } catch (error) { setCloudBudgetError(String(error)); }
+    finally { setCloudBudgetBusy(false); }
+  }
+
   async function runCloudAi() {
     if (!isTauri() || !request.trim() || cloudBusy) return;
     if (executionMode !== "smart") {
@@ -803,7 +832,10 @@ export default function App() {
       setCloudChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: response }]);
       setRequest("");
     } catch (error) { setCloudError(String(error)); }
-    finally { setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); setCloudConsentSnapshot(""); }
+    finally {
+      setCloudBusy(false); setActiveCloudTaskId(null); setCloudApiKey(""); setCloudConsent(false); setCloudConsentSnapshot("");
+      invoke<CloudBudgetStatus>("get_cloud_budget_status").then(setCloudBudgetStatus).catch(() => undefined);
+    }
   }
 
   async function cancelCloudAi() {
@@ -1124,6 +1156,14 @@ export default function App() {
           <div className="model-box" id="online-ai-workspace">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Online AI chat — no local model required</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
             <p className="muted">This sends your prompt to an AI model hosted by your chosen provider over the internet. You do not need to install or run a local model. Choose a preset or enter your own OpenAI-compatible HTTPS endpoint, model ID and API key. Some providers may offer free tiers or promotional credits; availability, limits, billing and data retention are controlled by that provider. UJANI never supplies keys or promises free usage. Each request requires fresh approval. Smart mode only; Fortress is local-only.</p>
+            <div className="result cloud-budget-panel">
+              <div className="result-title">Local daily cloud safety limit <span>DEVICE-LOCAL</span></div>
+              {cloudBudgetStatus ? <p>{cloudBudgetStatus.reserved_tokens.toLocaleString()} tokens reserved today · {cloudBudgetStatus.remaining_tokens.toLocaleString()} remaining of {cloudBudgetStatus.daily_limit_tokens.toLocaleString()}.</p> : <p>Loading this device's cloud quota…</p>}
+              <label className="model-select">Daily token limit (10,000–5,000,000)<input type="number" min={10000} max={5000000} step={1000} value={cloudBudgetLimitInput} onChange={(event) => setCloudBudgetLimitInput(event.target.value)}/></label>
+              <button className="model-run" onClick={saveCloudBudgetLimit} disabled={!isTauri() || cloudBudgetBusy}>{cloudBudgetBusy ? "Saving local limit…" : "Save daily cloud limit"}</button>
+              {cloudBudgetError && <p className="error" role="alert">{cloudBudgetError}</p>}
+              <small className="muted">UJANI reserves a conservative UTF-8 byte-length estimate plus the maximum completion allowance before sending; this is not an exact tokenizer count. When the provider reports actual token usage, UJANI reconciles the estimate to that count. Requests that may have reached the provider remain conservatively counted when usage is unavailable.</small>
+            </div>
             <label className="model-select">Provider preset<select value={cloudProviderPreset} onChange={(event) => {
               const preset = CLOUD_PROVIDER_PRESETS.find((item) => item.id === event.target.value);
               setCloudProviderPreset(event.target.value);
