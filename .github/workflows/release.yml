@@ -177,6 +177,9 @@ jobs:
           identities="$(security find-identity -v -p codesigning "$keychain_path")"
           grep -Fq -- "$APPLE_SIGNING_IDENTITY" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
           grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
+          identity_hash="$(printf '%s\\n' "$identities" | grep -F -- "\"$APPLE_SIGNING_IDENTITY\"" | awk 'NR == 1 { print $2 }')"
+          [[ "$identity_hash" =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "::error::Could not resolve one exact Apple signing identity hash."; exit 1; }
+          echo "APPLE_SIGNING_IDENTITY_HASH=$identity_hash" >> "$GITHUB_ENV"
       - name: Configure Tauri Authenticode signing
         if: runner.os == 'Windows'
         shell: bash
@@ -258,6 +261,10 @@ jobs:
             spctl --assess --type execute --verbose=2 "$app"
           done
           for dmg in "${dmgs[@]}"; do
+            # Sign the container itself; notarizing the nested app does not sign the DMG.
+            test -n "$APPLE_SIGNING_IDENTITY_HASH"
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY_HASH" --timestamp "$dmg"
+            codesign --verify --verbose=2 "$dmg"
             # Tauri notarizes the app bundle; submit the distributable DMG separately.
             xcrun notarytool submit "$dmg" --wait --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
             xcrun stapler staple "$dmg"
