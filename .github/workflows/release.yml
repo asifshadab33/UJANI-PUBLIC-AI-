@@ -100,6 +100,33 @@ jobs:
           TAG_VERSION="${RELEASE_TAG#v}"
           test "$TAG_VERSION" = "$APP_VERSION" || { echo "::error::Release tag $RELEASE_TAG does not match app version $APP_VERSION"; exit 1; }
           node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
+      - name: Require OS publisher-signing credentials
+        shell: bash
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows)
+              test -n "$WINDOWS_CERTIFICATE" || { echo "::error::Missing WINDOWS_CERTIFICATE; refusing unsigned Windows release."; exit 1; }
+              test -n "$WINDOWS_CERTIFICATE_PASSWORD" || { echo "::error::Missing WINDOWS_CERTIFICATE_PASSWORD; refusing unsigned Windows release."; exit 1; }
+              ;;
+            macOS)
+              for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+                if [[ -z "${!name}" ]]; then
+                  echo "::error::Missing $name; refusing unsigned/unnotarized macOS release."
+                  exit 1
+                fi
+              done
+              ;;
+          esac
       - name: Refuse release build with an empty updater public key
         run: node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if(!c.plugins.updater.pubkey) { console.error('Empty updater public key'); process.exit(1); }"
       - name: Install Linux system dependencies
@@ -149,6 +176,8 @@ jobs:
   publish-release:
     name: Publish completed multi-platform release
     needs: build-and-upload
+    # Configure this environment with required reviewers before enabling production releases.
+    environment: production-release
     runs-on: ubuntu-24.04
     permissions:
       attestations: write
