@@ -177,7 +177,10 @@ jobs:
           identities="$(security find-identity -v -p codesigning "$keychain_path")"
           grep -Fq -- "$APPLE_SIGNING_IDENTITY" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
           grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
-          mapfile -t matching_identities < <(printf '%s\n' "$identities" | grep -F -- "\"$APPLE_SIGNING_IDENTITY\"" || true)
+          matching_identities=()
+          while IFS= read -r identity_line; do
+            matching_identities+=("$identity_line")
+          done < <(printf '%s\n' "$identities" | grep -F -- "\"$APPLE_SIGNING_IDENTITY\"" || true)
           [[ "${#matching_identities[@]}" -eq 1 ]] || { echo "::error::APPLE_SIGNING_IDENTITY must resolve to exactly one keychain identity; found ${#matching_identities[@]}."; exit 1; }
           identity_hash="$(awk '{ print $2 }' <<< "${matching_identities[0]}")"
           [[ "$identity_hash" =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "::error::Could not resolve one exact Apple signing identity hash."; exit 1; }
@@ -250,8 +253,14 @@ jobs:
         run: |
           set -euo pipefail
           bundle_root="apps/desktop/src-tauri/target"
-          mapfile -d '' apps < <(find "$bundle_root" -type d -name '*.app' -print0)
-          mapfile -d '' dmgs < <(find "$bundle_root" -type f -name '*.dmg' -print0)
+          apps=()
+          while IFS= read -r -d '' app_path; do
+            apps+=("$app_path")
+          done < <(find "$bundle_root" -type d -name '*.app' -print0)
+          dmgs=()
+          while IFS= read -r -d '' dmg_path; do
+            dmgs+=("$dmg_path")
+          done < <(find "$bundle_root" -type f -name '*.dmg' -print0)
           if [[ "${#apps[@]}" -eq 0 || "${#dmgs[@]}" -eq 0 ]]; then
             echo "::error::Expected a macOS app bundle and DMG; refusing to publish."
             exit 1
@@ -348,7 +357,10 @@ jobs:
           test -n "$app_version"
           printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
 
-          mapfile -d '' signatures < <(find release-assets -type f -name '*.sig' -print0)
+          signatures=()
+          while IFS= read -r -d '' signature_path; do
+            signatures+=("$signature_path")
+          done < <(find release-assets -type f -name '*.sig' -print0)
           if [[ "${#signatures[@]}" -eq 0 ]]; then
             echo "No Tauri updater signature files were downloaded; refusing to prepare evidence." >&2
             exit 1
