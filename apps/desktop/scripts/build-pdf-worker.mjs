@@ -23,7 +23,7 @@ const destination = path.join(destinationDir, 'ujani-pdf-worker-' + target + ext
 fs.mkdirSync(destinationDir, { recursive: true });
 // Skip only Tauri's app-context build step while compiling the isolated worker.
 // The normal app build later runs build.rs and validates the real staged sidecar.
-const cargoArgs = ['build', '--manifest-path', manifest, '--bin', 'ujani-pdf-worker', '--locked'];
+const cargoArgs = ['build', '--manifest-path', manifest, '--bin', 'ujani-pdf-worker', '--features', 'pdf-worker-build', '--locked'];
 if (!debugBuild) cargoArgs.push('--release');
 if (explicitTarget || process.env.TAURI_ENV_TARGET_TRIPLE) cargoArgs.push('--target', target);
 const result = spawnSync('cargo', cargoArgs, { stdio: 'inherit', env: { ...process.env, UJANI_PDF_WORKER_BUILD: '1' } });
