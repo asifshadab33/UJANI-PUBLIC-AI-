@@ -44,10 +44,10 @@ pub struct TaskPlan {
 /// Trusted built-in operation catalogue. No arbitrary commands or model-authored tools.
 pub fn registered_operations() -> Vec<OperationDescriptor> {
     vec![
-        OperationDescriptor { id: "local.ai.generate".into(), description: "Generate a response with an installed local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
-        OperationDescriptor { id: "document.summarize".into(), description: "Summarise user-selected text with a local model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
-        OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
-        OperationDescriptor { id: "translate.text".into(), description: "Translate supplied text with a local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 512 },
+        OperationDescriptor { id: "local.ai.generate".into(), description: "Generate a response with an installed local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
+        OperationDescriptor { id: "document.summarize".into(), description: "Summarise user-selected text with a local model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
+        OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
+        OperationDescriptor { id: "translate.text".into(), description: "Translate supplied text with a local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
         OperationDescriptor { id: "local.word_count".into(), description: "Count words in user-supplied text".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64 },
         OperationDescriptor { id: "file.analyze_text".into(), description: "Analyse user-supplied text without a model".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64 },
         OperationDescriptor { id: "image.inspect".into(), description: "Inspect supported image headers and metadata".into(), required_capabilities: vec!["cpu".into(), "image.header_inspection".into()], minimum_available_memory_mb: 64 },
