@@ -401,12 +401,14 @@ impl CloudBudgetReservation {
     /// Reconcile an authoritative provider usage count. Missing usage keeps the
     /// conservative reservation; lower usage refunds only the unused difference.
     pub fn settle(mut self, actual_tokens: Option<u64>) -> Result<(), String> {
+        // Mark terminal before I/O. If SQLite reports an ambiguous commit error,
+        // Drop must not retry an aggregate refund and accidentally debit another task.
+        self.settled = true;
         if !self.dispatched {
             release_budget_reservation(&self.app, self.utc_day, self.reserved_tokens)?;
         } else if let Some(actual) = actual_tokens {
             settle_budget_reservation(&self.app, self.utc_day, self.reserved_tokens, actual)?;
         }
-        self.settled = true;
         Ok(())
     }
 }
