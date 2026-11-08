@@ -19,6 +19,13 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
 
+/// Returns whether a direct-child path has an extension accepted by folder import.
+fn is_supported_text_file(path: &Path) -> bool {
+    let extension = path.extension().and_then(|value| value.to_str())
+        .unwrap_or_default().to_ascii_lowercase();
+    SUPPORTED_EXTENSIONS.contains(&extension.as_str())
+}
+
 #[derive(Debug)]
 struct SelectedTextFile {
     name: String,
@@ -179,6 +186,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             recursive: false,
             links: crate::safe_fs::LinkPolicy::Reject,
             errors: crate::safe_fs::WalkErrorPolicy::Reject,
+            file_filter: Some(is_supported_text_file),
         },
         &tokio_util::sync::CancellationToken::new(),
     )?;
@@ -189,10 +197,11 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
     for entry in walked.files {
-        let extension = entry.path.extension().and_then(|value| value.to_str())
-            .unwrap_or_default().to_ascii_lowercase();
-        if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
-            continue;
+        // The walker returns canonical paths. Require the canonical file to remain an
+        // immediate child, closing the path-replacement race that could otherwise
+        // turn a selected direct child into a nested target before this reopen.
+        if entry.path.parent() != Some(walked.root.as_path()) {
+            return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
 
         let handle = crate::safe_fs::open_regular_file(&entry.path)
