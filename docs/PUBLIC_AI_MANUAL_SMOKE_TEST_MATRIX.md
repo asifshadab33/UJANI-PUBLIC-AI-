@@ -44,16 +44,19 @@ Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empt
 
 **Important limitation:** Tokio `spawn_blocking` work that has already started cannot be forcibly aborted. Cancellation can stop awaiting the result, but the bounded worker may finish in the background. B-03/B-04 must verify the real resource and retry behavior rather than assuming immediate CPU termination.
 
-## C. Screenshot capture and attachment
+## C. Image inspection and screenshot capability boundary
+
+**Current implementation boundary:** the desktop build supports metadata-only inspection of user-selected PNG, JPEG, GIF, WebP and BMP files, with a 20 MiB input limit. It does **not** implement screen capture, screenshot-to-chat attachment, pixel decoding, OCR or vision inference. Do not mark screenshot-to-chat or capture-permission cases PASS until that separate feature exists.
 
 | ID | Scenario | Procedure | Expected result |
 |---|---|---|---|
-| C-01 | Capture supported image | Capture a permitted test screenshot and attach it. | Preview is visible and the attachment is associated with the intended message. |
-| C-02 | Capture permission denied | Deny the relevant OS permission, then retry. | Clear permission guidance; no crash or infinite spinner. |
-| C-03 | Capture cancelled | Cancel the OS picker/capture flow. | UI returns to idle without a phantom attachment. |
-| C-04 | Unsupported or oversized image | Attach a synthetic unsupported/oversized image. | Clear validation message; app remains responsive. |
-| C-05 | Attachment send failure | Simulate an unavailable model/runtime or controlled request failure. | Failure is visible; attachment state is not falsely marked as processed. |
-| C-06 | Privacy check | Inspect diagnostic output for the test flow. | No image bytes, document contents, secrets, or private paths are logged by default. |
+| C-01 | Image metadata inspection | Select a synthetic supported image under 20 MiB using the image inspector. | Header metadata is returned; no image preview, OCR, chat attachment or model inference is claimed. |
+| C-02 | Oversized image | Select a synthetic image larger than 20 MiB. | Clear size rejection; no crash, hang or stale image result. |
+| C-03 | Malformed or truncated image | Select synthetic invalid image bytes with a supported extension. | Explicit validation error; no crash or unbounded allocation. |
+| C-04 | Same-file retry | Select the same image again after a failed validation. | The same file can be selected again; old error/result state is cleared appropriately. |
+| C-05 | Screenshot-to-chat capability | Look for a screen-capture or chat-image attachment path in the current build. | Mark **NOT IMPLEMENTED / BLOCKED**. The current UI has no screenshot capture or chat attachment path; do not report this as a passing test or imply the metadata inspector sends images to a model. |
+| C-06 | Capture permission flow | Attempt to exercise OS screen-capture permission prompts. | Mark **NOT APPLICABLE / BLOCKED** until screen capture is implemented; no capture permission flow exists in the current build. |
+| C-07 | Privacy check | Inspect diagnostic output for image inspection. | No image bytes, document contents, secrets or private paths are logged by default. |
 
 ## D. Navigation, sublinks, and UI freeze recovery
 
