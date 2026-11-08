@@ -21,14 +21,12 @@ const targetDir = process.env.CARGO_TARGET_DIR || path.join(manifestRoot, 'targe
 const destinationDir = path.join(manifestRoot, 'binaries');
 const destination = path.join(destinationDir, 'ujani-pdf-worker-' + target + extension);
 fs.mkdirSync(destinationDir, { recursive: true });
-// Tauri's build script can validate configured external binaries while Cargo
-// compiles this package. Seed a harmless placeholder to break that bootstrap
-// dependency; replace it with the compiled executable before any app build.
-if (!fs.existsSync(destination)) fs.writeFileSync(destination, '');
+// Skip only Tauri's app-context build step while compiling the isolated worker.
+// The normal app build later runs build.rs and validates the real staged sidecar.
 const cargoArgs = ['build', '--manifest-path', manifest, '--bin', 'ujani-pdf-worker', '--locked'];
 if (!debugBuild) cargoArgs.push('--release');
 if (explicitTarget || process.env.TAURI_ENV_TARGET_TRIPLE) cargoArgs.push('--target', target);
-const result = spawnSync('cargo', cargoArgs, { stdio: 'inherit' });
+const result = spawnSync('cargo', cargoArgs, { stdio: 'inherit', env: { ...process.env, UJANI_PDF_WORKER_BUILD: '1' } });
 if (result.status !== 0) process.exit(result.status ?? 1);
 const built = path.join(targetDir, ...(explicitTarget || process.env.TAURI_ENV_TARGET_TRIPLE ? [target] : []), profile, 'ujani-pdf-worker' + extension);
 if (!fs.existsSync(built)) throw new Error('PDF worker build output was not found: ' + built);
