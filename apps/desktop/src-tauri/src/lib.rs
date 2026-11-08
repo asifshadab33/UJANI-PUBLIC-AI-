@@ -505,6 +505,8 @@ fn ensure_task_not_cancelled(token: &CancellationToken) -> Result<(), String> {
 /// Registers a task and consumes any bounded cancellation request received before registration.
 fn register_active_task<'a>(control: &'a TaskControlState, task_id: &str) -> Result<ActiveTaskRegistration<'a>, String> {
     if !valid_command_identifier(task_id, 96) { return Err("Invalid task identifier.".into()); }
+    // Preserve the stricter identifier contract required by the resource reservation queue.
+    resource_runtime::validate_task_id(task_id)?;
     let token = CancellationToken::new();
     // Keep active -> pending lock order consistent with request_task_cancellation.
     let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -1192,6 +1194,14 @@ async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base
 #[cfg(test)]
 mod pdf_cancellation_registration_tests {
     use super::{register_active_task, request_task_cancellation, TaskControlState, MAX_PENDING_CANCELLATIONS};
+
+    #[test]
+    fn registration_preserves_resource_queue_identifier_validation() {
+        let control = TaskControlState::default();
+        assert!(register_active_task(&control, "pdf-upload.valid").is_err());
+        assert!(register_active_task(&control, "pdf-upload:valid").is_err());
+        assert!(register_active_task(&control, "pdf-upload-valid").is_ok());
+    }
 
     #[test]
     fn cancellation_during_native_pdf_preparation_reaches_registered_task() {
