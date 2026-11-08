@@ -273,3 +273,74 @@ pub(crate) fn walk_directory(
 
     Ok(WalkResult { root, files, truncated })
 }
+
+
+#[cfg(test)]
+mod walk_tests {
+    use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use tokio_util::sync::CancellationToken;
+
+    fn root(label: &str) -> std::path::PathBuf {
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("ujani-walk-{label}-{id}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn options(max_depth: usize, max_entries: usize, links: LinkPolicy) -> WalkOptions {
+        WalkOptions {
+            max_depth,
+            max_entries,
+            recursive: true,
+            links,
+            errors: WalkErrorPolicy::SkipAndMarkTruncated,
+        }
+    }
+
+    #[test]
+    fn shared_walker_bounds_depth_and_entry_count() {
+        let folder = root("bounds");
+        fs::write(folder.join("root.txt"), "root").unwrap();
+        fs::create_dir_all(folder.join("one").join("two")).unwrap();
+        fs::write(folder.join("one").join("nested.txt"), "nested").unwrap();
+        fs::write(folder.join("one").join("two").join("deep.txt"), "deep").unwrap();
+
+        let walked = walk_directory(&folder, options(1, 20, LinkPolicy::Skip), &CancellationToken::new()).unwrap();
+        assert_eq!(walked.files.len(), 2);
+        assert!(walked.truncated);
+
+        let limited = walk_directory(&folder, options(6, 1, LinkPolicy::Skip), &CancellationToken::new()).unwrap();
+        assert!(limited.truncated);
+        assert!(limited.files.len() <= 1);
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_walker_skips_links_or_rejects_them_under_strict_policy() {
+        use std::os::unix::fs::symlink;
+        let folder = root("links");
+        let outside = root("outside");
+        fs::write(outside.join("secret.txt"), "secret").unwrap();
+        symlink(outside.join("secret.txt"), folder.join("linked.txt")).unwrap();
+
+        let skipped = walk_directory(&folder, options(2, 20, LinkPolicy::Skip), &CancellationToken::new()).unwrap();
+        assert!(skipped.files.is_empty());
+        assert!(!skipped.truncated);
+
+        let rejected = walk_directory(&folder, options(0, 20, LinkPolicy::Reject), &CancellationToken::new());
+        assert!(rejected.is_err());
+        fs::remove_dir_all(folder).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn shared_walker_observes_cancellation_before_traversal() {
+        let folder = root("cancel");
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        assert!(walk_directory(&folder, options(2, 20, LinkPolicy::Skip), &cancellation).is_err());
+        fs::remove_dir_all(folder).unwrap();
+    }
+}
