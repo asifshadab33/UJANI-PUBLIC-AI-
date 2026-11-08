@@ -1233,8 +1233,13 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
 
 /// Reads aggregate OS security-provider status after an explicit user request.
 #[tauri::command]
-fn get_security_provider_status() -> Vec<security_providers::SecurityProviderStatus> {
-    security_providers::read_only_status()
+fn get_security_provider_status(
+    provider_ids: Vec<String>,
+) -> Result<Vec<security_providers::SecurityProviderStatus>, String> {
+    if provider_ids.len() > 2 {
+        return Err("Security provider selection exceeds the supported limit.".into());
+    }
+    security_providers::read_only_status(&provider_ids)
 }
 
 macro_rules! ujani_invoke_handler {
