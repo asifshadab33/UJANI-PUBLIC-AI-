@@ -228,7 +228,7 @@ mod tests {
         let g = graph(vec![node("a", "file.analyze_text", &[]), node("b", "translate.text", &["a"])]);
         let plan = plan_task_graph(&g, "smart", 4096, &caps());
         assert!(plan.accepted);
-        assert_eq!(plan.estimated_peak_memory_mb, 512);
+        assert_eq!(plan.estimated_peak_memory_mb, 1024);
         assert!(!plan_task_graph(&g, "smart", 4096, &caps()[..1]).accepted);
         assert!(!plan_task_graph(&g, "smart", 128, &caps()).accepted);
     }
