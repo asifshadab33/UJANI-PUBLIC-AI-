@@ -343,73 +343,48 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
 /// Collects bounded file metadata beneath the folder selected through the native picker.
 /// Walks a user-selected directory with depth and entry-count limits.
 fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathBuf, Vec<Candidate>, usize, bool), String> {
-    let meta = fs::symlink_metadata(folder).map_err(|e| format!("Cannot inspect folder: {e}"))?;
-    if crate::safe_fs::is_reparse_point(&meta) || !meta.is_dir() {
-        return Err("Choose a real folder, not a symbolic link.".into());
-    }
-    let root = fs::canonicalize(folder).map_err(|e| format!("Cannot resolve folder: {e}"))?;
-    let mut stack = vec![(root.clone(), 0usize)];
+    let report = crate::safe_fs::walk_directory(
+        folder,
+        crate::safe_fs::WalkOptions {
+            max_depth: MAX_DEPTH,
+            max_entries: MAX_ENTRIES,
+            link_policy: crate::safe_fs::LinkPolicy::Skip,
+            error_policy: crate::safe_fs::WalkErrorPolicy::BestEffort,
+        },
+        || token.is_cancelled(),
+    )?;
+    let root = report.root;
     let mut candidates = Vec::new();
-    let mut entries_seen = 0usize;
     let mut scanned_files = 0usize;
-    let mut truncated = false;
+    let mut truncated = report.truncated;
 
-    while let Some((directory, depth)) = stack.pop() {
+    for entry in report.entries {
         if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
-        if depth > MAX_DEPTH { truncated = true; continue; }
-        let directory_meta = match fs::symlink_metadata(&directory) {
-            Ok(meta) => meta,
+        if !entry.is_file { continue; }
+        scanned_files += 1;
+        let file = match crate::safe_fs::open_regular_file(&entry.path) {
+            Ok(file) => file,
             Err(_) => { truncated = true; continue; }
         };
-        if crate::safe_fs::is_reparse_point(&directory_meta) || !directory_meta.is_dir() { continue; }
-        let canonical_directory = match fs::canonicalize(&directory) {
-            Ok(path) => path,
-            Err(_) => { truncated = true; continue; }
+        let metadata = match file.metadata() {
+            Ok(metadata) if metadata.is_file() => metadata,
+            _ => { truncated = true; continue; }
         };
-        if !canonical_directory.starts_with(&root) { truncated = true; continue; }
-        let iterator = match fs::read_dir(&canonical_directory) {
-            Ok(entries) => entries,
-            Err(error) if depth == 0 => return Err(format!("Cannot read selected folder: {error}")),
-            Err(_) => { truncated = true; continue; }
-        };
-        for item in iterator {
-            if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
-            let item = match item { Ok(entry) => entry, Err(_) => { truncated = true; continue; } };
-            entries_seen += 1;
-            if entries_seen > MAX_ENTRIES { truncated = true; break; }
-            let kind = match item.file_type() { Ok(kind) => kind, Err(_) => { truncated = true; continue; } };
-            if kind.is_symlink() { continue; }
-            if kind.is_dir() {
-                if depth < MAX_DEPTH { stack.push((item.path(), depth + 1)); } else { truncated = true; }
-                continue;
-            }
-            if !kind.is_file() { continue; }
-            scanned_files += 1;
-            let path = match fs::canonicalize(item.path()) { Ok(path) => path, Err(_) => { truncated = true; continue; } };
-            if !path.starts_with(&root) { truncated = true; continue; }
-            let file = match crate::safe_fs::open_regular_file(&path) { Ok(file) => file, Err(_) => { truncated = true; continue; } };
-            let metadata = match file.metadata() { Ok(meta) => meta, Err(_) => { truncated = true; continue; } };
-            if !metadata.is_file() { truncated = true; continue; }
-            #[cfg(windows)] {
-                use std::os::windows::fs::MetadataExt;
-                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-                if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                    truncated = true;
-                    continue;
-                }
-            }
-            let name = item.file_name().to_string_lossy().into_owned();
-            let extension = path.extension().and_then(|v| v.to_str()).unwrap_or("").to_ascii_lowercase();
-            let modified_unix_ms = metadata.modified().ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
-            let modified_unix_ns = modified_unix_ns(&metadata);
-            let identity = file_identity(&file, &metadata);
-            candidates.push(Candidate { path, name, extension, size: metadata.len(), modified_unix_ms, modified_unix_ns, identity });
-        }
-        if entries_seen > MAX_ENTRIES { break; }
+        let path = entry.path;
+        let name = entry.name.to_string_lossy().into_owned();
+        let extension = path.extension().and_then(|value| value.to_str())
+            .unwrap_or("").to_ascii_lowercase();
+        let modified_unix_ms = metadata.modified().ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
+        let modified_unix_ns = modified_unix_ns(&metadata);
+        let identity = file_identity(&file, &metadata);
+        candidates.push(Candidate {
+            path, name, extension, size: metadata.len(), modified_unix_ms,
+            modified_unix_ns, identity,
+        });
     }
-    candidates.sort_by_key(|a| a.name.to_lowercase());
+    candidates.sort_by_key(|candidate| candidate.name.to_lowercase());
     Ok((root, candidates, scanned_files, truncated))
 }
 
