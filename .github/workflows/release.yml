@@ -177,7 +177,7 @@ jobs:
           identities="$(security find-identity -v -p codesigning "$keychain_path")"
           grep -Fq -- "$APPLE_SIGNING_IDENTITY" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
           grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
-          mapfile -t matching_identities < <(printf '%s\\n' "$identities" | grep -F -- "\"$APPLE_SIGNING_IDENTITY\"" || true)
+          mapfile -t matching_identities < <(printf '%s\n' "$identities" | grep -F -- "\"$APPLE_SIGNING_IDENTITY\"" || true)
           [[ "${#matching_identities[@]}" -eq 1 ]] || { echo "::error::APPLE_SIGNING_IDENTITY must resolve to exactly one keychain identity; found ${#matching_identities[@]}."; exit 1; }
           identity_hash="$(awk '{ print $2 }' <<< "${matching_identities[0]}")"
           [[ "$identity_hash" =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "::error::Could not resolve one exact Apple signing identity hash."; exit 1; }
