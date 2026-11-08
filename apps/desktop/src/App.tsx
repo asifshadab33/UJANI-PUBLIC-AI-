@@ -505,28 +505,34 @@ export default function App() {
     if (!request.trim() || routeBusy) return;
     setRouteBusy(true); setRouteError(""); setRouteDecision(null);
     try {
-      const args = {
-        taskId: "desktop-task-preview",
-        operation: "local.ai.generate",
-        mode: executionMode,
-        requiredCapabilities: ["cpu"],
-        availableCapabilities: device?.logical_cpus ? ["cpu"] : [],
-        localMemoryRequiredMb: 128,
-        availableMemoryMb: device?.available_memory_mb ?? 0,
-        externalDataApproved: externalApproved,
-        requestedCollaborationRounds: 2
-      };
-      if (isTauri()) {
-        setRouteDecision(await invoke<RouteDecision>("evaluate_task_route", args));
-      } else {
-        const local = !!device;
+      if (!isTauri()) {
         setRouteDecision({
           mode: executionMode, action: "blocked",
           allowed: false, external_data_transfer_permitted: false, collaboration_rounds: 0,
           reason: "Browser preview cannot evaluate native capabilities. Open the desktop runtime for policy evaluation.",
           enforcement_boundary_required: true
         });
+        return;
       }
+      // Use the same live OS/runtime capability inventory as native execution.
+      // A CPU alone is not sufficient: local chat also needs the local model service.
+      const snapshot = await invoke<CapabilitySnapshot>("get_capability_snapshot");
+      setCapabilitySnapshot(snapshot);
+      const operation = snapshot.operations.find((item) => item.id === "local.ai.generate");
+      const args = {
+        taskId: "desktop-task-preview",
+        operation: "local.ai.generate",
+        mode: executionMode,
+        requiredCapabilities: operation?.required_capabilities ?? ["cpu", "ollama.local"],
+        availableCapabilities: snapshot.capabilities
+          .filter((item) => item.state === "available")
+          .map((item) => item.id),
+        localMemoryRequiredMb: operation?.minimum_available_memory_mb ?? 512,
+        availableMemoryMb: snapshot.available_memory_mb,
+        externalDataApproved: externalApproved,
+        requestedCollaborationRounds: 2
+      };
+      setRouteDecision(await invoke<RouteDecision>("evaluate_task_route", args));
     } catch (error) { setRouteError(String(error)); }
     finally { setRouteBusy(false); }
   }
