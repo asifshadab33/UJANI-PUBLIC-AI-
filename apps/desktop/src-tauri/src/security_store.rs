@@ -1238,6 +1238,19 @@ mod tests {
     }
 
     #[test]
+    fn cloud_budget_rejects_zero_and_out_of_bounds_reservations() {
+        let mut db = db();
+        assert!(reserve_budget_db(&mut db, 0, 8_192, 86_400).is_err());
+        assert!(reserve_budget_db(&mut db, 32 * 1024 + 1, 8_192, 86_400).is_err());
+        assert!(reserve_budget_db(&mut db, 100, 0, 86_400).is_err());
+        assert!(reserve_budget_db(&mut db, 100, 8_193, 86_400).is_err());
+        let used: i64 = db.query_row(
+            "SELECT COALESCE(SUM(reserved_tokens), 0) FROM cloud_budget", [], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(used, 0);
+    }
+
+    #[test]
     fn cloud_budget_reserves_tokens_atomically_and_fails_closed() {
         let mut db = db();
         let status = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
