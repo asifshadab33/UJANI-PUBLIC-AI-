@@ -287,27 +287,15 @@ async fn execute_cloud_ai_task(
   return Err("Cloud transfer was not approved in UJANI. No request was sent.".into());
  }
  cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
+ let provider_host = cloud_gateway::endpoint_host(&endpoint)
+  .ok_or_else(|| "Cloud endpoint host could not be validated. No request was sent.".to_string())?;
  let preview: String = prompt.chars().take(600).collect();
  let truncated = prompt.chars().count() > 600;
  let consent_message = format!(
-  "UJANI is about to send this single request to an external provider.\n\nEndpoint: {endpoint}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
-  prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
+  "UJANI is about to send this single request to an external provider.\\n\\nProvider host: {provider_host}\\nModel: {model}\\nPrompt size: {} characters\\n\\nPrompt preview:\\n{}{}\\n\\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  prompt.chars().count(), preview, if truncated { "\\n[preview truncated]" } else { "" }
  );
- if !native_consent::confirm_native(&app, "Approve one-time cloud data transfer", consent_message).await {
-  return Err("Cloud transfer was not approved in the native confirmation dialog. No request was sent.".into());
- }
- if !validate_model_identifier(&model) {
-  return Err("Model identifier cannot be recorded safely in execution provenance.".into());
- }
- let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-  .map_err(|e| e.to_string())?.as_millis() as u64;
- let network_activity = NetworkActivity::inferred(vec![
-  cloud_gateway::endpoint_host(&endpoint).unwrap_or_else(|| "configured-provider-endpoint".into())
- ]);
- let input_digest = sha256_hex(prompt.as_bytes());
- let receipt_model_id = model.clone();
- // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
- let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
+ // Register before showing consent so the user can cancel while the native dialog is pending.
  let token = CancellationToken::new();
  {
   let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -315,30 +303,38 @@ async fn execute_cloud_ai_task(
   active.insert(task_id.clone(), token.clone());
  }
  let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+ if !native_consent::confirm_native(
+  &app,
+  "Approve one-time cloud data transfer",
+  consent_message,
+  token.clone(),
+  Duration::from_secs(120),
+ ).await {
+  return Err("Cloud transfer consent was declined, cancelled, or timed out. No request was sent.".into());
+ }
+ if !validate_model_identifier(&model) {
+  return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+ }
+ let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .map_err(|e| e.to_string())?.as_millis() as u64;
+ let network_activity = NetworkActivity::inferred(vec![provider_host]);
+ let input_digest = sha256_hex(prompt.as_bytes());
+ let receipt_model_id = model.clone();
+ // This reference binds the native approval to this task, endpoint, model and exact prompt digest.
+ let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
  flush_pending_receipts(&app).await;
- let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
-  Ok(slot) => slot,
-  Err(error) => {
-   return Err(error);
-  }
- };
+ let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
  if let Some(warning) = receipt_slot.archive_warning() {
   emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
  }
- // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
- let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
-  Ok(value) => value,
-  Err(error) => {
-   return Err(error);
-  }
- };
- emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
+ let mut budget = security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192)?;
+ emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.status().remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
- let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
+ let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter, || budget.mark_dispatched());
  let mut receipt_warning = None;
  let result = tokio::select! {
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
-  outcome = tokio::time::timeout(std::time::Duration::from_secs(95), request) => {
+  outcome = tokio::time::timeout(Duration::from_secs(95), request) => {
    match outcome {
     Ok(value) => value,
     Err(_) => Err("Cloud task exceeded the 95-second time budget.".into()),
@@ -356,9 +352,9 @@ async fn execute_cloud_ai_task(
    adapter_id: "byok.cloud-gateway".into(),
    adapter_version: env!("CARGO_PKG_VERSION").into(),
    model_id: Some(receipt_model_id),
-    model_version: Some("provider-reported-unverified".into()),
+   model_version: Some("provider-reported-unverified".into()),
    input_sha256: input_digest,
-   output_sha256: sha256_hex(output.as_bytes()),
+   output_sha256: sha256_hex(output.text.as_bytes()),
    started_at_unix_ms,
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
@@ -373,8 +369,19 @@ async fn execute_cloud_ai_task(
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
  }
  if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
- result
+ let budget_warning = if let Ok(output) = &result {
+  match budget.settle(output.total_tokens) {
+   Ok(()) => None,
+   Err(error) => Some(format!("Cloud usage reconciliation failed; the conservative reservation remains counted: {error}")),
+  }
+ } else {
+  drop(budget); // Unsent requests refund automatically; dispatched requests remain conservatively charged.
+  None
+ };
+ if let Some(message) = budget_warning { emit_task_progress(&app, &task_id, "cloud_budget_warning", &message, 100); }
+ result.map(|output| output.text)
 }
+
 /// Explicitly downloads a named model through the local Ollama service only.
 #[tauri::command]
 async fn pull_ollama_model(
@@ -1258,6 +1265,7 @@ macro_rules! ujani_invoke_handler {
             history::delete_task_history, history::clear_task_history,
             security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
             security_store::get_cloud_budget_status,
+            security_store::set_cloud_budget_limit,
             $($peer_command),*
         ]
     };
