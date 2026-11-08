@@ -3,7 +3,6 @@
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fs,
     io::Read,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -233,6 +232,7 @@ fn hash_file(path: &Path, limit: u64) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> PathBuf {
