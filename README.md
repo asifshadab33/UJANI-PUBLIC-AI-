@@ -8,6 +8,7 @@ UJANI Public AI is an open-source, device-first AI runtime concept. It aims to h
 
 ## Goals
 
+- **Primary objective:** use computing resources already available on the user's device, and later explicitly trusted/authorised idle resources, to reduce avoidable dependence on central AI data centres and their electricity use.
 - Discover available CPU, memory, GPU/NPU, storage, installed runtimes and model compatibility.
 - Analyse a request and split it into independently verifiable tasks.
 - Prefer local models and deterministic local tools when suitable.
@@ -19,6 +20,7 @@ UJANI Public AI is an open-source, device-first AI runtime concept. It aims to h
 ## Non-goals
 
 - No public marketplace or anonymous network of other people's devices.
+- No waking sleeping devices, silent background compute, or claiming energy savings without equivalent-workload measurement.
 - No silent mining or background use of device resources.
 - No unrestricted shell access for an AI model.
 - No automatic upload of complete user tasks or files to a cloud service.
@@ -35,7 +37,7 @@ UJANI Public AI is an open-source, device-first AI runtime concept. It aims to h
 8. **Verifier** — checks outputs and records provenance.
 9. **User interface** — shows progress, resource use, approvals and execution location.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/RESOURCE-AWARE-EXECUTION.md](docs/RESOURCE-AWARE-EXECUTION.md), [docs/ENERGY-IMPACT-METHODOLOGY.md](docs/ENERGY-IMPACT-METHODOLOGY.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Desktop prototype
 
