@@ -3,8 +3,8 @@
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::{self, Read},
+    fs,
+    io::Read,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -124,65 +124,49 @@ pub async fn find_duplicate_files(
 }
 
 fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<DuplicateScanResult, String> {
-    let root_meta = fs::symlink_metadata(folder).map_err(|error| format!("Cannot inspect folder: {error}"))?;
-    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
-        return Err("Choose a real folder, not a symbolic link.".into());
-    }
-    let root = fs::canonicalize(folder).map_err(|error| format!("Cannot resolve folder: {error}"))?;
-    let root_name = root.file_name().map(|name| name.to_string_lossy().into_owned())
+    let walked = crate::safe_fs::walk_directory(
+        folder,
+        crate::safe_fs::WalkOptions {
+            max_depth: MAX_DEPTH,
+            max_entries: MAX_ENTRIES,
+            recursive: true,
+            links: crate::safe_fs::LinkPolicy::Skip,
+            errors: crate::safe_fs::WalkErrorPolicy::SkipAndMarkTruncated,
+        },
+        token,
+    ).map_err(|error| format!("Cannot scan selected folder: {error}"))?;
+    let root_name = walked.root.file_name().map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Selected folder".into());
-    let mut stack = vec![(root.clone(), 0usize)];
     let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
-    let mut entries_seen = 0usize;
     let mut scanned_files = 0usize;
-    let mut truncated = false;
+    let mut truncated = walked.truncated;
 
-    while let Some((directory, depth)) = stack.pop() {
-        if token.is_cancelled() { return Err("Duplicate scan cancelled by user.".into()); }
-        if depth > MAX_DEPTH { truncated = true; continue; }
-        let meta = match fs::symlink_metadata(&directory) {
-            Ok(meta) => meta,
+    for entry in walked.files {
+        if token.is_cancelled() {
+            return Err("Duplicate scan cancelled by user.".into());
+        }
+        scanned_files += 1;
+        if entry.size_bytes == 0 || entry.size_bytes > MAX_FILE_BYTES {
+            if entry.size_bytes > MAX_FILE_BYTES { truncated = true; }
+            continue;
+        }
+        let file = match crate::safe_fs::open_regular_file(&entry.path) {
+            Ok(file) => file,
             Err(_) => { truncated = true; continue; }
         };
-        if meta.file_type().is_symlink() || !meta.is_dir() { continue; }
-        let canonical = match fs::canonicalize(&directory) {
-            Ok(path) if path.starts_with(&root) => path,
+        let metadata = match file.metadata() {
+            Ok(metadata) if metadata.is_file() => metadata,
             _ => { truncated = true; continue; }
         };
-        let entries = match fs::read_dir(&canonical) {
-            Ok(entries) => entries,
-            Err(error) if depth == 0 => return Err(format!("Cannot read selected folder: {error}")),
-            Err(_) => { truncated = true; continue; }
-        };
-        for entry in entries {
-            if token.is_cancelled() { return Err("Duplicate scan cancelled by user.".into()); }
-            let entry = match entry { Ok(entry) => entry, Err(_) => { truncated = true; continue; } };
-            entries_seen += 1;
-            if entries_seen > MAX_ENTRIES { truncated = true; break; }
-            let kind = match entry.file_type() { Ok(kind) => kind, Err(_) => { truncated = true; continue; } };
-            if kind.is_symlink() { continue; }
-            if kind.is_dir() {
-                if depth < MAX_DEPTH { stack.push((entry.path(), depth + 1)); } else { truncated = true; }
-                continue;
-            }
-            if !kind.is_file() { continue; }
-            scanned_files += 1;
-            let path = match fs::canonicalize(entry.path()) {
-                Ok(path) if path.starts_with(&root) => path,
-                _ => { truncated = true; continue; }
-            };
-            let metadata = match fs::metadata(&path) { Ok(metadata) => metadata, Err(_) => { truncated = true; continue; } };
-            if metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
-                if metadata.len() > MAX_FILE_BYTES { truncated = true; }
-                continue;
-            }
-            by_size.entry(metadata.len()).or_default().push(Candidate {
-                path,
-                file_name: entry.file_name().to_string_lossy().into_owned(),
-                size_bytes: metadata.len(),
-            });
+        if metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
+            truncated = true;
+            continue;
         }
-        if entries_seen > MAX_ENTRIES { break; }
+        by_size.entry(metadata.len()).or_default().push(Candidate {
+            path: entry.path,
+            file_name: entry.name.to_string_lossy().into_owned(),
+            size_bytes: metadata.len(),
+        });
     }
 
     let mut total_hash_bytes = 0u64;
@@ -234,18 +218,10 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
 }
 
 fn hash_file(path: &Path, limit: u64) -> Result<String, String> {
-    let mut file = open_no_follow(path).map_err(|error| error.to_string())?;
+    let mut file = crate::safe_fs::open_regular_file(path).map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > limit {
         return Err("File is not eligible for bounded hashing.".into());
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err("Reparse-point files are not eligible for hashing.".into());
-        }
     }
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
     file.by_ref().take(limit.saturating_add(1)).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
