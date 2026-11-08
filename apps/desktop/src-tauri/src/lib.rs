@@ -1094,6 +1094,7 @@ fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Resul
     pending.insert(task_id.to_string(), now); Ok(true)
 }
 
+/// Cancels a registered task and emits a metadata-only acknowledgement when accepted.
 #[tauri::command]
 fn cancel_active_task(app: AppHandle, control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
     let accepted = request_task_cancellation(&control, &task_id)?;
@@ -1185,6 +1186,7 @@ fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
 }
 
 /// Runs a bounded blocking worker while retaining its permit until the worker exits.
+/// Runs bounded PDF upload decoding while holding its admission permit through worker exit.
 fn spawn_bounded_pdf_worker<T, F, R>(slots: Arc<tokio::sync::Semaphore>, work: F, on_permit_released: R) -> Result<tokio::task::JoinHandle<T>, String>
 where
     T: Send + 'static,
@@ -1201,6 +1203,7 @@ where
 }
 
 /// Decodes the bounded PDF payload off the async executor under a single-worker limit.
+/// Decodes the upload payload on the blocking pool and reports decoder lifecycle stages.
 async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base64: String) -> Result<Vec<u8>, String> {
     let release_app = app.clone();
     let release_task_id = task_id.clone();
