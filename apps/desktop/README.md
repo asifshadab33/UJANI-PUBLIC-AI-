@@ -38,7 +38,7 @@ To prepare the first release:
 3. Update `apps/desktop/src-tauri/tauri.conf.json` version, commit and push, then create and push the matching tag, for example `v0.1.0`. The tag without its leading `v` must exactly match the app version.
 4. The release workflow first runs frontend and Rust checks, then builds Windows MSI/NSIS, Linux DEB/AppImage, and macOS Intel/Apple Silicon DMG artifacts. It merges signed updater entries into `latest.json`, publishes only after all platform builds finish, and attaches SHA-256 checksums.
 
-The Tauri updater signature is separate from operating-system publisher signing. The workflow accepts optional `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD`, `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` secrets, but these must be configured and verified by the repository owner. Until then, Windows/macOS may show publisher or Gatekeeper warnings even though Tauri verifies updater payload signatures. Add and test platform signing/notarization before broad public distribution.
+The Tauri updater signature is separate from operating-system publisher signing. **Before pushing a release tag**, configure these repository Actions values: Windows secrets `WINDOWS_CERTIFICATE` (base64 PFX) and `WINDOWS_CERTIFICATE_PASSWORD`, plus the `WINDOWS_TIMESTAMP_URL` repository variable; macOS secrets `APPLE_CERTIFICATE` (base64 Developer ID .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific password) and `APPLE_TEAM_ID`. The release workflow rejects a tagged build when the platform-specific values are missing. Keep certificate/private-key material in GitHub secrets only. A valid Authenticode signature verifies the publisher signature but does not guarantee SmartScreen reputation or suppress first-download warnings. macOS signing/notarization must also be verified from the generated app and DMG evidence.
 
 From this directory:
 
@@ -132,3 +132,8 @@ These choices keep the application honest and preserve its pre-alpha status. The
 ## Audit hardening
 
 See [Security review](../../docs/SECURITY_REVIEW_2026-11.md) and [Fuzzing guide](../../docs/FUZZING.md). The fuzz harnesses are added but not yet run as a completed campaign.
+
+
+## Platform support policy
+
+See [the proposed platform support baseline and release gates](../../docs/PLATFORM_SUPPORT.md). The matrix is a proposed policy, not certification: minimum-version installation and launch tests must pass before a platform/version is advertised as supported.
