@@ -236,6 +236,22 @@ pub(crate) fn walk_directory(
             if !metadata.is_file() {
                 continue;
             }
+            // Open the final path without following links before canonicalizing it.
+            // This closes the final-component symlink/reparse race at the file boundary.
+            let handle = match open_regular_file(&path) {
+                Ok(handle) => handle,
+                Err(error) if options.errors == WalkErrorPolicy::Reject || options.links == LinkPolicy::Reject => {
+                    return Err(format!("Cannot safely open selected file: {error}"));
+                }
+                Err(_) => { truncated = true; continue; }
+            };
+            let opened_metadata = match handle.metadata() {
+                Ok(metadata) if metadata.is_file() && !is_reparse_point(&metadata) => metadata,
+                _ if options.links == LinkPolicy::Reject => {
+                    return Err("A selected file is not a regular non-reparse file.".into());
+                }
+                _ => { truncated = true; continue; }
+            };
             let canonical_file = match std::fs::canonicalize(&path) {
                 Ok(file) if file.starts_with(&root) => file,
                 Ok(_) if options.errors == WalkErrorPolicy::Reject => {
@@ -246,24 +262,10 @@ pub(crate) fn walk_directory(
                 }
                 _ => { truncated = true; continue; }
             };
-            let canonical_metadata = match std::fs::symlink_metadata(&canonical_file) {
-                Ok(metadata) => metadata,
-                Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                    return Err(format!("Cannot inspect selected file: {error}"));
-                }
-                Err(_) => { truncated = true; continue; }
-            };
-            if is_reparse_point(&canonical_metadata) || !canonical_metadata.is_file() {
-                if options.links == LinkPolicy::Reject {
-                    return Err("A selected file is not a regular non-reparse file.".into());
-                }
-                truncated = true;
-                continue;
-            }
             files.push(WalkFile {
                 path: canonical_file,
                 name: entry.file_name(),
-                size_bytes: canonical_metadata.len(),
+                size_bytes: opened_metadata.len(),
             });
         }
         if entries_seen > options.max_entries {
