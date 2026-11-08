@@ -287,7 +287,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: \${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
           fetch-depth: 1
       - name: Generate source dependency SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
@@ -300,9 +300,9 @@ jobs:
           upload-release-assets: false
       - name: Download draft release assets
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          TAG: \${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          REPOSITORY: \${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           rm -rf release-assets
@@ -312,7 +312,7 @@ jobs:
       - name: Verify every Tauri updater signature before approval
         shell: bash
         env:
-          TAURI_UPDATER_PUBLIC_KEY: \${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -327,14 +327,14 @@ jobs:
           printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
 
           mapfile -d '' signatures < <(find release-assets -type f -name '*.sig' -print0)
-          if [[ "\${#signatures[@]}" -eq 0 ]]; then
+          if [[ "${#signatures[@]}" -eq 0 ]]; then
             echo "No Tauri updater signature files were downloaded; refusing to prepare evidence." >&2
             exit 1
           fi
 
           verified=0
-          for signature in "\${signatures[@]}"; do
-            artifact="\${signature%.sig}"
+          for signature in "${signatures[@]}"; do
+            artifact="${signature%.sig}"
             if [[ ! -f "$artifact" ]]; then
               echo "Signature has no matching artifact: $signature" >&2
               exit 1
@@ -398,7 +398,7 @@ jobs:
           }
           files.sort((a, b) => a.name.localeCompare(b.name));
           const lines = ['UJANI installer size report', 'Filename\tBytes\tMiB'];
-          for (const file of files) lines.push(\`\${file.name}\t\${file.bytes}\t\${file.mib}\`);
+          for (const file of files) lines.push(`${file.name}\t${file.bytes}\t${file.mib}`);
           fs.writeFileSync('INSTALLER_SIZES.txt', lines.join('\n') + '\n');
           NODE
           cp INSTALLER_SIZES.txt release-assets/INSTALLER_SIZES.txt
@@ -422,9 +422,9 @@ jobs:
           show-summary: true
       - name: Upload evidence to the draft release before approval
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          TAG: \${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          REPOSITORY: \${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
@@ -442,13 +442,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: \${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
           fetch-depth: 1
       - name: Require verified evidence on the draft release
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          TAG: \${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          REPOSITORY: \${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
@@ -458,7 +458,7 @@ jobs:
           done
       - name: Publish approved release
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          TAG: \${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          REPOSITORY: \${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
