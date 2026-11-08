@@ -63,6 +63,12 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      - name: Build and stage the target-specific PDF worker sidecar
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then node scripts/build-pdf-worker.mjs --target "${{ matrix.target }}"; else npm run build:pdf-worker; fi
+
       - name: Verify desktop dependency graph with the committed lockfile
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
 
