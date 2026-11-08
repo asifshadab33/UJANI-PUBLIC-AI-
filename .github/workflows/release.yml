@@ -234,10 +234,17 @@ jobs:
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: "UJANI Public AI ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           releaseBody: |
-            Signed desktop installers and updater metadata for UJANI Public AI.
-            Review platform notes and checksums before installation.
+            # UJANI Public AI v0.1.0 — Pre-alpha preview
+
+            This is an early, experimental preview for evaluation and feedback. It is not production-ready and must not be deployed to production infrastructure or employee endpoints.
+
+            UJANI prioritises local execution and local data handling. Cloud assistance is optional, BYOK-only and requires explicit per-task consent. No silent cloud fallback, remote execution, autonomous remediation or third-party device participation is enabled.
+
+            **Important limitations:** OS-enforced Fortress isolation, distributed Worker/Partner execution, scanned-PDF OCR/vision, production sandboxing and complete hardware/accelerator scheduling are not implemented. Review the README, release notes, platform-specific signing status and checksums before installation. Back up important data and test only on non-critical devices.
+
+            Report bugs and security issues through the repository's documented channels.
           releaseDraft: true
-          prerelease: false
+          prerelease: true
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
