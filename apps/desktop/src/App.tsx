@@ -218,12 +218,20 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen<ChatDeltaEvent>("ujani-chat-delta", (event) => {
       setLocalStreamingText((current) => current + event.payload.delta);
-    }).then((stop) => { unlisten = stop; })
-      .catch((error) => setOllamaError("Local response stream unavailable: " + String(error)));
-    return () => { unlisten?.(); };
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      if (!cancelled) setOllamaError("Local response stream unavailable: " + String(error));
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   async function loadDeviceInfo() {
@@ -1046,7 +1054,7 @@ export default function App() {
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             <div className="chat-thread" aria-live="polite">
               {localChatMessages.length === 0 && !aiBusy ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><ChatMessageContent content={message.content} /></div>)}
-              {aiBusy && <div className="chat-message assistant" aria-label="Streaming local AI response"><b>Local AI · responding</b><ChatMessageContent content={localStreamingText || "Waiting for the first response chunk…"} /></div>}
+              {aiBusy && !aiResult && <div className="chat-message assistant" aria-label="Streaming local AI response"><b>Local AI · responding</b><ChatMessageContent content={localStreamingText || "Waiting for the first response chunk…"} /></div>}
             </div>
             <div className="chat-footer"><small>{localChatMessages.length ? "Recent conversation context is sent only to your local Ollama service." : "No conversation has started yet."}</small><button type="button" onClick={() => { setLocalChatMessages([]); setAiResult(null); }} disabled={!localChatMessages.length || aiBusy}>Clear local chat</button></div>
             {aiResult && <small className="muted">{aiResult.mode_used} · {aiResult.model} · local Ollama · no cloud fallback</small>}
