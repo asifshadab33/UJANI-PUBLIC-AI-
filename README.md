@@ -69,6 +69,10 @@ Read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
 This repository currently includes the GNU General Public License v3.0. Contributions are expected to comply with that license; see [LICENSE](LICENSE).
 
+## Legal and operational notice
+
+Read [the legal and operational notice](docs/LEGAL-DISCLAIMER.md) together with the [GNU GPL v3.0 licence](LICENSE). The notice is informational and does not replace qualified legal review or applicable law.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Early contributions that are especially useful: platform capability detection, secure tool adapters, local model integration, reproducible benchmarks, threat modelling and usability testing.

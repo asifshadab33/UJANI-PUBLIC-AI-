@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ujani-release-${{ github.ref }}
+  # Manual rebuilds and tag pushes for the same release share one concurrency lock.
+  group: ujani-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -100,6 +101,101 @@ jobs:
           TAG_VERSION="${RELEASE_TAG#v}"
           test "$TAG_VERSION" = "$APP_VERSION" || { echo "::error::Release tag $RELEASE_TAG does not match app version $APP_VERSION"; exit 1; }
           node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
+      - name: Require OS publisher-signing credentials
+        shell: bash
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Windows)
+              test -n "$WINDOWS_CERTIFICATE" || { echo "::error::Missing WINDOWS_CERTIFICATE; refusing unsigned Windows release."; exit 1; }
+              test -n "$WINDOWS_CERTIFICATE_PASSWORD" || { echo "::error::Missing WINDOWS_CERTIFICATE_PASSWORD; refusing unsigned Windows release."; exit 1; }
+              test -n "$WINDOWS_TIMESTAMP_URL" || { echo "::error::Missing WINDOWS_TIMESTAMP_URL repository variable; refusing unsigned Windows release."; exit 1; }
+              ;;
+            macOS)
+              for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_KEYCHAIN_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+                if [[ -z "${!name}" ]]; then
+                  echo "::error::Missing $name; refusing unsigned/unnotarized macOS release."
+                  exit 1
+                fi
+              done
+              ;;
+          esac
+      - name: Import Windows publisher certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "ujani-publisher.pfx"
+          try {
+            $base64 = $env:WINDOWS_CERTIFICATE -replace '-----BEGIN [^-]+-----', '' -replace '-----END [^-]+-----', '' -replace '\s', ''
+            $bytes = [Convert]::FromBase64String($base64)
+            [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
+            $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $certificates = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            $certificate = $certificates | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
+            if (-not $certificate) { throw "The imported PFX has no certificate with a private key." }
+            if ($certificate.NotBefore -gt (Get-Date) -or $certificate.NotAfter -le (Get-Date)) { throw "The publisher certificate is not currently valid." }
+            "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+          finally {
+            Remove-Item -Path $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          keychain_path="$RUNNER_TEMP/ujani-build.keychain-db"
+          p12_path="$RUNNER_TEMP/ujani-developer-id.p12"
+          trap 'rm -f "$p12_path"' EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12_path"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$p12_path" -k "$keychain_path" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          identities="$(security find-identity -v -p codesigning "$keychain_path")"
+          grep -Fq -- "$APPLE_SIGNING_IDENTITY" <<< "$identities" || { echo "::error::Configured APPLE_SIGNING_IDENTITY is not present in the imported keychain."; exit 1; }
+          grep -Fq "Developer ID Application:" <<< "$identities" || { echo "::error::The imported certificate is not a Developer ID Application identity."; exit 1; }
+          matching_identities=()
+          while IFS= read -r identity_line; do
+            matching_identities+=("$identity_line")
+          done < <(printf '%s\n' "$identities" | grep -F -- "\"$APPLE_SIGNING_IDENTITY\"" || true)
+          [[ "${#matching_identities[@]}" -eq 1 ]] || { echo "::error::APPLE_SIGNING_IDENTITY must resolve to exactly one keychain identity; found ${#matching_identities[@]}."; exit 1; }
+          identity_hash="$(awk '{ print $2 }' <<< "${matching_identities[0]}")"
+          [[ "$identity_hash" =~ ^[0-9A-Fa-f]{40}$ ]] || { echo "::error::Could not resolve one exact Apple signing identity hash."; exit 1; }
+          echo "APPLE_SIGNING_IDENTITY_HASH=$identity_hash" >> "$GITHUB_ENV"
+      - name: Configure Tauri Authenticode signing
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$WINDOWS_CERTIFICATE_THUMBPRINT"
+          test -n "$WINDOWS_TIMESTAMP_URL"
+          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); const thumb=process.env.WINDOWS_CERTIFICATE_THUMBPRINT; const stamp=new URL(process.env.WINDOWS_TIMESTAMP_URL); if(!/^[0-9a-f]{40}$/i.test(thumb||'')) throw new Error('Invalid Windows signing certificate thumbprint'); if(!['http:','https:'].includes(stamp.protocol)) throw new Error('Invalid timestamp URL scheme'); c.bundle.windows={...(c.bundle.windows||{}),certificateThumbprint:thumb,digestAlgorithm:'sha256',timestampUrl:stamp.toString()}; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
       - name: Refuse release build with an empty updater public key
         run: node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if(!c.plugins.updater.pubkey) { console.error('Empty updater public key'); process.exit(1); }"
       - name: Install Linux system dependencies
@@ -145,10 +241,78 @@ jobs:
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+      - name: Verify Developer ID signature and notarize/staple macOS disk images
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          bundle_root="apps/desktop/src-tauri/target"
+          apps=()
+          while IFS= read -r -d '' app_path; do
+            apps+=("$app_path")
+          done < <(find "$bundle_root" -type d -name '*.app' -print0)
+          dmgs=()
+          while IFS= read -r -d '' dmg_path; do
+            dmgs+=("$dmg_path")
+          done < <(find "$bundle_root" -type f -name '*.dmg' -print0)
+          if [[ "${#apps[@]}" -eq 0 || "${#dmgs[@]}" -eq 0 ]]; then
+            echo "::error::Expected a macOS app bundle and DMG; refusing to publish."
+            exit 1
+          fi
+          for app in "${apps[@]}"; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+            details="$(codesign -dv --verbose=4 "$app" 2>&1)"
+            grep -q "Authority=Developer ID Application:" <<< "$details" || { echo "::error::App is not signed with a Developer ID Application certificate: $app"; exit 1; }
+            spctl --assess --type execute --verbose=2 "$app"
+          done
+          for dmg in "${dmgs[@]}"; do
+            # Sign the container itself; notarizing the nested app does not sign the DMG.
+            test -n "$APPLE_SIGNING_IDENTITY_HASH"
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY_HASH" --timestamp "$dmg"
+            codesign --verify --verbose=2 "$dmg"
+            hdiutil verify "$dmg"
+            # Tauri notarizes the app bundle; submit the distributable DMG separately.
+            xcrun notarytool submit "$dmg" --wait --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
+            # Replace the pre-notarization draft asset with the stapled disk image.
+            gh release upload "$TAG" "$dmg" --clobber --repo "$REPOSITORY"
+          done
+      - name: Delete temporary Apple signing keychain
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [[ -n "${APPLE_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$APPLE_KEYCHAIN_PATH" || true
+          fi
+      - name: Verify Authenticode signatures on Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bundleRoot = "apps/desktop/src-tauri/target/release/bundle"
+          $installers = @(Get-ChildItem -Path $bundleRoot -Recurse -File | Where-Object { $_.Extension -in @(".msi", ".exe") })
+          $msiInstallers = @($installers | Where-Object { $_.Extension -ieq ".msi" })
+          $nsisInstallers = @($installers | Where-Object { $_.Extension -ieq ".exe" })
+          if ($msiInstallers.Count -lt 1 -or $nsisInstallers.Count -lt 1) { throw "Expected at least one MSI and one NSIS EXE installer; refusing to publish." }
+          foreach ($installer in @($msiInstallers + $nsisInstallers)) {
+            $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
+            if ($signature.Status -ne "Valid") { throw "Invalid Authenticode signature on $($installer.Name): $($signature.StatusMessage)" }
+            if ($signature.SignerCertificate.Thumbprint -ne $env:WINDOWS_CERTIFICATE_THUMBPRINT) { throw "Unexpected signing certificate on $($installer.Name)." }
+            Write-Host "Verified Authenticode signature: $($installer.Name)"
+          }
 
-  publish-release:
-    name: Publish completed multi-platform release
+  prepare-release-evidence:
+    name: Verify assets and prepare release evidence
     needs: build-and-upload
+    outputs:
+      evidence_manifest_sha256: ${{ steps.capture-evidence.outputs.sha256 }}
     runs-on: ubuntu-24.04
     permissions:
       attestations: write
@@ -168,18 +332,18 @@ jobs:
           syft-version: v1.57.0
           upload-artifact: false
           upload-release-assets: false
-
-      - name: Download release assets
+      - name: Download draft release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          rm -rf release-assets
           mkdir release-assets
+          gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
-
-      - name: Verify every Tauri updater signature before publishing
+      - name: Verify every Tauri updater signature before approval
         shell: bash
         env:
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
@@ -196,9 +360,12 @@ jobs:
           test -n "$app_version"
           printf '%s' "$pubkey_b64" | base64 --decode > "$tmp/tauri.pub"
 
-          mapfile -d '' signatures < <(find release-assets -type f -name '*.sig' -print0)
+          signatures=()
+          while IFS= read -r -d '' signature_path; do
+            signatures+=("$signature_path")
+          done < <(find release-assets -type f -name '*.sig' -print0)
           if [[ "${#signatures[@]}" -eq 0 ]]; then
-            echo "No Tauri updater signature files were downloaded; refusing to publish." >&2
+            echo "No Tauri updater signature files were downloaded; refusing to prepare evidence." >&2
             exit 1
           fi
 
@@ -241,8 +408,6 @@ jobs:
             echo "Missing Windows updater signature (.msi.sig, .exe.sig or .zip.sig)." >&2
             exit 1
           fi
-
-
       - name: Generate installer size report and stage SBOM
         run: |
           set -euo pipefail
@@ -275,25 +440,90 @@ jobs:
           NODE
           cp INSTALLER_SIZES.txt release-assets/INSTALLER_SIZES.txt
           cp /tmp/ujani-source-sbom.spdx.json release-assets/ujani-source-sbom.spdx.json
-
       - name: Generate SHA-256 checksums for release assets
         run: |
           set -euo pipefail
           (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z > /tmp/ujani-release-files.list)
           (cd release-assets && xargs -0 sha256sum < /tmp/ujani-release-files.list > SHA256SUMS)
-
+      - name: Verify generated SHA-256 manifest against release assets
+        working-directory: release-assets
+        run: sha256sum -c SHA256SUMS
+      - name: Capture immutable per-run release evidence digest
+        id: capture-evidence
+        working-directory: release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This manifest covers every release asset, including SHA256SUMS,
+          # and excludes itself to avoid a recursive digest. Its digest is
+          # carried as a workflow output across the approval boundary.
+          manifest_tmp="$(mktemp)"
+          find . -type f ! -name RELEASE_EVIDENCE.sha256 -print0 | sort -z | xargs -0 sha256sum > "$manifest_tmp"
+          mv "$manifest_tmp" RELEASE_EVIDENCE.sha256
+          sha256sum -c RELEASE_EVIDENCE.sha256
+          digest="$(sha256sum RELEASE_EVIDENCE.sha256 | cut -d ' ' -f 1)"
+          printf 'sha256=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Validate generated SBOM structure
+        run: |
+          set -euo pipefail
+          jq -e '.spdxVersion and (.packages | type == "array") and (.packages | length > 0)' release-assets/ujani-source-sbom.spdx.json > /dev/null
       - name: Attest release assets and SBOM
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-path: release-assets/*
           show-summary: true
-
-      - name: Upload release evidence and publish
+      - name: Upload evidence to the draft release before approval
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS release-assets/ujani-source-sbom.spdx.json --clobber --repo "$REPOSITORY"
-          gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
+          gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
+          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS release-assets/ujani-source-sbom.spdx.json release-assets/RELEASE_EVIDENCE.sha256 --clobber --repo "$REPOSITORY"
+
+  publish-release:
+    name: Publish completed multi-platform release
+    needs: prepare-release-evidence
+    # This gate only protects publication when repository admins configure required reviewers and disable self-review.
+    # Reviewers can inspect the draft release's signatures, checksums, SBOM and provenance before approving publication.
+    environment: production-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          fetch-depth: 1
+      - name: Require verified evidence on the draft release
+        env:
+          EXPECTED_EVIDENCE_SHA256: ${{ needs.prepare-release-evidence.outputs.evidence_manifest_sha256 }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
+          assets="$(gh release view "$TAG" --repo "$REPOSITORY" --json assets --jq '.assets[].name')"
+          for required in INSTALLER_SIZES.txt SHA256SUMS ujani-source-sbom.spdx.json RELEASE_EVIDENCE.sha256; do
+            grep -Fxq "$required" <<< "$assets" || { echo "::error::Missing pre-approval evidence asset: $required"; exit 1; }
+          done
+          rm -rf release-assets
+          mkdir release-assets
+          gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
+          cd release-assets
+          test -n "$EXPECTED_EVIDENCE_SHA256"
+          actual_evidence_sha256="$(sha256sum RELEASE_EVIDENCE.sha256 | cut -d ' ' -f 1)"
+          test "$actual_evidence_sha256" = "$EXPECTED_EVIDENCE_SHA256" || { echo "::error::The release evidence manifest differs from the immutable digest captured before approval."; exit 1; }
+          sha256sum -c RELEASE_EVIDENCE.sha256
+          sha256sum -c SHA256SUMS
+          listed="$(sed -E 's/^[0-9a-f]{64}  \.\///' RELEASE_EVIDENCE.sha256 | sort)"
+          present="$(find . -type f ! -name RELEASE_EVIDENCE.sha256 -printf '%P\n' | sort)"
+          test "$listed" = "$present" || { echo "::error::Draft release assets changed after evidence preparation or are not covered by the immutable manifest."; exit 1; }
+      - name: Publish approved release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: gh release edit "$TAG" --draft=false --repo "$REPOSITORY"
