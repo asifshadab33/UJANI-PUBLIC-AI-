@@ -460,6 +460,8 @@ struct TaskControlState {
     active: Mutex<HashMap<String, CancellationToken>>,
     /// Bounded, short-lived cancellation requests that arrive before PDF task registration.
     pending_cancellations: Mutex<HashMap<String, Instant>>,
+    /// Recently completed PDF IDs reject late cancellation during receipt/history persistence.
+    finished_pdf_tasks: Mutex<HashMap<String, Instant>>,
 }
 
 /// Removes a task registration even if its command future is cancelled or unwinds.
@@ -473,11 +475,25 @@ struct ActiveTaskGuard<'a> {
 impl Drop for ActiveTaskGuard<'_> {
     fn drop(&mut self) {
         if let Ok(mut active) = self.control.active.lock() { active.remove(&self.task_id); }
+        if self.task_id.starts_with("pdf-") {
+            if let Ok(mut finished) = self.control.finished_pdf_tasks.lock() {
+                let now = Instant::now();
+                finished.retain(|_, completed_at| now.duration_since(*completed_at) <= FINISHED_PDF_TASK_TTL);
+                if !finished.contains_key(&self.task_id) && finished.len() >= MAX_FINISHED_PDF_TASKS {
+                    if let Some(oldest) = finished.iter().min_by_key(|(_, at)| **at).map(|(id, _)| id.clone()) {
+                        finished.remove(&oldest);
+                    }
+                }
+                finished.insert(self.task_id.clone(), now);
+            }
+        }
     }
 }
 
 const MAX_PENDING_CANCELLATIONS: usize = 64;
 const PENDING_CANCELLATION_TTL: Duration = Duration::from_secs(30);
+const MAX_FINISHED_PDF_TASKS: usize = 256;
+const FINISHED_PDF_TASK_TTL: Duration = Duration::from_secs(5 * 60);
 
 /// A task registration that can be created before bounded upload preparation.
 struct ActiveTaskRegistration<'a> { task_id: String, token: CancellationToken, _guard: ActiveTaskGuard<'a> }
@@ -1043,6 +1059,10 @@ fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Resul
     if let Some(token) = active.get(task_id) { token.cancel(); return Ok(true); }
     if !task_id.starts_with("pdf-") { return Ok(false); }
     let now = Instant::now();
+    let mut finished = control.finished_pdf_tasks.lock().map_err(|_| "Finished PDF registry unavailable.".to_string())?;
+    finished.retain(|_, completed_at| now.duration_since(*completed_at) <= FINISHED_PDF_TASK_TTL);
+    if finished.contains_key(task_id) { return Ok(false); }
+    drop(finished);
     let mut pending = control.pending_cancellations.lock().map_err(|_| "Pending cancellation registry unavailable.".to_string())?;
     pending.retain(|_, requested_at| now.duration_since(*requested_at) <= PENDING_CANCELLATION_TTL);
     if !pending.contains_key(task_id) && pending.len() >= MAX_PENDING_CANCELLATIONS { return Ok(false); }
