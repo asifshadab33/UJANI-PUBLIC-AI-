@@ -392,7 +392,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     #[cfg(not(target_os = "macos"))]
     let mut command = tokio::process::Command::new(exe);
     command.env_clear()
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .kill_on_drop(true);
 
     #[cfg(target_os = "linux")]
@@ -482,6 +482,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     // Do not take or write stdin until all platform resource controls are installed.
     let mut stdin = child.stdin.take().ok_or("PDF worker stdin unavailable")?;
     let mut stdout = child.stdout.take().ok_or("PDF worker stdout unavailable")?;
+    let mut stderr = child.stderr.take().ok_or("PDF worker stderr unavailable")?;
     let work = async move {
         let writer = tokio::spawn(async move { stdin.write_all(&data).await });
         let mut output = Vec::new();
@@ -490,8 +491,15 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
             .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
         let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
-        if !status.success() { return Err("PDF text extraction failed or exceeded its output limit.".into()); }
+        let mut worker_metadata = Vec::new();
+        stderr.read_to_end(&mut worker_metadata).await
+            .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
+        if !status.success() { return Err("PDF text extraction failed.".into()); }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
+        if worker_metadata == b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n" {
+            return Err("PDF text extraction was truncated at 1 MiB; search results are incomplete. Narrow the document or search query.".into());
+        }
+        if !worker_metadata.is_empty() { return Err("PDF worker returned unknown status metadata.".into()); }
         String::from_utf8(output).map_err(|_| "PDF worker returned invalid UTF-8.".into())
     };
     tokio::time::timeout(std::time::Duration::from_secs(45), work).await
