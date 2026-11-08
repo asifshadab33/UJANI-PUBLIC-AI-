@@ -25,9 +25,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-      - name: Build and stage the PDF worker sidecar for native checks
-        working-directory: apps/desktop
-        run: npm run build:pdf-worker
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Check documentation claims against protocol version
         run: bash scripts/check-doc-claims.sh
@@ -59,6 +56,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
+      - name: Build and stage the PDF worker sidecar for native checks
+        working-directory: apps/desktop
+        run: npm run build:pdf-worker
       - name: Check desktop Rust application
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
       - name: Check opt-in peer preview feature
