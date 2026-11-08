@@ -81,6 +81,7 @@ export default function App() {
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
   const [localChatMessages, setLocalChatMessages] = useState<ChatMessage[]>([]);
+  const [localStreamingText, setLocalStreamingText] = useState("");
   const [cloudChatMessages, setCloudChatMessages] = useState<ChatMessage[]>([]);
   const [result, setResult] = useState<RunResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -205,6 +206,9 @@ export default function App() {
         return;
       }
       setTaskProgress(progress);
+      if (progress.stage === "streaming" && progress.task_id.startsWith("local-ai-")) {
+        setLocalStreamingText((current) => current + progress.message);
+      }
       if (progress.stage === "receipt_warning") {
         setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
       }
@@ -542,16 +546,18 @@ export default function App() {
     const userMessage = request.trim();
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
+    setLocalStreamingText("");
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null);
     try {
       const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: chatPrompt, mode: executionMode, model: ollamaModel });
       setAiResult(result);
+      setLocalStreamingText("");
       setLocalChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: result.output }]);
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
       setRequest("");
     } catch (error) { setOllamaError(String(error)); }
-    finally { setAiBusy(false); setActiveTaskId(null); }
+    finally { setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
   }
 
   async function cancelLocalAi() {
@@ -1030,7 +1036,8 @@ export default function App() {
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             <div className="chat-thread" aria-live="polite">
-              {localChatMessages.length === 0 ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><p>{message.content}</p></div>)}
+              {localChatMessages.length === 0 && !aiBusy ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><p>{message.content}</p></div>)}
+              {aiBusy && <div className="chat-message assistant" aria-label="Streaming local AI response"><b>Local AI · responding</b><p style={{ whiteSpace: "pre-wrap" }}>{localStreamingText || "Waiting for the first response chunk…"}</p></div>}
             </div>
             <div className="chat-footer"><small>{localChatMessages.length ? "Recent conversation context is sent only to your local Ollama service." : "No conversation has started yet."}</small><button type="button" onClick={() => { setLocalChatMessages([]); setAiResult(null); }} disabled={!localChatMessages.length || aiBusy}>Clear local chat</button></div>
             {aiResult && <small className="muted">{aiResult.mode_used} · {aiResult.model} · local Ollama · no cloud fallback</small>}
