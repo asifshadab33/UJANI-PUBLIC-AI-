@@ -92,7 +92,7 @@ export default function SecurityCentre() {
       <div className="security-panel"><h3>Local provider status</h3><p>Nothing is queried until you explicitly enable a local status check.</p>
         {!localChecksEnabled && <div className="security-empty"><b>No local status check performed</b><small>Choose the wizard to review the exact metadata and approve a one-time read-only check.</small></div>}
         {localChecksEnabled && <div className="security-empty"><b>Local status check enabled for this session</b><small>Results remain on this device. This permission is not persisted after the application session ends.</small></div>}
-        {localChecksEnabled && <button type="button" className="model-run" onClick={refreshStatus} disabled={checking}><RefreshCw size={15}/> {checking ? "Checking…" : "Refresh local status"}</button>}
+        {localChecksEnabled && <button type="button" className="model-run" onClick={() => refreshStatus()} disabled={checking}><RefreshCw size={15}/> {checking ? "Checking…" : "Refresh local status"}</button>}
         {!localChecksEnabled && <button type="button" className="model-run" onClick={() => setStep(1)}><Plug size={15}/> Review local status checks <ChevronRight size={15}/></button>}
         {providers.map((p) => {
           const result = statuses.find((item) => item.provider_id === p.id);
