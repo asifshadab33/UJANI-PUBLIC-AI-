@@ -1,5 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
+/// Prepares platform assets and skips application context generation for the isolated worker build.
 fn main() {
     println!("cargo:rerun-if-env-changed=UJANI_PDF_WORKER_BUILD");
     println!("cargo:rerun-if-changed=build.rs");
