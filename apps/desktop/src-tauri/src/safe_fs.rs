@@ -242,6 +242,67 @@ mod tests {
     use std::{fs, io::Read, time::{SystemTime, UNIX_EPOCH}};
 
     #[test]
+    fn shared_walker_honors_depth_and_entry_limits() {
+        use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-walker-limits-{id}"));
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("top.txt"), b"top").unwrap();
+        fs::write(root.join("nested").join("child.txt"), b"child").unwrap();
+        let direct = walk_directory(&root, WalkOptions {
+            max_depth: 0, max_entries: 8, link_policy: LinkPolicy::Skip,
+            error_policy: WalkErrorPolicy::Strict,
+        }, || false).unwrap();
+        assert_eq!(direct.entries.iter().filter(|entry| entry.is_file).count(), 1);
+        assert!(!direct.truncated);
+        let bounded = walk_directory(&root, WalkOptions {
+            max_depth: 2, max_entries: 1, link_policy: LinkPolicy::Skip,
+            error_policy: WalkErrorPolicy::BestEffort,
+        }, || false).unwrap();
+        assert!(bounded.truncated);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_walker_skips_or_rejects_links_by_caller_policy() {
+        use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
+        use std::os::unix::fs::symlink;
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-walker-links-{id}"));
+        let outside = root.with_extension("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"secret").unwrap();
+        symlink(outside.join("secret.txt"), root.join("link.txt")).unwrap();
+        let skipped = walk_directory(&root, WalkOptions {
+            max_depth: 0, max_entries: 8, link_policy: LinkPolicy::Skip,
+            error_policy: WalkErrorPolicy::BestEffort,
+        }, || false).unwrap();
+        assert!(skipped.entries.is_empty());
+        assert!(walk_directory(&root, WalkOptions {
+            max_depth: 0, max_entries: 8, link_policy: LinkPolicy::Reject,
+            error_policy: WalkErrorPolicy::Strict,
+        }, || false).is_err());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn shared_walker_honors_cancellation() {
+        use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-walker-cancel-{id}"));
+        fs::create_dir_all(&root).unwrap();
+        let result = walk_directory(&root, WalkOptions {
+            max_depth: 0, max_entries: 8, link_policy: LinkPolicy::Skip,
+            error_policy: WalkErrorPolicy::BestEffort,
+        }, || true);
+        assert!(result.unwrap_err().contains("cancelled"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn opens_regular_file_and_rejects_directory() {
         let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!("ujani-safe-fs-{id}"));
