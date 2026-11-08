@@ -323,7 +323,7 @@ async fn execute_cloud_ai_task(
    return Err(error);
   }
  };
- // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
+ // Reserve before dispatch; refund only if dispatch never starts, and reconcile provider usage when reported.
  let mut budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
   Err(error) => {
