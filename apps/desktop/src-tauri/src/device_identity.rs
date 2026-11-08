@@ -14,6 +14,7 @@ const SERVICE: &str = "org.ujani.publicai";
 const USER: &str = "device-identity-ed25519-v1";
 
 /// Public Ed25519 identity fingerprint returned to the UJANI frontend.
+/// Public identity material and fingerprint for this local installation.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceIdentity {
     pub device_id: String,
@@ -51,6 +52,7 @@ fn load_or_create_signing_key() -> Result<SigningKey, String> {
 }
 
 /// Load or create the local Ed25519 signing key in the operating-system credential vault.
+/// Returns or creates the local device identity without exporting its private key.
 #[tauri::command]
 pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, String> {
     let signing = load_or_create_signing_key()?;
@@ -63,6 +65,7 @@ pub fn get_or_create_device_identity(_app: AppHandle) -> Result<DeviceIdentity, 
 
 
 /// Rotate the local signing key after native confirmation; peers must re-enrol the new fingerprint.
+/// Rotates the local device signing identity after native user confirmation.
 #[tauri::command]
 pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, String> {
     let current = get_or_create_device_identity(app.clone())?;
@@ -85,6 +88,7 @@ pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, St
 }
 
 /// Create a recipient-bound signed consent envelope after native approval; this does not transmit the payload.
+/// Creates a signed consent envelope; it does not transmit the task payload.
 #[tauri::command]
 pub async fn sign_peer_task_envelope(
     app: AppHandle,
