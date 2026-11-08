@@ -48,8 +48,10 @@ pub(crate) fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_reparse_point, open_regular_file};
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use super::open_regular_file;
+    #[cfg(unix)]
+    use super::is_reparse_point;
+    use std::{fs, io::Read, time::{SystemTime, UNIX_EPOCH}};
 
     #[test]
     fn opens_regular_file_and_rejects_directory() {
@@ -58,7 +60,10 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let file = root.join("data.txt");
         fs::write(&file, b"local data").unwrap();
-        assert_eq!(fs::read(open_regular_file(&file).unwrap()).unwrap(), b"local data");
+        let mut handle = open_regular_file(&file).unwrap();
+        let mut contents = Vec::new();
+        handle.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"local data");
         assert!(open_regular_file(&root).is_err());
         let _ = fs::remove_dir_all(root);
     }
