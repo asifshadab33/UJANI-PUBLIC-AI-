@@ -47,8 +47,9 @@ jobs:
       - name: Disable updater signing artifacts for unsigned size measurement
         working-directory: apps/desktop/src-tauri
         run: node -e "const fs=require('fs');const p='tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(p,JSON.stringify(c,null,2));"
-      - name: Verify desktop dependency graph with the committed lockfile
-        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+      - name: Verify desktop dependency resolution with the committed lockfile
+        shell: bash
+        run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --format-version 1 --locked
       - name: Build native installer bundles
         working-directory: apps/desktop
         run: npm run tauri build -- --bundles ${{ matrix.bundles }}
@@ -81,3 +82,70 @@ jobs:
           console.log(rows.join('\n'));
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n## ${process.env.RUNNER_OS} installer sizes\n\n${rows.join('\n')}\n`);
           NODE
+      - name: Collect unsigned preview installers and generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+          const { spawnSync } = require('child_process');
+          const root = 'apps/desktop/src-tauri/target/release/bundle';
+          const output = 'preview-installers';
+          const allowed = new Set(['.msi', '.exe', '.dmg', '.deb', '.appimage']);
+          fs.mkdirSync(output, { recursive: true });
+          const files = [];
+          function walk(dir) {
+            if (!fs.existsSync(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (allowed.has(path.extname(entry.name).toLowerCase())) files.push(full);
+            }
+          }
+          walk(root);
+          if (!files.length) throw new Error('No installer bundles found to upload.');
+          for (const file of files) {
+            const name = path.basename(file);
+            const isAppImage = path.extname(name).toLowerCase() === '.appimage';
+            const destination = path.join(output, isAppImage ? name + '.tar.gz' : name);
+            if (fs.existsSync(destination)) throw new Error('Duplicate installer filename: ' + path.basename(destination));
+            if (isAppImage) {
+              // GitHub artifact ZIPs do not preserve POSIX executable bits.
+              // Put AppImage inside tar.gz so its mode survives artifact download.
+              fs.chmodSync(file, fs.statSync(file).mode | 0o111);
+              const archived = spawnSync('tar', ['-C', path.dirname(file), '-czf', path.resolve(destination), name], { stdio: 'inherit' });
+              if (archived.error || archived.status !== 0) throw archived.error || new Error('Could not archive AppImage with its executable mode.');
+            } else {
+              fs.copyFileSync(file, destination);
+            }
+          }
+          const names = fs.readdirSync(output).filter(name => name !== 'SHA256SUMS').sort();
+          const hashFile = file => new Promise((resolve, reject) => {
+            const hash = crypto.createHash('sha256');
+            const stream = fs.createReadStream(file);
+            stream.on('data', chunk => hash.update(chunk));
+            stream.on('error', reject);
+            stream.on('end', () => resolve(hash.digest('hex')));
+          });
+          (async () => {
+            const sums = [];
+            for (const name of names) sums.push(await hashFile(path.join(output, name)) + '  ' + name);
+            fs.writeFileSync(path.join(output, 'SHA256SUMS'), sums.join('\n') + '\n');
+            fs.writeFileSync(path.join(output, 'README.txt'), [
+              'UJANI unsigned preview installers',
+              'These builds are for controlled testing only and are not publisher-signed.',
+              'Verify SHA256SUMS with sha256sum -c SHA256SUMS (Linux), shasum -a 256 -c SHA256SUMS (macOS), or compare each file with Get-FileHash -Algorithm SHA256 (Windows).',
+              'Linux AppImage is packaged as .tar.gz to preserve its executable permission; extract it before running.'
+            ].join(String.fromCharCode(10)) + String.fromCharCode(10));
+            console.log('Collected ' + names.length + ' installer package(s) with streaming SHA-256 checksums.');
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        name: Upload unsigned preview installers
+        with:
+          name: ujani-${{ runner.os }}-unsigned-preview-installers
+          path: preview-installers/*
+          if-no-files-found: error
+          retention-days: 14
