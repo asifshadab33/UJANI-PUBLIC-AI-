@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn worker_truncation_marker_reaches_search_and_prevents_negative_cache() {
-        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
         let extraction = match crate::task_engine::pdf_worker_output_was_truncated(marker) {
             Ok(true) => Err("PDF text extraction exceeded the 1 MiB worker output limit.".into()),
             Ok(false) => Ok(String::new()),
