@@ -12,6 +12,11 @@ fn extract_pdf_text(data: &[u8]) -> Result<String, ()> {
     pdf_extract::extract_text_from_mem(data).map_err(|_| ())
 }
 
+/// Reports whether the worker must mark its bounded output as incomplete.
+fn output_was_truncated(text: &str) -> bool {
+    text.len() > MAX_OUTPUT_BYTES
+}
+
 /// Truncates extracted text at the configured byte limit without splitting UTF-8 characters.
 fn bounded_output(text: &str) -> &str {
     let mut end = text.len().min(MAX_OUTPUT_BYTES);
@@ -31,7 +36,7 @@ pub fn run() {
         Ok(text) => text,
         Err(()) => std::process::exit(3),
     };
-    let truncated = text.len() > MAX_OUTPUT_BYTES;
+    let truncated = output_was_truncated(&text);
     if std::io::stdout().write_all(bounded_output(&text).as_bytes()).is_err() {
         std::process::exit(4);
     }
@@ -92,6 +97,12 @@ mod tests {
     fn rejects_non_pdf_and_malformed_pdf_bytes() {
         assert!(extract_pdf_text(b"not a pdf").is_err());
         assert!(extract_pdf_text(b"%PDF-1.7\nnot a valid document").is_err());
+    }
+
+    #[test]
+    fn output_truncation_is_signalled_only_above_the_limit() {
+        assert!(!super::output_was_truncated(&"x".repeat(MAX_OUTPUT_BYTES)));
+        assert!(super::output_was_truncated(&"x".repeat(MAX_OUTPUT_BYTES + 1)));
     }
 
     #[test]
