@@ -208,8 +208,6 @@ jobs:
       - name: Verify Authenticode signatures on Windows installers
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ env.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: |
           $bundleRoot = "apps/desktop/src-tauri/target/release/bundle"
           $installers = Get-ChildItem -Path $bundleRoot -Recurse -File | Where-Object { $_.Extension -in @(".msi", ".exe") }
@@ -358,6 +356,15 @@ jobs:
           set -euo pipefail
           (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | sort -z > /tmp/ujani-release-files.list)
           (cd release-assets && xargs -0 sha256sum < /tmp/ujani-release-files.list > SHA256SUMS)
+
+      - name: Verify generated SHA-256 manifest against release assets
+        working-directory: release-assets
+        run: sha256sum -c SHA256SUMS
+
+      - name: Validate generated SBOM structure
+        run: |
+          set -euo pipefail
+          jq -e '.spdxVersion and (.packages | type == "array") and (.packages | length > 0)' release-assets/ujani-source-sbom.spdx.json > /dev/null
 
       - name: Attest release assets and SBOM
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
