@@ -1326,23 +1326,21 @@ mod pdf_upload_tests {
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
         let (started_tx, started_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let (permit_released_tx, permit_released_rx) = mpsc::sync_channel(1);
+        let callback_slots = slots.clone();
         let worker = spawn_bounded_pdf_worker(slots.clone(), move || {
             started_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-        }, || {}).unwrap();
+        }, move || {
+            assert!(callback_slots.try_acquire().is_ok(), "release callback must run after the permit is dropped");
+            permit_released_tx.send(()).unwrap();
+        }).unwrap();
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         drop(worker);
         assert!(spawn_bounded_pdf_worker(slots.clone(), || (), || {}).is_err());
+        assert!(permit_released_rx.try_recv().is_err(), "permit release must not be reported while decode work is blocked");
         release_tx.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                if let Ok(permit) = slots.clone().try_acquire_owned() {
-                    drop(permit);
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        }).await.unwrap();
+        permit_released_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(spawn_bounded_pdf_worker(slots, || (), || {}).unwrap().await.is_ok());
     }
 
