@@ -60,7 +60,7 @@ jobs:
           cargo test --workspace --locked
           cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
           cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
-          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin ujani-pdf-worker --locked
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin ujani-pdf-worker --features pdf-worker-build --locked
 
   build-and-upload:
     needs: verify
