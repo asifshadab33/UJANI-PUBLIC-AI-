@@ -294,11 +294,29 @@ async fn execute_cloud_ai_task(
   "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
   prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
  );
- if !native_consent::confirm_native(&app, "Approve one-time cloud data transfer", consent_message).await {
-  return Err("Cloud transfer was not approved in the native confirmation dialog. No request was sent.".into());
- }
  if !validate_model_identifier(&model) {
   return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+ }
+ // Register before showing consent so cancellation is available while the OS dialog is open.
+ let token = CancellationToken::new();
+ {
+  let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+  if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+  active.insert(task_id.clone(), token.clone());
+ }
+ let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+ let consent = native_consent::confirm_native(&app, "Approve one-time cloud data transfer", consent_message);
+ let approved = tokio::select! {
+  _ = token.cancelled() => return Err("Cloud consent cancelled by user. No request was sent.".into()),
+  result = tokio::time::timeout(std::time::Duration::from_secs(120), consent) => {
+   match result {
+    Ok(value) => value,
+    Err(_) => return Err("Cloud consent timed out after 120 seconds. No request was sent.".into()),
+   }
+  }
+ };
+ if !approved {
+  return Err("Cloud transfer was not approved in the native confirmation dialog. No request was sent.".into());
  }
  let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
   .map_err(|e| e.to_string())?.as_millis() as u64;
@@ -309,13 +327,6 @@ async fn execute_cloud_ai_task(
  let receipt_model_id = model.clone();
  // This reference binds the explicit approval flag to this task, endpoint, model and exact prompt digest.
  let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
- let token = CancellationToken::new();
- {
-  let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-  if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-  active.insert(task_id.clone(), token.clone());
- }
- let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
  flush_pending_receipts(&app).await;
  let receipt_slot = match security_store::reserve_execution_receipt_slot(&app, &task_id) {
   Ok(slot) => slot,
