@@ -159,7 +159,7 @@ jobs:
           set -euo pipefail
           test -n "$WINDOWS_CERTIFICATE_THUMBPRINT"
           test -n "$WINDOWS_TIMESTAMP_URL"
-          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.windows={...(c.bundle.windows||{}),certificateThumbprint:process.env.WINDOWS_CERTIFICATE_THUMBPRINT,digestAlgorithm:'sha256',timestampUrl:process.env.WINDOWS_TIMESTAMP_URL}; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\\n');"
+          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.bundle.windows={...(c.bundle.windows||{}),certificateThumbprint:process.env.WINDOWS_CERTIFICATE_THUMBPRINT,digestAlgorithm:'sha256',timestampUrl:process.env.WINDOWS_TIMESTAMP_URL}; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
       - name: Refuse release build with an empty updater public key
         run: node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if(!c.plugins.updater.pubkey) { console.error('Empty updater public key'); process.exit(1); }"
       - name: Install Linux system dependencies
