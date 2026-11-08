@@ -49,6 +49,7 @@ struct Candidate {
 }
 
 #[tauri::command]
+/// Returns the current local device clock as milliseconds since the Unix epoch.
 pub fn get_local_clock() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -137,7 +138,13 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
             file_filter: None,
         },
         token,
-    ).map_err(|error| format!("Cannot scan selected folder: {error}"))?;
+    ).map_err(|error| {
+        if error.contains("cancelled") {
+            "Duplicate scan cancelled by user.".to_string()
+        } else {
+            format!("Cannot scan selected folder: {error}")
+        }
+    })?;
     let root_name = walked.root.file_name().map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Selected folder".into());
     let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
