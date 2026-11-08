@@ -66,13 +66,21 @@ fn windows_category(
     provider_mask: u32,
 ) -> SecurityProviderStatus {
     use windows_sys::Win32::Foundation::FreeLibrary;
-    use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows_sys::Win32::System::LibraryLoader::{
+        GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+    };
 
-    // Load WSC dynamically: Windows Server and some reduced Windows images do
-    // not ship wscapi.dll. A missing optional provider must not prevent UJANI
-    // or its unit-test binary from loading.
+    // Load WSC dynamically from System32 only: Windows Server and some reduced
+    // Windows images do not ship wscapi.dll. Restricting the search path also
+    // avoids loading an untrusted DLL from the working or application directory.
     let library_name: Vec<u16> = "wscapi.dll".encode_utf16().chain(std::iter::once(0)).collect();
-    let module = unsafe { LoadLibraryW(library_name.as_ptr()) };
+    let module = unsafe {
+        LoadLibraryExW(
+            library_name.as_ptr(),
+            std::ptr::null_mut(),
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    };
 
     let (status, detail) = if module.is_null() {
         (
