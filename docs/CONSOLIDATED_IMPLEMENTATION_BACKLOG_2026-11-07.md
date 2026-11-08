@@ -6,7 +6,7 @@ This is an implementation and release-planning record for the Public AI and Ente
 
 ## Operating direction
 
-- Continue implementation without waiting for external tester feedback. No further tester report is expected or required for the current roadmap.
+- Continue engineering independently; no external tester report is required to proceed with code work. Manual device-test evidence remains mandatory for release-critical install, cancellation, privacy, permission and stability gates.
 - Prioritise reliability, privacy boundaries, cancellation, bounded resource use and honest capability descriptions over feature count.
 - Keep Public AI and Enterprise AI independently governed until a separately versioned, tested interoperability protocol exists.
 - Keep Worker/Partner and remote execution disabled. Do not enable distributed execution based only on protocol primitives or a passing unit test.
@@ -29,10 +29,10 @@ This is an implementation and release-planning record for the Public AI and Ente
 
 ### Active pull requests and current validation
 
-- PR #66 — this consolidated backlog update; branch is being refreshed against current main.
-- PR #68 — platform support policy plus release-workflow gates. It now requires Windows signing credentials and macOS signing/notarization credentials, and targets a production-release environment. Repository administrators must configure required reviewers and disable self-review for that environment. Manual minimum-OS install/launch and artifact-signature verification are still human release gates. Current-head CI/CodeQL/installer checks are running.
-- PR #72 — PDF cancellation hardening: abortable webview FileReader, native task registration before decode, bounded single-worker PDF decoding, observable decode_started/decode_finished events, and bounded pending cancellation across the FileReader-to-native handoff. A started spawn_blocking worker cannot be forcibly aborted; its semaphore permit remains held until it exits. Current-head CI/CodeQL/installer checks are running; real-device cancellation and retry tests remain NOT RUN.
-- PR #74 — manual smoke-test matrix for install/launch, PDF cancellation and retry, screenshot attachment, navigation/freeze recovery, privacy/history, cloud egress and cross-platform evidence. It is a test procedure only; no manual device results are claimed. Current-head CI/CodeQL/installer checks are running.
+- PR #66 — this consolidated backlog update; branch is being refreshed against current main and records the PR #74 merge.
+- PR #68 — platform support policy plus release-workflow gates. It requires Windows Authenticode signing and verification, macOS Developer ID signing/notarization credentials and artifact checks, plus a `production-release` environment. Repository administrators must configure required reviewers and disable self-review for that environment. Manual minimum-OS install/launch and provenance/SBOM review remain human release gates. Current-head CI/CodeQL/installer checks are queued/running on the refreshed branch.
+- PR #72 — PDF cancellation hardening: abortable webview FileReader, native task registration before decode, bounded single-worker PDF decoding, observable decode_started/decode_finished events, and bounded pending cancellation across the FileReader-to-native handoff. A started spawn_blocking worker cannot be forcibly aborted; its semaphore permit remains held until it exits. Current-head CI/CodeQL/installer checks have been restarted and are queued/running; real-device cancellation and retry tests remain NOT RUN.
+- PR #74 — merged to `main` as commit `732280d`; the manual smoke-test matrix now covers install/launch, PDF cancellation and retry, screenshot attachment, navigation/freeze recovery, privacy/history, cloud egress and cross-platform evidence. It is a test procedure only; no manual device results are claimed.
 - PR #41 in Enterprise AI remains a draft design specification for durable consent authority, now rebased on current main and updated to distinguish the in-memory reference backend from production persistence.
 
 PR #40, #43 and #44 were closed as superseded: the dual-consent primitive is already on Enterprise main through merged PR #42, and the consolidated event contract is on main through merged PR #45. Do not delete their branches until confirming they are not referenced by another open PR.
