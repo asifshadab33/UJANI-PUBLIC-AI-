@@ -1072,6 +1072,7 @@ async fn execute_local_ai_task(
 /// Requests cancellation for an active task or a bounded PDF registration handoff.
 fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Result<bool, String> {
     if !valid_command_identifier(task_id, 96) { return Err("Invalid task identifier.".into()); }
+    resource_runtime::validate_task_id(task_id)?;
     let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
     if let Some(token) = active.get(task_id) { token.cancel(); return Ok(true); }
     if !task_id.starts_with("pdf-") { return Ok(false); }
@@ -1200,6 +1201,8 @@ mod pdf_cancellation_registration_tests {
         let control = TaskControlState::default();
         assert!(register_active_task(&control, "pdf-upload.valid").is_err());
         assert!(register_active_task(&control, "pdf-upload:valid").is_err());
+        assert!(request_task_cancellation(&control, "pdf-upload.valid").is_err());
+        assert!(request_task_cancellation(&control, "pdf-upload:valid").is_err());
         assert!(register_active_task(&control, "pdf-upload-valid").is_ok());
     }
 
