@@ -1217,25 +1217,37 @@ fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
     }))
 }
 
-/// Decodes a bounded PDF payload on Tokio's blocking pool under the global decoder permit.
+/// Starts one bounded blocking worker while retaining its decoder permit until exit.
 ///
-/// A started blocking worker cannot be aborted by dropping this future; it retains the
-/// permit until decoding finishes so a retry cannot start an overlapping decoder.
-async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base64: String) -> Result<Vec<u8>, String> {
-    // A cancelled spawn_blocking task cannot be aborted. Keep its permit inside
-    // the worker so a quick retry cannot start another large decode in parallel.
-    let permit = pdf_decode_slots().try_acquire_owned().map_err(|_| {
+/// Dropping the returned JoinHandle does not abort an already-started spawn_blocking
+/// closure. Keeping the permit inside that closure prevents cancel-and-retry overlap.
+fn spawn_bounded_pdf_worker<T, F>(
+    slots: Arc<tokio::sync::Semaphore>,
+    work: F,
+) -> Result<tokio::task::JoinHandle<T>, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let permit = slots.try_acquire_owned().map_err(|_| {
         "Another PDF upload is still being prepared. Please wait before retrying.".to_string()
     })?;
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+    Ok(tokio::task::spawn_blocking(move || {
+        let result = work();
+        drop(permit);
+        result
+    }))
+}
+
+/// Decodes a bounded PDF payload on Tokio's blocking pool under the global decoder permit.
+async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base64: String) -> Result<Vec<u8>, String> {
+    let worker = spawn_bounded_pdf_worker(pdf_decode_slots(), move || {
         emit_task_progress(&app, &task_id, "decode_started", "PDF upload decoding started in the bounded worker.", 8);
         let result = decode_pdf_upload(&data_base64);
         emit_task_progress(&app, &task_id, "decode_finished", "PDF upload decoder worker has exited.", 10);
         result
-    })
-    .await
-    .map_err(|error| format!("PDF decode worker failed: {error}"))?
+    })?;
+    worker.await.map_err(|error| format!("PDF decode worker failed: {error}"))?
 }
 
 #[cfg(test)]
@@ -1265,14 +1277,63 @@ mod pdf_upload_tests {
         assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
     }
 
-    /// Confirms the process-wide permit blocks a retry while a decoder worker is active.
-    #[test]
-    fn pdf_decode_worker_permit_prevents_cancel_and_retry_overlap() {
-        let slots = super::pdf_decode_slots();
-        let first = slots.clone().try_acquire_owned().unwrap();
-        assert!(slots.clone().try_acquire_owned().is_err());
-        drop(first);
-        assert!(slots.clone().try_acquire_owned().is_ok());
+    /// Holds a blocking decoder after start, cancels its waiter, and proves the
+    /// permit stays held until the worker exits; a retry then succeeds.
+    #[tokio::test]
+    async fn cancellation_keeps_decoder_permit_until_blocking_worker_exits() {
+        use super::{await_task_with_limits, spawn_bounded_pdf_worker};
+        use std::sync::mpsc::{self, TryRecvError};
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let (finished_tx, finished_rx) = mpsc::sync_channel(1);
+
+        let worker = spawn_bounded_pdf_worker(slots.clone(), move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            finished_tx.send(()).unwrap();
+            Ok::<(), String>(())
+        }).unwrap();
+
+        // The blocking worker is definitely active before cancellation is requested.
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let token = CancellationToken::new();
+        let wait_token = token.clone();
+        let waiter = tokio::spawn(async move {
+            await_task_with_limits(
+                &wait_token,
+                Duration::from_secs(30),
+                "PDF decode timed out.",
+                worker,
+            ).await
+        });
+        tokio::task::yield_now().await;
+        token.cancel();
+
+        let result = waiter.await.unwrap();
+        assert_eq!(result.unwrap_err(), "Task cancelled by user.");
+        assert!(matches!(finished_rx.try_recv(), Err(TryRecvError::Empty)));
+        assert!(spawn_bounded_pdf_worker(slots.clone(), || Ok::<(), String>(())).is_err());
+
+        // Releasing the barrier lets the detached worker exit and return its permit.
+        release_tx.send(()).unwrap();
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(permit) = slots.clone().try_acquire_owned() {
+                    drop(permit);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+
+        let retry = spawn_bounded_pdf_worker(slots, || Ok::<(), String>(())).unwrap();
+        assert!(retry.await.unwrap().is_ok());
     }
 
     #[test]
