@@ -131,7 +131,7 @@ mod tests {
         .expect("waiter must register in the queue before cancellation");
         cancel.cancel();
         let result = waiter.await.unwrap();
-        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(matches!(result, Err(ref error) if error.contains("cancelled")));
         assert_eq!(WAITING_TASKS.load(std::sync::atomic::Ordering::Acquire), 0);
         drop(active);
     }
