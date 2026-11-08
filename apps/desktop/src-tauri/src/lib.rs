@@ -984,11 +984,9 @@ mod local_receipt_context_tests {
     #[test]
     fn active_task_guard_cleans_registry_on_scope_exit() {
         use super::{ActiveTaskGuard, TaskControlState};
-        use std::collections::HashMap;
-        use std::sync::Mutex;
         use tokio_util::sync::CancellationToken;
 
-        let control = TaskControlState { active: Mutex::new(HashMap::new()) };
+        let control = TaskControlState::default();
         control.active.lock().unwrap().insert("cancel-me".into(), CancellationToken::new());
         {
             let _guard = ActiveTaskGuard { control: &control, task_id: "cancel-me".into() };
