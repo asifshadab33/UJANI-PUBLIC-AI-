@@ -12,6 +12,7 @@ mod history;
 mod model_runtime;
 mod ollama;
 mod resource_runtime;
+mod safe_fs;
 // Peer enrollment/replay commands are not registered in the default IPC surface.
 #[allow(dead_code, unused_imports)]
 mod security_store;
@@ -321,6 +322,9 @@ async fn execute_cloud_ai_task(
    return Err(error);
   }
  };
+ if let Some(warning) = receipt_slot.archive_warning() {
+  emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+ }
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
  let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
@@ -403,7 +407,6 @@ async fn pull_ollama_model(
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
-    resource_runtime::validate_task_id(&task_id)?;
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -742,6 +745,9 @@ where
     let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+    }
     let started_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -930,6 +936,9 @@ async fn execute_local_ai_task(
     let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+    }
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
     let receipt_model_id = model.clone();
