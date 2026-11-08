@@ -120,6 +120,16 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+      - name: Build and stage the matching PDF worker architecture
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          TARGET_ARGS="${{ matrix.args }}"
+          if [[ "$TARGET_ARGS" == --target\\ * ]]; then
+            node scripts/build-pdf-worker.mjs --target "${TARGET_ARGS#--target }"
+          else
+            npm run build:pdf-worker
+          fi
       - name: Generate platform installer icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
