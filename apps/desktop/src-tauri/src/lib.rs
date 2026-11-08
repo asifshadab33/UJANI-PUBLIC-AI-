@@ -322,6 +322,9 @@ async fn execute_cloud_ai_task(
    return Err(error);
   }
  };
+ if let Some(warning) = receipt_slot.archive_warning() {
+  emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+ }
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
  let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
@@ -730,6 +733,9 @@ where
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+    }
     let started_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -919,6 +925,9 @@ async fn execute_local_ai_task(
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+    }
     let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
     let receipt_model_id = model.clone();
