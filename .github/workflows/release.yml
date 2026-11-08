@@ -232,9 +232,16 @@ jobs:
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
-      - name: Verify Developer ID signature and notarization on macOS
+      - name: Verify Developer ID signature and notarize/staple macOS disk images
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           bundle_root="apps/desktop/src-tauri/target"
@@ -251,7 +258,12 @@ jobs:
             spctl --assess --type execute --verbose=2 "$app"
           done
           for dmg in "${dmgs[@]}"; do
+            # Tauri notarizes the app bundle; submit the distributable DMG separately.
+            xcrun notarytool submit "$dmg" --wait --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+            xcrun stapler staple "$dmg"
             xcrun stapler validate "$dmg"
+            # Replace the pre-notarization draft asset with the stapled disk image.
+            gh release upload "$TAG" "$dmg" --clobber --repo "$REPOSITORY"
           done
       - name: Delete temporary Apple signing keychain
         if: always() && runner.os == 'macOS'
@@ -456,6 +468,14 @@ jobs:
           for required in INSTALLER_SIZES.txt SHA256SUMS ujani-source-sbom.spdx.json; do
             grep -Fxq "$required" <<< "$assets" || { echo "::error::Missing pre-approval evidence asset: $required"; exit 1; }
           done
+          rm -rf release-assets
+          mkdir release-assets
+          gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
+          cd release-assets
+          sha256sum -c SHA256SUMS
+          listed="$(sed -E 's/^[0-9a-f]{64}  \.\///' SHA256SUMS | sort)"
+          present="$(find . -type f ! -name SHA256SUMS -printf '%P\n' | sort)"
+          test "$listed" = "$present" || { echo "::error::Draft release assets changed after evidence preparation or are not covered by SHA256SUMS."; exit 1; }
       - name: Publish approved release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
