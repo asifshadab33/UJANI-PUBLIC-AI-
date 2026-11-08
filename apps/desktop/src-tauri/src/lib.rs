@@ -12,6 +12,7 @@ mod history;
 mod model_runtime;
 mod ollama;
 mod resource_runtime;
+mod safe_fs;
 // Peer enrollment/replay commands are not registered in the default IPC surface.
 #[allow(dead_code, unused_imports)]
 mod security_store;

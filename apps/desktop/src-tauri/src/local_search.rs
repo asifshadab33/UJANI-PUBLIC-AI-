@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, Read},
+    fs::{self, File},
+    io::Read,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -324,7 +324,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
             || candidate.identity.as_ref() != cached_identity.as_ref() {
             return false;
         }
-        let Ok(file) = open_candidate(&path) else { return false; };
+        let Ok(file) = crate::safe_fs::open_regular_file(&path) else { return false; };
         let Ok(metadata) = file.metadata() else { return false; };
         if !metadata.is_file() || metadata.len() != candidate.size
             || modified_unix_ns(&metadata) != candidate.modified_unix_ns
@@ -344,7 +344,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
 /// Walks a user-selected directory with depth and entry-count limits.
 fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathBuf, Vec<Candidate>, usize, bool), String> {
     let meta = fs::symlink_metadata(folder).map_err(|e| format!("Cannot inspect folder: {e}"))?;
-    if meta.file_type().is_symlink() || !meta.is_dir() {
+    if crate::safe_fs::is_reparse_point(&meta) || !meta.is_dir() {
         return Err("Choose a real folder, not a symbolic link.".into());
     }
     let root = fs::canonicalize(folder).map_err(|e| format!("Cannot resolve folder: {e}"))?;
@@ -361,7 +361,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             Ok(meta) => meta,
             Err(_) => { truncated = true; continue; }
         };
-        if directory_meta.file_type().is_symlink() || !directory_meta.is_dir() { continue; }
+        if crate::safe_fs::is_reparse_point(&directory_meta) || !directory_meta.is_dir() { continue; }
         let canonical_directory = match fs::canonicalize(&directory) {
             Ok(path) => path,
             Err(_) => { truncated = true; continue; }
@@ -387,7 +387,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             scanned_files += 1;
             let path = match fs::canonicalize(item.path()) { Ok(path) => path, Err(_) => { truncated = true; continue; } };
             if !path.starts_with(&root) { truncated = true; continue; }
-            let file = match open_candidate(&path) { Ok(file) => file, Err(_) => { truncated = true; continue; } };
+            let file = match crate::safe_fs::open_regular_file(&path) { Ok(file) => file, Err(_) => { truncated = true; continue; } };
             let metadata = match file.metadata() { Ok(meta) => meta, Err(_) => { truncated = true; continue; } };
             if !metadata.is_file() { truncated = true; continue; }
             #[cfg(windows)] {
@@ -416,7 +416,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
 /// Opens and reads one regular file with a hard byte cap; validation uses the opened handle.
 /// Reads at most `limit` bytes from a regular file without following its final link.
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
-    let mut file = open_candidate(path).map_err(|e| e.to_string())?;
+    let mut file = crate::safe_fs::open_regular_file(path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() > limit {
         return Err("File is not eligible for bounded reading.".into());
@@ -436,26 +436,6 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-#[cfg(unix)]
-/// Opens without following a final symbolic link or blocking on a FIFO.
-fn open_candidate(path: &Path) -> io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)
-}
-
-#[cfg(windows)]
-/// Opens the reparse point itself so metadata validation applies to the handle.
-fn open_candidate(path: &Path) -> io::Result<File> {
-    use std::os::windows::fs::OpenOptionsExt;
-    // FILE_FLAG_OPEN_REPARSE_POINT: open the reparse point itself so handle metadata rejects it.
-    OpenOptions::new().read(true).custom_flags(0x0020_0000).open(path)
-}
-
-#[cfg(not(any(unix, windows)))]
-/// Opens a candidate on platforms without specialized no-follow flags.
-fn open_candidate(path: &Path) -> io::Result<File> {
-    File::open(path)
-}
 
 #[cfg(test)]
 mod tests {

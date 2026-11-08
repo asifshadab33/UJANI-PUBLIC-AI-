@@ -6,7 +6,7 @@
 
 use serde::Serialize;
 use std::{
-    fs::{self, File},
+    fs,
     io::Read,
     path::Path,
 };
@@ -173,7 +173,7 @@ pub async fn process_selected_folder(
 fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
     let folder_metadata = fs::symlink_metadata(folder)
         .map_err(|error| format!("Cannot inspect the selected folder: {error}"))?;
-    if folder_metadata.file_type().is_symlink() || !folder_metadata.is_dir() {
+    if crate::safe_fs::is_reparse_point(&folder_metadata) || !folder_metadata.is_dir() {
         return Err("The selected location must be a real directory, not a symlink.".into());
     }
 
@@ -186,17 +186,18 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
 
     for entry in entries {
         let entry = entry.map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
-        let file_type = entry.file_type()
+        let path = entry.path();
+        let entry_metadata = fs::symlink_metadata(&path)
             .map_err(|error| format!("Cannot inspect a folder entry: {error}"))?;
+        let file_type = entry_metadata.file_type();
 
-        if file_type.is_symlink() {
+        if crate::safe_fs::is_reparse_point(&entry_metadata) {
             return Err("The selected folder contains a symbolic link. Remove it and try again.".into());
         }
         if !file_type.is_file() {
             continue;
         }
 
-        let path = entry.path();
         let extension = path.extension().and_then(|value| value.to_str())
             .unwrap_or_default().to_ascii_lowercase();
         if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
@@ -209,17 +210,14 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             return Err("A selected file resolves outside the chosen folder.".into());
         }
 
-        let metadata = fs::metadata(&canonical_file)
-            .map_err(|error| format!("Cannot inspect selected file: {error}"))?;
-        if !metadata.is_file() {
-            return Err("Only regular text files can be imported.".into());
-        }
+        let handle = crate::safe_fs::open_regular_file(&canonical_file)
+            .map_err(|error| format!("Cannot safely open selected file: {error}"))?;
+        let metadata = handle.metadata()
+            .map_err(|error| format!("Cannot inspect selected file handle: {error}"))?;
         if metadata.len() > MAX_FILE_BYTES as u64 {
             return Err(format!("{} exceeds the 256 KiB per-file limit.", entry.file_name().to_string_lossy()));
         }
 
-        let handle = File::open(&canonical_file)
-            .map_err(|error| format!("Cannot open selected file: {error}"))?;
         let mut bytes = Vec::with_capacity(metadata.len() as usize);
         handle.take((MAX_FILE_BYTES + 1) as u64).read_to_end(&mut bytes)
             .map_err(|error| format!("Cannot read selected file: {error}"))?;
