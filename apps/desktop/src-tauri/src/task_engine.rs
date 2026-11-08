@@ -520,7 +520,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
 }
 
 /// Interprets the worker's fixed, content-free stderr status protocol.
-fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
+pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
     match metadata {
         b"" => Ok(false),
         b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n" => Ok(true),
