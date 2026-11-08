@@ -1,7 +1,7 @@
 //! Shared hardened file-opening primitives for user-selected local workflows.
 //!
-//! Callers retain their own scope, traversal, extension, size and cancellation policy.
-//! This module centralizes the platform-specific no-follow open and handle validation.
+//! This module centralizes bounded no-follow directory traversal and platform-specific
+//! file opening; callers retain extension, content, size and task-specific error policy.
 use std::{io, path::Path};
 #[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
