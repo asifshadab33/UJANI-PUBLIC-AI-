@@ -120,14 +120,14 @@ fn is_installed_model(model: &str, installed_names: &[&str]) -> bool {
 
 impl LocalTaskEngine {
     /// Run a single local Ollama inference request under the selected execution mode.
-    pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
-        let execution_mode = match mode.as_str() {
+    async fn validate_local_chat(mode: &str, model: &str) -> Result<(), String> {
+        let execution_mode = match mode {
             "fortress" => ExecutionMode::Fortress,
             "smart" => ExecutionMode::Smart,
             "worker" | "partner" => return Err("Worker and Partner execution require a secure external gateway, which is not implemented. No cloud request was made.".into()),
             _ => return Err("Unknown execution mode.".into()),
         };
-        ensure_local_model_ready("local.ai.generate", &model).await?;
+        ensure_local_model_ready("local.ai.generate", model).await?;
         let mut system = System::new();
         system.refresh_memory();
         let mut available = BTreeSet::new();
@@ -148,7 +148,30 @@ impl LocalTaskEngine {
         if !decision.allowed || decision.action != RouteAction::ExecuteLocally {
             return Err(format!("Local execution blocked by policy: {}", decision.reason));
         }
+        Ok(())
+    }
+
+    pub async fn execute(prompt: String, mode: String, model: String) -> Result<AiTaskResult, String> {
+        Self::validate_local_chat(&mode, &model).await?;
         let output = ollama::generate(&model, &prompt).await?;
+        Ok(AiTaskResult {
+            mode_used: mode,
+            execution_location: "Local Ollama service (127.0.0.1)".into(),
+            model,
+            output,
+        })
+    }
+
+    /// Executes the same local policy path while emitting bounded response deltas.
+    pub async fn execute_stream<F>(
+        prompt: String,
+        mode: String,
+        model: String,
+        on_delta: F,
+    ) -> Result<AiTaskResult, String>
+    where F: FnMut(String) {
+        Self::validate_local_chat(&mode, &model).await?;
+        let output = ollama::generate_stream(&model, &prompt, on_delta).await?;
         Ok(AiTaskResult {
             mode_used: mode,
             execution_location: "Local Ollama service (127.0.0.1)".into(),
