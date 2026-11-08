@@ -1,6 +1,6 @@
-# UJANI consolidated implementation backlog — 7 November 2026
+# UJANI consolidated implementation backlog — 8 November 2026
 
-This is an implementation and release-planning record for the Public AI and Enterprise AI repositories, reconciled against the current repository roadmaps, implementation-status documents, open issues, pull requests and CI evidence on 7 November 2026.
+This is an implementation and release-planning record for the Public AI and Enterprise AI repositories, reconciled against the current repository roadmaps, implementation-status documents, open issues, pull requests and CI evidence on 8 November 2026.
 
 **Product status remains pre-alpha / prototype.** This document is not a security certification. A merged change or green hosted CI does not prove real-device behavior or production security.
 
@@ -17,28 +17,42 @@ This is an implementation and release-planning record for the Public AI and Ente
 
 ### Public AI — merged to main
 
-- PR #59 — reduced PDF upload IPC expansion by using bounded base64 transfer; added native encoded/decoded size checks; made same-file retries possible after errors; clarified that image inspection is metadata-only. Merge commit: `813b85370b36deecf51f57cabd7cd3f3918c5422`.
-- PR #57 — receipt ledger archival and rotation.
-- PR #55 — bounded read-only large-file finder.
-- PR #53 — browser-preview local-clock correction.
-- PR #52 — everyday-tools delivery record.
-- Earlier merged work includes encrypted validated local search cache, local file finder, managed folder import cancellation/receipts, PDF dependency upgrade, task registry cleanup, receipt coverage foundations, SBOM/provenance workflow and locked dependency builds.
+- PR #65 — unsigned cross-platform preview installer artifacts, size audit, and SHA-256 manifests. These remain preview-only artifacts, not production-signed packages.
+- PR #69 — makes reducing unnecessary data-centre dependence and energy use a primary project objective. This is a policy/roadmap commitment, not measured energy savings or an enabled distributed scheduler.
+- PR #71 — functional workspace sidebar navigation and saved-history loading improvements. Hosted checks passed; real desktop/mobile navigation smoke tests remain.
+- Earlier merged work includes bounded PDF IPC, encrypted opt-in search cache/history, local file search, selected-folder managed tasks, receipt recovery, peer IPC disabled by default, and local Everyday Tools (device clock, duplicate-file preview, and large-file finder).
 
-### Public AI — active pull requests
+### Enterprise AI — merged to main
 
-- PR #60 — native OS confirmation for every cloud transfer and recovery of completed inference results when receipt persistence fails. The branch has a follow-up head commit; CI has restarted. Earlier lint output exposed dead-code and large-error-type warnings; the current head removes the unused wrapper and boxes the recoverable error. Re-check the current head's full CI before merge. Receipt retry remains process-local and not crash-durable; receipt chain remains unsigned and without external anchoring.
-- PR #58 — peer IPC disabled by default and synchronous dialogs replaced with asynchronous native confirmation. Do not merge until the current head's full CI and CodeQL status are understood. An earlier CodeQL run reported a critical alert; a later run was neutral because the base CodeQL configuration could not be reconciled. Confirm the alert and configuration state rather than treating neutral as a pass.
+- PR #37 — energy-aware placement policy foundation. It does not yet measure Wh per equivalent task or dispatch workloads through a production scheduler.
+- PR #45 — Collective Defence v1 privacy-minimised event schema, CI contract validator, and event-boundary documentation. This is a contract and policy foundation, not a live sensor, ingestion service, correlation engine, or response system.
 
-Closed-but-unmerged PRs that duplicate later merged work should be reviewed for branch cleanup only after confirming their commits are not unique and not referenced by another open PR. Do not delete branches solely because a PR is closed.
+### Active pull requests and current validation
+
+- PR #66 — this consolidated backlog update; branch is being refreshed against current main.
+- PR #68 — platform support policy plus release-workflow gates. It now requires Windows signing credentials and macOS signing/notarization credentials, and targets a production-release environment. Repository administrators must configure required reviewers and disable self-review for that environment. Manual minimum-OS install/launch and artifact-signature verification are still human release gates. Current-head CI/CodeQL/installer checks are running.
+- PR #72 — PDF cancellation hardening: abortable webview FileReader, native task registration before decode, bounded single-worker PDF decoding, observable decode_started/decode_finished events, and bounded pending cancellation across the FileReader-to-native handoff. A started spawn_blocking worker cannot be forcibly aborted; its semaphore permit remains held until it exits. Current-head CI/CodeQL/installer checks are running; real-device cancellation and retry tests remain NOT RUN.
+- PR #74 — manual smoke-test matrix for install/launch, PDF cancellation and retry, screenshot attachment, navigation/freeze recovery, privacy/history, cloud egress and cross-platform evidence. It is a test procedure only; no manual device results are claimed. Current-head CI/CodeQL/installer checks are running.
+- PR #41 in Enterprise AI remains a draft design specification for durable consent authority, now rebased on current main and updated to distinguish the in-memory reference backend from production persistence.
+
+PR #40, #43 and #44 were closed as superseded: the dual-consent primitive is already on Enterprise main through merged PR #42, and the consolidated event contract is on main through merged PR #45. Do not delete their branches until confirming they are not referenced by another open PR.
 
 ## Priority backlog — Public AI
 
 ### P0 — stability and safe alpha foundation
 
-1. **Complete PR #60.** Require current-head Rust formatting/lint, native tests on Linux/macOS/Windows, frontend build, dependency audit, CodeQL, workflow lint and installer builds. Review the native consent wording and failure/decline behavior. Confirm completed model results are still returned when receipt storage fails, warnings remain visible, and retries do not duplicate receipts or lose the reserved slot.
-2. **Resolve PR #58 security gate.** Establish the exact CodeQL alert and whether it is a real issue or a stale/base-configuration artifact. Ensure default builds do not expose peer identity, enrollment, revocation or envelope IPC. Validate both default and opt-in preview feature builds. Do not expose Worker/Partner UI or remote execution.
-3. **Reconcile the remaining dependency/security advisories.** Keep locked Rust/npm dependencies and the audit gate. Trace every denied advisory to its dependency path; upgrade or document a narrow, reviewed exception. Do not silence the audit.
-4. **Re-run crash/hang regression coverage.** The PDF IPC expansion was a credible renderer-stall cause and is now fixed in PR #59. Add bounded tests for maximum-size PDFs, malformed and empty PDFs, repeated same-file selection, cancellation, native decode errors and UI responsiveness. The user has elected not to collect external tester feedback now; use CI and code-level verification until a later product-test phase.
+1. **Keep merged PR #64 regression-safe.** Its native cloud-consent and bounded receipt-recovery changes are on `main`; completed model results are preserved when receipt storage fails, with a visible warning and a bounded process-local retry queue. The queue is not crash-durable, and the local receipt chain is not externally anchored.
+2. **Keep peer IPC disabled by default.** PR #58 is merged. Confirm default builds do not register peer identity, enrollment, revocation or envelope IPC; compile the opt-in preview feature separately. Do not expose Worker/Partner execution or remote dispatch.
+3. **Reconcile the remaining dependency/security advisories — release blocker tracked in [issue #73](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/73).** The latest inspected desktop lockfile reports six unresolved RustSec warnings:
+   - `glib 0.18.5` — `RUSTSEC-2024-0429` (unsound iterator implementation).
+   - `proc-macro-error 1.0.4` — `RUSTSEC-2024-0370` (unmaintained).
+   - `ttf-parser 0.25.1` — `RUSTSEC-2026-0192` (unmaintained).
+   - `zbus_names 3.0.0` — `RUSTSEC-2026-0371` (unmaintained).
+   - `zvariant 4.2.0` — `RUSTSEC-2026-0370` (unmaintained).
+   - `zvariant_derive 4.2.0` — `RUSTSEC-2026-0372` (unmaintained).
+   
+   A successful audit job that reports warnings is not a clean dependency posture. Trace each transitive path and require an individual compatible upgrade or a documented, time-bounded blocker with an owner. Do not add blanket `ignore` entries or weaken the audit gate.
+4. **Continue crash/hang regression coverage.** PR #59 replaced large JSON-number IPC payloads with bounded base64 transfer and enabled same-file retries. PR #64 added empty-file rejection, bounded base64 decoding on the blocking pool, and a maximum-size decode-thread regression test. PR #72 adds cancellation during browser file reading and native decode preparation; its cross-platform CI and CodeQL pass, but manual smoke tests remain. Remaining evidence should cover malformed/encrypted PDF documents through the isolated worker, interrupted transfers, UI responsiveness and real-device smoke tests. Use CI and code-level verification until a later product-test phase.
 5. **Audit all long-running Tauri commands.** Every operation must have input bounds, a managed task ID, cancellation, timeout/deadline, concurrency and memory limits, progress/error state, cleanup on every early return, and no UI-thread blocking.
 6. **Close provenance coverage gaps.** Add receipts for the managed document workflow path (`execute_document_workflow`), selected-folder import (`process_selected_folder`) and model-download operations where appropriate. Keep receipt fields measured/inferred/unknown distinct. Verify that receipt failure never silently changes a completed inference into a failed user result.
 7. **Complete release hygiene.** Configure owner-held updater signing keys and verify a signed tagged release. Keep Authenticode and Apple Developer ID signing/notarization as broad-distribution gates. Verify rollback and recovery before public distribution.
@@ -65,15 +79,25 @@ Closed-but-unmerged PRs that duplicate later merged work should be reviewed for 
 
 ## Priority backlog — Enterprise AI
 
+### Current Collective Defence and energy status
+
+- Dual consent is still mandatory: tenant administrator opt-in and separate individual opt-in for the exact principal/device. The signed policy primitive and MemoryConsentAuthority reference backend exist on main; the memory backend is process-local, non-durable, and not rollback-resistant.
+- PR #41 documents the durable authority design. Production database transactions, an external monotonic anchor, protected admin/user key custody, authenticated control-plane APIs, and durable revocation are still outstanding under issue #20 and issue #39.
+- PR #45 merged the v1 event contract and schema CI validation. A read-only endpoint sensor, authenticated event ingestion, durable event store, cross-device correlation, analyst dashboard, and controlled multi-endpoint lab validation remain outstanding under issues #38 and #35.
+- PR #37 merged energy-aware placement policy only. Hardware energy measurement, workload-normalised quality/latency comparison, resource-aware runtime scheduling, and a controlled device pilot remain outstanding.
+- Tenant-isolated fleet/cache work (#26), Control Plane UI (#21), and read-only fleet operations (#23) remain blocked on trusted enrollment, authenticated leases, and server-side tenant/RBAC enforcement (#20).
+- Keep remote execution, Worker/Partner dispatch, automated containment, and cross-tenant sharing disabled until the corresponding trust, consent, receiver-side authorization, sandboxing, audit, and independent-review gates pass.
+
 Enterprise AI is a separate organisation-control-plane project. Its current policy and reservation primitives are not a deployable authenticated device-trust service or a remote-execution platform.
 
 ### P0 — issue #20: trusted device and authenticated lease control plane
 
-1. Implement a durable authoritative device registry with tenant binding, lifecycle state, enrollment/approval evidence, key IDs, monotonic key generations, rotation history and auditable ownership.
-2. Bootstrap administrator trust from protected deployment keys (HSM/KMS/TPM or controlled secret manager). Never accept caller-supplied administrator keys as trust anchors.
-3. Implement challenge-based enrollment requiring device proof-of-possession and administrator approval; implement rotation and revocation that invalidate old generations and active leases.
-4. Authenticate every lease acquire/renew/release/cancel request and bind it to tenant, device, key generation, workload, exact manifest digest, resource limits, policy and expiry.
-5. Add signed canonical request envelopes, method/path/body binding, request IDs, strict expiry/clock-skew checks and replay protection across restarts and service instances.
+1. Durable device registry primitives, tenant binding, lifecycle state, key IDs, monotonic device-key generations, signed admin enrollment/rotation/revocation and an external-anchor contract are implemented. The adapter reloads state under an OS lock and authenticates snapshots with an injected HMAC key; production host/key-provider and external anchor integration remain outstanding.
+2. Bootstrap administrator trust from protected deployment keys (HSM/KMS/TPM or controlled secret manager). Never accept caller-supplied administrator keys as trust anchors. Production key custody and admin-key lifecycle service remain outstanding.
+3. Device proof-of-possession and administrator approval, rotation and revocation primitives are implemented; service/API integration and transactional lease invalidation on revocation remain outstanding.
+4. PR #33 merged: device requests are signed over the exact raw body digest, body size is capped at 1 MiB, and the request nonce is not consumed on body-digest mismatch. Durable registry tests cover replay across restart and concurrent handles. This is authenticated-request groundwork, not an authenticated lease service. A follow-up main-branch regression test now verifies that administrator revocation survives restart and rejects subsequent requests signed by the revoked device; its CI is pending.
+5. Authenticate every lease acquire/renew/release/cancel request and atomically bind it to tenant, device, key generation, workload, exact manifest digest, resource limits, policy and expiry. This is still open; the current durable ledger lease-token primitives are not yet integrated with the authenticated device registry.
+6. Add signed canonical request envelopes, method/path/body binding, request IDs, strict expiry/clock-skew checks and replay protection across restarts and service instances. Device-request primitives exist; production HTTP/API adapter and shared transaction boundary remain outstanding.
 6. Protect durable ledger integrity with a keyed MAC/signature whose key is outside the writable ledger directory; add anti-rollback checkpointing and key recovery/rotation.
 7. Add fail-closed tests for cross-tenant access, revoked/stale devices, forged admin keys, replay, clock skew, tampering, concurrent reservations, service restart and partial failure.
 8. Keep dispatch and sandbox execution out of scope until control-plane authorization is independently reviewed.
@@ -100,14 +124,16 @@ Enterprise AI is a separate organisation-control-plane project. Its current poli
 
 ## Working sequence
 
-1. Merge PR #59 (completed).
-2. Complete current-head CI and security review for PR #60.
-3. Resolve PR #58 CodeQL/base-configuration issue and complete both feature configurations.
-4. Reconcile all duplicate closed PR branches and stale issues without deleting unique work.
-5. Finish Public AI cancellation/receipt coverage and cache correctness.
-6. Advance Public AI local computer workspace in bounded read-only increments.
-7. Implement Enterprise issue #20 trust/lease control plane and its tests.
-8. Only then design and verify the cross-repository protocol and any controlled pilot.
+1. Keep merged Public AI privacy, history, peer-IPC-off, bounded PDF and receipt-recovery guarantees regression-tested.
+2. Finish current-head CI/CodeQL/installer validation for PRs #68, #72 and #74; merge only when checks pass and review threads are resolved.
+3. Execute the manual device matrix on Windows, macOS, Linux and narrow/mobile viewports. Do not mark NOT RUN/BLOCKED cases as passed.
+4. Resolve issue #73 dependency advisories individually; do not suppress warnings or hand-edit the lockfile.
+5. Finish PDF malformed/encrypted/large-input and screenshot failure-path tests; close the remaining application freeze/navigation regressions.
+6. Expand Public AI's bounded, read-only local workspace (recent/empty/content search and safe preview workflows) without unrestricted disk scans or automatic mutations.
+7. Implement and independently review Enterprise durable trust and dual-consent persistence, external monotonic anchoring, authenticated leases, and receiver-side authorization.
+8. Build read-only Collective Defence sensor/ingestion and explainable correlation only after trust/consent are durable; keep response actions disabled.
+9. Turn the energy policy into measured workload-normalised energy telemetry and a consent-aware scheduler; no savings claims before equivalent-task measurements.
+10. Only then design and verify cross-repository interoperability and a controlled multi-device pilot.
 
 ## Explicit non-goals for this phase
 
