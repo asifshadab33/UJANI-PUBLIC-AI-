@@ -370,6 +370,7 @@ fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
     Ok(worker)
 }
 
+/// Extracts PDF text in a resource-limited sidecar and rejects truncated output.
 pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -496,14 +497,42 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
             .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
         if !status.success() { return Err("PDF text extraction failed.".into()); }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
-        if worker_metadata == b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n" {
+        if pdf_worker_output_was_truncated(&worker_metadata)? {
             return Err("PDF text extraction was truncated at 1 MiB; search results are incomplete. Narrow the document or search query.".into());
         }
-        if !worker_metadata.is_empty() { return Err("PDF worker returned unknown status metadata.".into()); }
         String::from_utf8(output).map_err(|_| "PDF worker returned invalid UTF-8.".into())
     };
     tokio::time::timeout(std::time::Duration::from_secs(45), work).await
         .map_err(|_| "PDF extraction exceeded 45 seconds and was stopped.".to_string())?
+}
+
+/// Interprets the worker's fixed, content-free stderr status protocol.
+fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
+    match metadata {
+        b"" => Ok(false),
+        b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n" => Ok(true),
+        _ => Err("PDF worker returned unknown status metadata.".into()),
+    }
+}
+
+#[cfg(test)]
+mod pdf_worker_status_tests {
+    use super::pdf_worker_output_was_truncated;
+
+    #[test]
+    fn accepts_complete_worker_status_without_metadata() {
+        assert!(!pdf_worker_output_was_truncated(b"").unwrap());
+    }
+
+    #[test]
+    fn detects_truncated_worker_output_from_fixed_marker() {
+        assert!(pdf_worker_output_was_truncated(b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n").unwrap());
+    }
+
+    #[test]
+    fn rejects_unknown_worker_status_metadata() {
+        assert!(pdf_worker_output_was_truncated(b"unexpected").is_err());
+    }
 }
 
 /// Split at UTF-8 boundaries, preferring whitespace so multi-stage summarisation
