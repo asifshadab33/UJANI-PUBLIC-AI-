@@ -40,7 +40,7 @@ pub enum ReminderValidationError {
 impl LocalReminder {
     pub fn validate(&self) -> Result<(), ReminderValidationError> {
         if self.id.is_empty() || self.id.len() > MAX_REMINDER_ID_BYTES
-            || !self.id.chars().all(|c| c.is_ascii_alphanumeric() || "-_ .".replace(' ', "").contains(c)) {
+            || !self.id.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
             return Err(ReminderValidationError::InvalidId);
         }
         if self.title.trim().is_empty() || self.title.len() > MAX_REMINDER_TITLE_BYTES
