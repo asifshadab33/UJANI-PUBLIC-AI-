@@ -122,6 +122,9 @@ pub async fn find_duplicate_files(
     result
 }
 
+/// Scans a selected folder for duplicate files using bounded, no-follow traversal.
+///
+/// The operation is read-only and observes cancellation between directory entries.
 fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<DuplicateScanResult, String> {
     let walked = crate::safe_fs::walk_directory(
         folder,
@@ -217,6 +220,7 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
     })
 }
 
+/// Computes a bounded content hash for a regular file without following a final-component link.
 fn hash_file(path: &Path, limit: u64) -> Result<String, String> {
     let mut file = crate::safe_fs::open_regular_file(path).map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
