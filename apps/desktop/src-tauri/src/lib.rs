@@ -322,15 +322,15 @@ async fn execute_cloud_ai_task(
   }
  };
  // Conservative local daily quota: reserve before sending and never refund failures/cancellations.
- let budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
+ let mut budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
   Ok(value) => value,
   Err(error) => {
    return Err(error);
   }
  };
- emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.remaining_tokens), 5);
+ emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.status().remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
- let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter);
+ let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter, || budget.mark_dispatched());
  let mut receipt_warning = None;
  let result = tokio::select! {
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
@@ -354,7 +354,7 @@ async fn execute_cloud_ai_task(
    model_id: Some(receipt_model_id),
     model_version: Some("provider-reported-unverified".into()),
    input_sha256: input_digest,
-   output_sha256: sha256_hex(output.as_bytes()),
+   output_sha256: sha256_hex(output.text.as_bytes()),
    started_at_unix_ms,
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
@@ -369,7 +369,17 @@ async fn execute_cloud_ai_task(
   Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
  }
  if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
- result
+ let budget_warning = if let Ok(output) = &result {
+  match budget.settle(output.total_tokens) {
+   Ok(()) => None,
+   Err(error) => Some(format!("Cloud usage reconciliation failed; the conservative reservation remains counted: {error}")),
+  }
+ } else {
+  drop(budget); // Unsent requests refund automatically; dispatched requests remain conservatively charged.
+  None
+ };
+ if let Some(message) = budget_warning { emit_task_progress(&app, &task_id, "cloud_budget_warning", &message, 100); }
+ result.map(|output| output.text)
 }
 /// Explicitly downloads a named model through the local Ollama service only.
 #[tauri::command]
@@ -1247,7 +1257,7 @@ macro_rules! ujani_invoke_handler {
             history::set_task_history_enabled, history::save_task_history, history::list_task_history,
             history::delete_task_history, history::clear_task_history,
             security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
-            security_store::get_cloud_budget_status,
+            security_store::get_cloud_budget_status, security_store::set_cloud_budget_limit,
             $($peer_command),*
         ]
     };
