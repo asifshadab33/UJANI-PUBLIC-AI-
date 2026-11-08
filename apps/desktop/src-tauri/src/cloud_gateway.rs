@@ -47,6 +47,7 @@ fn token_limits(model: &str, preference: &str) -> Result<(Option<u16>, Option<u1
 #[derive(Deserialize)] struct ChatResponse{choices:Vec<Choice>, #[serde(default)] usage: Option<Usage>}
 #[derive(Deserialize)] struct Usage { total_tokens: Option<u64> }
 
+/// Text and optional provider-reported token usage returned by one approved cloud request.
 #[derive(Debug)]
 pub struct CloudExecutionResult { pub text: String, pub total_tokens: Option<u64> }
 #[derive(Deserialize)] struct Choice{message:Message}
@@ -153,6 +154,7 @@ pub fn validate_request(
 }
 
 /// The dispatch callback is the durable boundary after all local validation and DNS checks.
+/// Sends one validated, user-approved BYOK request and marks the exact dispatch boundary.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,mode:String,approved:bool,token_parameter:String,on_dispatch:impl FnOnce())->Result<CloudExecutionResult,String>{
  let api_key = Zeroizing::new(api_key);
