@@ -1169,6 +1169,20 @@ mod tests {
     }
 
     #[test]
+    fn cloud_budget_records_provider_usage_above_the_conservative_reservation() {
+        let mut db = db();
+        let day = 3_i64;
+        reserve_budget_db(&mut db, 1_000, 1_000, day as u64 * 86_400).unwrap();
+        // Providers can use more tokens than UJANI's byte-length estimate.
+        // Record actual usage rather than hiding the overage or refunding it.
+        settle_budget_reservation_db(&mut db, day, 2_000, 4_500).unwrap();
+        let used: i64 = db.query_row(
+            "SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)
+        ).unwrap();
+        assert_eq!(used, 4_500);
+    }
+
+    #[test]
     fn cloud_budget_refunds_a_reservation_that_was_never_dispatched() {
         let mut db = db();
         let day = 1_i64;
