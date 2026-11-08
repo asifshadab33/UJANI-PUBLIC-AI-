@@ -474,17 +474,22 @@ struct ActiveTaskGuard<'a> {
 impl Drop for ActiveTaskGuard<'_> {
     /// Removes active registration and remembers completion to reject late PDF cancellation.
     fn drop(&mut self) {
-        if let Ok(mut active) = self.control.active.lock() { active.remove(&self.task_id); }
-        if self.task_id.starts_with("pdf-") {
-            if let Ok(mut finished) = self.control.finished_pdf_tasks.lock() {
-                let now = Instant::now();
-                finished.retain(|_, completed_at| now.duration_since(*completed_at) <= FINISHED_PDF_TASK_TTL);
-                if !finished.contains_key(&self.task_id) && finished.len() >= MAX_FINISHED_PDF_TASKS {
-                    if let Some(oldest) = finished.iter().min_by_key(|(_, at)| **at).map(|(id, _)| id.clone()) {
-                        finished.remove(&oldest);
+        // Keep the active lock until the finished marker is committed. Otherwise a
+        // concurrent cancel/re-register can observe a gap after active removal and
+        // before completion is recorded, leaving a stale pending cancellation.
+        if let Ok(mut active) = self.control.active.lock() {
+            active.remove(&self.task_id);
+            if self.task_id.starts_with("pdf-") {
+                if let Ok(mut finished) = self.control.finished_pdf_tasks.lock() {
+                    let now = Instant::now();
+                    finished.retain(|_, completed_at| now.duration_since(*completed_at) <= FINISHED_PDF_TASK_TTL);
+                    if !finished.contains_key(&self.task_id) && finished.len() >= MAX_FINISHED_PDF_TASKS {
+                        if let Some(oldest) = finished.iter().min_by_key(|(_, at)| **at).map(|(id, _)| id.clone()) {
+                            finished.remove(&oldest);
+                        }
                     }
+                    finished.insert(self.task_id.clone(), now);
                 }
-                finished.insert(self.task_id.clone(), now);
             }
         }
     }
