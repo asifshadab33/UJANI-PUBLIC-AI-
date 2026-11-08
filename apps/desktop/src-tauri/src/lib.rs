@@ -1525,14 +1525,40 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
     })
 }
 
-/// Reads aggregate OS security-provider status after an explicit user request.
+/// Reads aggregate OS security-provider status only after a native confirmation.
+/// The React consent checkbox is a usability gate, not an authorization boundary:
+/// direct IPC callers must receive the same native, scope-specific confirmation.
 #[tauri::command]
-fn get_security_provider_status(
+async fn get_security_provider_status(
+    app: AppHandle,
     provider_ids: Vec<String>,
 ) -> Result<Vec<security_providers::SecurityProviderStatus>, String> {
-    if provider_ids.len() > 2 {
-        return Err("Security provider selection exceeds the supported limit.".into());
+    if provider_ids.is_empty()
+        || provider_ids.len() > 2
+        || provider_ids.iter().any(|id| {
+            !matches!(id.as_str(), "windows.antivirus" | "windows.firewall")
+        })
+        || provider_ids.iter().enumerate().any(|(index, id)| provider_ids[..index].contains(id))
+    {
+        return Err("Security provider selection is invalid or exceeds the supported limit.".into());
     }
+
+    let scope = provider_ids.iter().map(|id| match id.as_str() {
+        "windows.antivirus" => "Windows Security Center antivirus category",
+        "windows.firewall" => "Windows Security Center firewall category",
+        _ => unreachable!("provider identifiers were validated above"),
+    }).collect::<Vec<_>>().join("\n• ");
+    let approved = crate::native_consent::confirm_native(
+        &app,
+        "Approve UJANI local security status check",
+        format!("UJANI is requesting a read-only local status query for:\n• {scope}\n\nOnly aggregate health and a local observation timestamp are read. No settings are changed and no data is uploaded. Allow this one-time query?"),
+        CancellationToken::new(),
+        Duration::from_secs(120),
+    ).await;
+    if !approved {
+        return Err("The native confirmation was declined, cancelled or expired; no provider query was made.".into());
+    }
+
     security_providers::read_only_status(&provider_ids)
 }
 
