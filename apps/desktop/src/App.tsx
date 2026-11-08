@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
+import ChatMessageContent from "./ChatMessageContent";
 import EverydayTools from "./EverydayTools";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
@@ -1036,8 +1037,8 @@ export default function App() {
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
             <div className="chat-thread" aria-live="polite">
-              {localChatMessages.length === 0 && !aiBusy ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><p>{message.content}</p></div>)}
-              {aiBusy && <div className="chat-message assistant" aria-label="Streaming local AI response"><b>Local AI · responding</b><p style={{ whiteSpace: "pre-wrap" }}>{localStreamingText || "Waiting for the first response chunk…"}</p></div>}
+              {localChatMessages.length === 0 && !aiBusy ? <p className="chat-empty">Your private local conversation will appear here. Recent turns are included as context for follow-up questions.</p> : localChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : "Local AI"}</b><ChatMessageContent content={message.content} /></div>)}
+              {aiBusy && <div className="chat-message assistant" aria-label="Streaming local AI response"><b>Local AI · responding</b><ChatMessageContent content={localStreamingText || "Waiting for the first response chunk…"} /></div>}
             </div>
             <div className="chat-footer"><small>{localChatMessages.length ? "Recent conversation context is sent only to your local Ollama service." : "No conversation has started yet."}</small><button type="button" onClick={() => { setLocalChatMessages([]); setAiResult(null); }} disabled={!localChatMessages.length || aiBusy}>Clear local chat</button></div>
             {aiResult && <small className="muted">{aiResult.mode_used} · {aiResult.model} · local Ollama · no cloud fallback</small>}
@@ -1124,7 +1125,7 @@ export default function App() {
             {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
             <div className="chat-thread cloud-thread" aria-live="polite">
-              {cloudChatMessages.length === 0 ? <p className="chat-empty">Your online conversation will appear here. Each new message includes recent turns and requires fresh approval before it is sent.</p> : cloudChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : cloudModel || "Online AI"}</b><p>{message.content}</p></div>)}
+              {cloudChatMessages.length === 0 ? <p className="chat-empty">Your online conversation will appear here. Each new message includes recent turns and requires fresh approval before it is sent.</p> : cloudChatMessages.map((message, index) => <div className={`chat-message ${message.role}`} key={index}><b>{message.role === "user" ? "You" : cloudModel || "Online AI"}</b><ChatMessageContent content={message.content} /></div>)}
             </div>
             <div className="chat-footer"><small>{cloudChatMessages.length ? "Recent conversation context is sent to your selected provider after each approval." : "No online conversation has started."}</small><button type="button" onClick={() => { setCloudChatMessages([]); setCloudResult(""); }} disabled={!cloudChatMessages.length || cloudBusy}>Clear online chat</button></div>
             {cloudResult && <small className="muted">Last response received from {cloudModel}. Online chat is not automatically saved to UJANI history.</small>}
