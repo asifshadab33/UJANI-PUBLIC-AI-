@@ -5,7 +5,7 @@ type InlinePart = { kind: "text" | "code" | "strong" | "em" | "link"; value: str
 function safeHttpUrl(value: string): string | null {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password ? url.href : null;
   } catch {
     return null;
   }
@@ -50,10 +50,23 @@ function InlineText({ value }: { value: string }) {
 /**
  * Limited Markdown renderer for assistant output.
  * It creates React text/elements only: no HTML parsing or dangerouslySetInnerHTML.
- * Only HTTP(S) links are clickable; raw HTML and unsafe URL schemes remain text.
+ * Only credential-free HTTP(S) links are clickable; raw HTML and unsafe URL schemes remain text.
  */
+function boundedUtf8Text(content: string, maximumBytes: number): string {
+  let bytes = 0;
+  let end = 0;
+  for (const character of content) {
+    const first = character.charCodeAt(0);
+    const width = character.length === 2 ? 4 : first <= 0x7f ? 1 : first <= 0x7ff ? 2 : 3;
+    if (bytes + width > maximumBytes) break;
+    bytes += width;
+    end += character.length;
+  }
+  return content.slice(0, end);
+}
+
 export default function ChatMessageContent({ content }: { content: string }) {
-  const source = content.slice(0, 128 * 1024);
+  const source = boundedUtf8Text(content, 128 * 1024);
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: React.ReactNode[] = [];
   let index = 0;
