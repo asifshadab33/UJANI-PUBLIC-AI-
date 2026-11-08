@@ -320,7 +320,7 @@ mod tests {
         std::os::unix::fs::symlink(&folder.0, &link).unwrap();
 
         let error = collect_selected_folder(&link).unwrap_err();
-        assert!(error.contains("symlink"));
+        assert!(error.contains("symbolic link") || error.contains("reparse point"));
         let _ = fs::remove_file(link);
     }
 
