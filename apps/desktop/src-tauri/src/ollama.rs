@@ -374,6 +374,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chat_body_shares_validation_and_can_enable_streaming() {
+        let turn = Turn { role: "user", content: "hello" };
+        let body = build_chat_body("llama3.2", None, &[turn], true).unwrap();
+        assert!(body.stream);
+        assert_eq!(body.messages.len(), 1);
+        assert_eq!(body.messages[0].role, "user");
+        let invalid = Turn { role: "system", content: "not permitted as a turn" };
+        assert!(build_chat_body("llama3.2", None, &[invalid], true).is_err());
+    }
+
+    #[test]
     fn parses_streaming_chat_deltas_and_completion() {
         let (delta, done) = parse_chat_stream_line(br#"{"message":{"role":"assistant","content":"hello"},"done":false}"#).unwrap();
         assert_eq!(delta, "hello");
