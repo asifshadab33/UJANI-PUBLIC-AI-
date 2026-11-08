@@ -42,7 +42,7 @@ mod tests {
         let mut content = format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes();
         content.extend_from_slice(stream);
         content.extend_from_slice(b"endstream");
-        let objects = vec![
+        let objects = [
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".to_vec(),
