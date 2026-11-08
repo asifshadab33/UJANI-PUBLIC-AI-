@@ -1167,7 +1167,7 @@ mod tests {
     #[test]
     fn cloud_budget_refunds_a_reservation_that_was_never_dispatched() {
         let mut db = db();
-        let day = 86_400_i64;
+        let day = 1_i64;
         reserve_budget_db(&mut db, 2_000, 2_000, day as u64).unwrap();
         settle_budget_reservation_db(&mut db, day, 4_000, 0).unwrap();
         let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
