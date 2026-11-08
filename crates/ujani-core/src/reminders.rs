@@ -76,8 +76,8 @@ impl LocalReminder {
 }
 
 /// Deterministic bounded agenda; the caller supplies time and no clock is read here.
-pub fn upcoming_reminders<'a>(reminders: &'a [LocalReminder], now_unix_ms: i64, horizon_ms: i64) -> Vec<&'a LocalReminder> {
-    if now_unix_ms <= 0 || horizon_ms < 0 || horizon_ms > MAX_AGENDA_HORIZON_MS { return Vec::new(); }
+pub fn upcoming_reminders(reminders: &[LocalReminder], now_unix_ms: i64, horizon_ms: i64) -> Vec<&LocalReminder> {
+    if now_unix_ms <= 0 || !(0..=MAX_AGENDA_HORIZON_MS).contains(&horizon_ms) { return Vec::new(); }
     let end = now_unix_ms.saturating_add(horizon_ms);
     let mut items: Vec<&LocalReminder> = reminders.iter()
         .filter(|item| item.validate().is_ok())
