@@ -78,3 +78,8 @@
 .chat-markdown code { overflow-wrap: anywhere; }
 .chat-markdown blockquote { margin: 0.5rem 0; padding-left: 0.8rem; border-left: 3px solid var(--border, #888); opacity: .9; }
 .chat-markdown a { text-decoration: underline; overflow-wrap: anywhere; }
+
+.streaming-message { opacity: .92; border-style: dashed; }
+.streaming-message::after { content: " "; display: inline-block; width: .35rem; height: .35rem; margin-left: .35rem; border-radius: 50%; background: currentColor; vertical-align: middle; animation: ujani-stream-pulse 1s ease-in-out infinite alternate; }
+@keyframes ujani-stream-pulse { from { opacity: .25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .streaming-message::after { animation: none; } }
