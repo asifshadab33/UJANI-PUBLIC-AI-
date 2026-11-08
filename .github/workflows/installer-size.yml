@@ -41,6 +41,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+      - name: Build and stage the dedicated PDF worker sidecar
+        working-directory: apps/desktop
+        run: npm run build:pdf-worker
       - name: Generate platform installer icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
