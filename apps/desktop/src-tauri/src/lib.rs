@@ -1212,7 +1212,7 @@ fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
 ///
 /// A started blocking worker cannot be aborted by dropping this future; it retains the
 /// permit until decoding finishes so a retry cannot start an overlapping decoder.
-async fn decode_pdf_upload_off_thread(data_base64: String) -> Result<Vec<u8>, String> {
+async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base64: String) -> Result<Vec<u8>, String> {
     // A cancelled spawn_blocking task cannot be aborted. Keep its permit inside
     // the worker so a quick retry cannot start another large decode in parallel.
     let permit = pdf_decode_slots().try_acquire_owned().map_err(|_| {
@@ -1220,7 +1220,10 @@ async fn decode_pdf_upload_off_thread(data_base64: String) -> Result<Vec<u8>, St
     })?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        decode_pdf_upload(&data_base64)
+        emit_task_progress(&app, &task_id, "decode_started", "PDF upload decoding started in the bounded worker.", 8);
+        let result = decode_pdf_upload(&data_base64);
+        emit_task_progress(&app, &task_id, "decode_finished", "PDF upload decoder worker has exited.", 10);
+        result
     })
     .await
     .map_err(|error| format!("PDF decode worker failed: {error}"))?
@@ -1311,7 +1314,7 @@ async fn process_selected_pdf(
         &registration.token,
         Duration::from_secs(30),
         "PDF upload decoding exceeded its 30-second time budget.",
-        decode_pdf_upload_off_thread(data_base64),
+        decode_pdf_upload_off_thread(app.clone(), task_id.clone(), data_base64),
     ).await?;
 
     let language = translation_language.as_deref().unwrap_or("");
