@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 
 const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const OUTPUT_TRUNCATED_MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
 
 /// Extracts text from a validated PDF while enforcing the worker's input-size ceiling.
 fn extract_pdf_text(data: &[u8]) -> Result<String, ()> {
@@ -30,8 +31,14 @@ pub fn run() {
         Ok(text) => text,
         Err(()) => std::process::exit(3),
     };
+    let truncated = text.len() > MAX_OUTPUT_BYTES;
     if std::io::stdout().write_all(bounded_output(&text).as_bytes()).is_err() {
         std::process::exit(4);
+    }
+    // Keep stdout as plain extracted text. A fixed metadata-only stderr marker
+    // lets the parent distinguish a complete result from a bounded prefix.
+    if truncated && std::io::stderr().write_all(OUTPUT_TRUNCATED_MARKER).is_err() {
+        std::process::exit(5);
     }
 }
 
