@@ -929,6 +929,22 @@ async fn execute_local_ai_task(
     if !validate_model_identifier(&model) {
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
+    // Enforce the same live OS/runtime capability snapshot exposed by the planner.
+    // A UI-selected model is not proof that the local service is actually available.
+    let capability_snapshot = get_capability_snapshot().await?;
+    let local_plan = plan_local_task(
+        "local.ai.generate",
+        &mode,
+        capability_snapshot.available_memory_mb,
+        &capability_snapshot.capabilities,
+    );
+    if !local_plan.accepted {
+        return Err(format!("UJANI local-first policy blocked this task: {}", local_plan.reason));
+    }
+    let installed_models = ollama::list_models().await?;
+    if !installed_models.iter().any(|installed| installed.name == model) {
+        return Err("The selected model is not installed in the local Ollama runtime. Choose an installed model or download it explicitly; UJANI will not silently send this task to the cloud.".into());
+    }
     let _memory_reservation = resource_runtime::MemoryReservation::acquire(&task_id)?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
