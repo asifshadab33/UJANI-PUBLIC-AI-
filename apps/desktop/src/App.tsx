@@ -179,16 +179,17 @@ export default function App() {
     if (!isTauri()) return;
     let cancelled = false;
     setHistoryBusy(true);
-    Promise.all([
-      invoke<HistorySettings>("get_task_history_settings"),
-      invoke<HistoryEntry[]>("list_task_history")
-    ]).then(([settings, entries]) => {
-      if (cancelled) return;
-      setHistorySettings(settings);
-      setPersistentHistory(entries);
-    }).catch((error) => {
-      if (!cancelled) setHistoryError("Local history unavailable: " + String(error));
-    }).finally(() => {
+    const settingsRequest = invoke<HistorySettings>("get_task_history_settings")
+      .then((settings) => { if (!cancelled) setHistorySettings(settings); })
+      .catch((error) => {
+        if (!cancelled) setHistoryError("History settings unavailable: " + String(error));
+      });
+    const entriesRequest = invoke<HistoryEntry[]>("list_task_history")
+      .then((entries) => { if (!cancelled) setPersistentHistory(entries); })
+      .catch((error) => {
+        if (!cancelled) setHistoryError("Saved task entries unavailable: " + String(error));
+      });
+    Promise.all([settingsRequest, entriesRequest]).finally(() => {
       if (!cancelled) setHistoryBusy(false);
     });
     return () => { cancelled = true; };
@@ -225,12 +226,14 @@ export default function App() {
     }
   }
 
+  /** Navigate to local chat and refresh model availability when needed. */
   function openLocalChat() {
     setActiveSidebarSection("new-task");
     document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
+  /** Open file tools without requiring a local model for file inspection. */
   function openFileTools() {
     setActiveSidebarSection("new-task");
     document.getElementById("document-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -238,6 +241,7 @@ export default function App() {
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
+  /** Open local setup guidance and lazily refresh device/model information. */
   function openLocalSetup(focusTarget = false) {
     setActiveSidebarSection("resources");
     const target = document.getElementById("local-resources");
@@ -247,17 +251,23 @@ export default function App() {
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
+  /** Refresh the opt-in setting independently from the encrypted history entries. */
   async function refreshPersistentHistory() {
     if (!isTauri()) return;
     setHistoryBusy(true); setHistoryError("");
     try {
-      const [settings, entries] = await Promise.all([
-        invoke<HistorySettings>("get_task_history_settings"),
-        invoke<HistoryEntry[]>("list_task_history")
-      ]);
-      setHistorySettings(settings); setPersistentHistory(entries);
-    } catch (error) { setHistoryError("Local history unavailable: " + String(error)); }
-    finally { setHistoryBusy(false); }
+      const settings = await invoke<HistorySettings>("get_task_history_settings");
+      setHistorySettings(settings);
+    } catch (error) {
+      setHistoryError("History settings unavailable: " + String(error));
+      setHistoryBusy(false);
+      return;
+    }
+    try {
+      setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+    } catch (error) {
+      setHistoryError("Saved task entries unavailable: " + String(error));
+    } finally { setHistoryBusy(false); }
   }
 
   async function refreshExecutionReceipts() {
@@ -306,6 +316,7 @@ export default function App() {
     finally { setHistoryBusy(false); }
   }
 
+  /** Save a completed task only when the latest persisted opt-in setting allows it. */
   async function saveToPersistentHistory(prompt: string, output: string, kind: string, model: string) {
     if (!isTauri()) return;
     try {
@@ -318,7 +329,11 @@ export default function App() {
         return;
       }
       await invoke<number>("save_task_history", { prompt, output, mode: executionMode, model, kind });
-      setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+      try {
+        setPersistentHistory(await invoke<HistoryEntry[]>("list_task_history"));
+      } catch (error) {
+        setHistoryError("Task saved, but saved history could not be refreshed: " + String(error));
+      }
     } catch (error) { setHistoryError("Could not save this task: " + String(error)); }
   }
 
