@@ -1138,7 +1138,7 @@ export default function App() {
               <label className="model-select">Daily token limit (10,000–5,000,000)<input type="number" min={10000} max={5000000} step={1000} value={cloudBudgetLimitInput} onChange={(event) => setCloudBudgetLimitInput(event.target.value)}/></label>
               <button className="model-run" onClick={saveCloudBudgetLimit} disabled={!isTauri() || cloudBudgetBusy}>{cloudBudgetBusy ? "Saving local limit…" : "Save daily cloud limit"}</button>
               {cloudBudgetError && <p className="error" role="alert">{cloudBudgetError}</p>}
-              <small className="muted">UJANI reserves a conservative allowance before sending. If the provider reports actual token usage, unused reserved tokens are returned. Requests that may have reached the provider remain conservatively counted when usage is unavailable.</small>
+              <small className="muted">UJANI reserves a conservative UTF-8 byte-length estimate plus the maximum completion allowance before sending; this is not an exact tokenizer count. When the provider reports actual token usage, UJANI reconciles the estimate to that count. Requests that may have reached the provider remain conservatively counted when usage is unavailable.</small>
             </div>
             <label className="model-select">Provider preset<select value={cloudProviderPreset} onChange={(event) => {
               const preset = CLOUD_PROVIDER_PRESETS.find((item) => item.id === event.target.value);
