@@ -8,6 +8,7 @@ import EverydayTools from "./EverydayTools";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
+type ChatDeltaEvent = { task_id: string; delta: string };
 type DeviceInfo = { os: string; architecture: string; logical_cpus: number; total_memory_mb: number; available_memory_mb: number; system_locale: string };
 type CapabilityRecord = { id: string; category: string; state: "available" | "unavailable" | "unknown"; source: string; detail: string };
 type OperationDescriptor = { id: string; description: string; required_capabilities: string[]; minimum_available_memory_mb: number };
@@ -207,14 +208,21 @@ export default function App() {
         return;
       }
       setTaskProgress(progress);
-      if (progress.stage === "streaming" && progress.task_id.startsWith("local-ai-")) {
-        setLocalStreamingText((current) => current + progress.message);
-      }
       if (progress.stage === "receipt_warning") {
         setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
       }
     }).then((stop) => { unlisten = stop; })
       .catch((error) => setOllamaError(String(error)));
+    return () => { unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    listen<ChatDeltaEvent>("ujani-chat-delta", (event) => {
+      setLocalStreamingText((current) => current + event.payload.delta);
+    }).then((stop) => { unlisten = stop; })
+      .catch((error) => setOllamaError("Local response stream unavailable: " + String(error)));
     return () => { unlisten?.(); };
   }, []);
 
