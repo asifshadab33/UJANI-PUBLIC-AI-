@@ -1156,7 +1156,7 @@ mod tests {
     #[test]
     fn cloud_budget_settlement_refunds_only_unused_reservation() {
         let mut db = db();
-        let day = 86_400_i64;
+        let day = 1_i64;
         reserve_budget_db(&mut db, 4_000, 8_000, day as u64).unwrap();
         reserve_budget_db(&mut db, 1_000, 1_000, day as u64).unwrap();
         settle_budget_reservation_db(&mut db, day, 12_000, 3_000).unwrap();
