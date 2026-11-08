@@ -15,7 +15,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ujani-release-${{ github.ref }}
+  # Manual rebuilds and tag pushes for the same release share one concurrency lock.
+  group: ujani-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -310,6 +311,8 @@ jobs:
   prepare-release-evidence:
     name: Verify assets and prepare release evidence
     needs: build-and-upload
+    outputs:
+      evidence_manifest_sha256: ${{ steps.capture-evidence.outputs.sha256 }}
     runs-on: ubuntu-24.04
     permissions:
       attestations: write
@@ -445,6 +448,19 @@ jobs:
       - name: Verify generated SHA-256 manifest against release assets
         working-directory: release-assets
         run: sha256sum -c SHA256SUMS
+      - name: Capture immutable per-run release evidence digest
+        id: capture-evidence
+        working-directory: release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This manifest covers every release asset, including SHA256SUMS,
+          # and excludes itself to avoid a recursive digest. Its digest is
+          # carried as a workflow output across the approval boundary.
+          find . -type f ! -name RELEASE_EVIDENCE.sha256 -print0 | sort -z | xargs -0 sha256sum > RELEASE_EVIDENCE.sha256
+          sha256sum -c RELEASE_EVIDENCE.sha256
+          digest="$(sha256sum RELEASE_EVIDENCE.sha256 | cut -d ' ' -f 1)"
+          printf 'sha256=%s\\n' "$digest" >> "$GITHUB_OUTPUT"
       - name: Validate generated SBOM structure
         run: |
           set -euo pipefail
@@ -462,7 +478,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
-          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS release-assets/ujani-source-sbom.spdx.json --clobber --repo "$REPOSITORY"
+          gh release upload "$TAG" release-assets/INSTALLER_SIZES.txt release-assets/SHA256SUMS release-assets/ujani-source-sbom.spdx.json release-assets/RELEASE_EVIDENCE.sha256 --clobber --repo "$REPOSITORY"
 
   publish-release:
     name: Publish completed multi-platform release
@@ -480,6 +496,7 @@ jobs:
           fetch-depth: 1
       - name: Require verified evidence on the draft release
         env:
+          EXPECTED_EVIDENCE_SHA256: ${{ needs.prepare-release-evidence.outputs.evidence_manifest_sha256 }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
@@ -487,17 +504,21 @@ jobs:
           set -euo pipefail
           gh release view "$TAG" --repo "$REPOSITORY" --json isDraft --jq '.isDraft' | grep -Fxq true
           assets="$(gh release view "$TAG" --repo "$REPOSITORY" --json assets --jq '.assets[].name')"
-          for required in INSTALLER_SIZES.txt SHA256SUMS ujani-source-sbom.spdx.json; do
+          for required in INSTALLER_SIZES.txt SHA256SUMS ujani-source-sbom.spdx.json RELEASE_EVIDENCE.sha256; do
             grep -Fxq "$required" <<< "$assets" || { echo "::error::Missing pre-approval evidence asset: $required"; exit 1; }
           done
           rm -rf release-assets
           mkdir release-assets
           gh release download "$TAG" --dir release-assets --repo "$REPOSITORY"
           cd release-assets
+          test -n "$EXPECTED_EVIDENCE_SHA256"
+          actual_evidence_sha256="$(sha256sum RELEASE_EVIDENCE.sha256 | cut -d ' ' -f 1)"
+          test "$actual_evidence_sha256" = "$EXPECTED_EVIDENCE_SHA256" || { echo "::error::The release evidence manifest differs from the immutable digest captured before approval."; exit 1; }
+          sha256sum -c RELEASE_EVIDENCE.sha256
           sha256sum -c SHA256SUMS
-          listed="$(sed -E 's/^[0-9a-f]{64}  \.\///' SHA256SUMS | sort)"
-          present="$(find . -type f ! -name SHA256SUMS -printf '%P\n' | sort)"
-          test "$listed" = "$present" || { echo "::error::Draft release assets changed after evidence preparation or are not covered by SHA256SUMS."; exit 1; }
+          listed="$(sed -E 's/^[0-9a-f]{64}  \.\///' RELEASE_EVIDENCE.sha256 | sort)"
+          present="$(find . -type f ! -name RELEASE_EVIDENCE.sha256 -printf '%P\n' | sort)"
+          test "$listed" = "$present" || { echo "::error::Draft release assets changed after evidence preparation or are not covered by the immutable manifest."; exit 1; }
       - name: Publish approved release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
