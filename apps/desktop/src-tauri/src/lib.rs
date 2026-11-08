@@ -1525,6 +1525,21 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
     })
 }
 
+fn validate_security_provider_ids(provider_ids: &[String]) -> Result<(), &'static str> {
+    if provider_ids.is_empty() || provider_ids.len() > 2 {
+        return Err("select one or two supported security provider categories");
+    }
+    for (index, id) in provider_ids.iter().enumerate() {
+        if !matches!(id.as_str(), "windows.antivirus" | "windows.firewall") {
+            return Err("unsupported security provider category");
+        }
+        if provider_ids[..index].contains(id) {
+            return Err("duplicate security provider category");
+        }
+    }
+    Ok(())
+}
+
 /// Reads aggregate OS security-provider status only after a native confirmation.
 /// The React consent checkbox is a usability gate, not an authorization boundary:
 /// direct IPC callers must receive the same native, scope-specific confirmation.
@@ -1533,15 +1548,7 @@ async fn get_security_provider_status(
     app: AppHandle,
     provider_ids: Vec<String>,
 ) -> Result<Vec<security_providers::SecurityProviderStatus>, String> {
-    if provider_ids.is_empty()
-        || provider_ids.len() > 2
-        || provider_ids.iter().any(|id| {
-            !matches!(id.as_str(), "windows.antivirus" | "windows.firewall")
-        })
-        || provider_ids.iter().enumerate().any(|(index, id)| provider_ids[..index].contains(id))
-    {
-        return Err("Security provider selection is invalid or exceeds the supported limit.".into());
-    }
+    validate_security_provider_ids(&provider_ids).map_err(str::to_owned)?;
 
     let scope = provider_ids.iter().map(|id| match id.as_str() {
         "windows.antivirus" => "Windows Security Center antivirus category",
@@ -1645,5 +1652,36 @@ mod ipc_input_tests {
         assert!(!valid_command_identifier("../task", 96));
         assert!(!valid_command_identifier("task\nadmin", 96));
         assert!(!valid_command_identifier(&"x".repeat(97), 96));
+    }
+}
+
+
+#[cfg(test)]
+mod security_provider_command_tests {
+    use super::validate_security_provider_ids;
+
+    #[test]
+    fn provider_scope_rejects_empty_unknown_duplicate_and_oversized_requests() {
+        assert!(validate_security_provider_ids(&[]).is_err());
+        assert!(validate_security_provider_ids(&["windows.unknown".into()]).is_err());
+        assert!(validate_security_provider_ids(&[
+            "windows.antivirus".into(),
+            "windows.antivirus".into(),
+        ]).is_err());
+        assert!(validate_security_provider_ids(&[
+            "windows.antivirus".into(),
+            "windows.firewall".into(),
+            "windows.firewall".into(),
+        ]).is_err());
+    }
+
+    #[test]
+    fn provider_scope_accepts_each_supported_category_and_both_together() {
+        assert!(validate_security_provider_ids(&["windows.antivirus".into()]).is_ok());
+        assert!(validate_security_provider_ids(&["windows.firewall".into()]).is_ok());
+        assert!(validate_security_provider_ids(&[
+            "windows.antivirus".into(),
+            "windows.firewall".into(),
+        ]).is_ok());
     }
 }
