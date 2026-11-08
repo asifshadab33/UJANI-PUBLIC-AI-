@@ -46,6 +46,6 @@ ujani-core = { path = "../../../crates/ujani-core" }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_Storage_FileSystem", "Win32_System_SecurityCenter"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_Storage_FileSystem", "Win32_System_SecurityCenter", "Win32_System_LibraryLoader"] }
 
 [workspace]
