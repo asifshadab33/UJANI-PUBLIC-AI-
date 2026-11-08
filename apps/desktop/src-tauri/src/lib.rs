@@ -333,6 +333,8 @@ async fn execute_cloud_ai_task(
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter, || budget.mark_dispatched());
  let mut receipt_warning = None;
  let result = tokio::select! {
+  // If cancellation is already pending, do not poll the gateway or mark the budget dispatched.
+  biased;
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
   outcome = tokio::time::timeout(Duration::from_secs(95), request) => {
    match outcome {
