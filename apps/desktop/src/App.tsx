@@ -53,7 +53,7 @@ const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in 
 
 /// Read a selected file using the browser's native encoder rather than expanding
 /// binary bytes into millions of JSON numbers for Tauri IPC.
-function readFileAsBase64(file: File, signal?: AbortSignal): Promise<string> {
+function readFileAsBase64(file: File, signal?: AbortSignal, onReadComplete?: () => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     const cleanup = () => signal?.removeEventListener("abort", abort);
@@ -82,6 +82,7 @@ function readFileAsBase64(file: File, signal?: AbortSignal): Promise<string> {
         reject(new Error("The selected file could not be encoded as base64."));
         return;
       }
+      onReadComplete?.();
       resolve(result.slice(separator + 1));
     };
     signal?.addEventListener("abort", abort, { once: true });
@@ -679,8 +680,11 @@ export default function App() {
     setActiveDocumentTaskId(taskId);
     setSummaryBusy(true);
     try {
-      const dataBase64 = await readFileAsBase64(file, readController.signal);
-      if (pdfReadControllerRef.current === readController) pdfReadControllerRef.current = null;
+      const dataBase64 = await readFileAsBase64(file, readController.signal, () => {
+        // Clear the read phase before resolving so a cancel in the promise handoff
+        // queues a native cancellation instead of aborting an already-finished reader.
+        if (pdfReadControllerRef.current === readController) pdfReadControllerRef.current = null;
+      });
       const result = await invoke<DocumentPipelineResult>("process_selected_pdf", {
         taskId, fileName: file.name, dataBase64, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
