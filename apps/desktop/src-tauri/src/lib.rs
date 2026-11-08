@@ -1245,7 +1245,8 @@ fn get_security_provider_status(
 macro_rules! ujani_invoke_handler {
     ($($peer_command:path),* $(,)?) => {
         tauri::generate_handler![
-            execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,\n            get_security_provider_status,
+            execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
+            get_security_provider_status,
             plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
             run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
             get_model_recommendation, execute_document_workflow, execute_local_ai_task,
