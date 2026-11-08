@@ -103,3 +103,28 @@
 - [ ] Sandbox escape and network-egress tests on each supported OS.
 - [ ] Cross-language protocol vectors, restart/replay/concurrency tests and signed receipt verification.
 - [ ] Independent penetration test and release-signing verification.
+
+
+## Release-candidate update — 8 November 2026
+
+The following status supplements the 6 November baseline above; it does not waive any release gate.
+
+### Public AI PDF hardening candidate
+
+- [x] Add a separately built and bundled `ujani-pdf-worker` sidecar; reject missing worker binaries and enforce bounded input/output, time and platform-specific worker controls before sending untrusted PDF bytes.
+- [x] Keep output truncation explicit: the worker emits a fixed metadata-only status marker; the parent rejects truncated extraction rather than treating a partial prefix as complete text.
+- [x] Ensure PDF text search marks extraction errors/truncation as incomplete and never caches those partial results as negative matches.
+- [x] Register PDF upload cancellation before bounded base64 decoding; hold the single decoder permit until blocking work exits and report decoder lifecycle events.
+- [ ] Complete current-head Windows/macOS/Linux native tests, Clippy, CodeQL and installer builds for PR #117.
+- [ ] Run installed-package checks on real supported devices: sidecar placement/permissions, OS worker restrictions, cancellation/timeout termination and same-file retry. The manual matrix must mark a case BLOCKED if the required evidence cannot be captured.
+- [ ] Keep the PDF worker's OS-specific restrictions distinct from a full application sandbox. Fortress is still an application policy boundary, not proof of OS-enforced whole-app isolation.
+
+### Dependency and distribution gates
+
+- [ ] Resolve the six tracked desktop dependency advisories individually: `glib 0.18.5`, `proc-macro-error 1.0.4`, `ttf-parser 0.25.1`, `zbus_names 3.0.0`, `zvariant 4.2.0` and `zvariant_derive 4.2.0`. The current audit job's allowed-warning success is not remediation; do not add blanket ignores.
+- [ ] Evaluate PDF parser replacement/update through a compatible maintained `pdf-extract` dependency path. Its current `lopdf = "0.42"` caret requirement does not allow a lockfile-only jump to `lopdf 0.45/0.47`.
+- [ ] Configure owner-held updater signing keys and platform code-signing/notarization credentials; validate signatures and update provenance before broad distribution.
+
+### Release decision
+
+PR #117 remains an open release candidate. Do not merge or publish a first release until current-head CI and security analysis pass, the installed-package/manual test matrix is completed, unresolved dependency advisories are explicitly assessed, and release signing/verification is demonstrated. No screenshot capture-to-chat or scanned-PDF OCR capability is implied by this PDF worker work.
