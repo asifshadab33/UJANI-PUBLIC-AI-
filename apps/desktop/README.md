@@ -132,3 +132,8 @@ These choices keep the application honest and preserve its pre-alpha status. The
 ## Audit hardening
 
 See [Security review](../../docs/SECURITY_REVIEW_2026-11.md) and [Fuzzing guide](../../docs/FUZZING.md). The fuzz harnesses are added but not yet run as a completed campaign.
+
+
+## Platform support policy
+
+See [the proposed platform support baseline and release gates](../../docs/PLATFORM_SUPPORT.md). The matrix is a proposed policy, not certification: minimum-version installation and launch tests must pass before a platform/version is advertised as supported.
