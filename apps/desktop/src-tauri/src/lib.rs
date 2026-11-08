@@ -1095,8 +1095,12 @@ fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Resul
 }
 
 #[tauri::command]
-fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
-    request_task_cancellation(&control, &task_id)
+fn cancel_active_task(app: AppHandle, control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
+    let accepted = request_task_cancellation(&control, &task_id)?;
+    if accepted {
+        emit_task_progress(&app, &task_id, "cancel_requested", "Cancellation request accepted.", 0);
+    }
+    Ok(accepted)
 }
 
 
@@ -1181,20 +1185,35 @@ fn pdf_decode_slots() -> Arc<tokio::sync::Semaphore> {
 }
 
 /// Runs a bounded blocking worker while retaining its permit until the worker exits.
-fn spawn_bounded_pdf_worker<T, F>(slots: Arc<tokio::sync::Semaphore>, work: F) -> Result<tokio::task::JoinHandle<T>, String>
-where T: Send + 'static, F: FnOnce() -> T + Send + 'static {
+fn spawn_bounded_pdf_worker<T, F, R>(slots: Arc<tokio::sync::Semaphore>, work: F, on_permit_released: R) -> Result<tokio::task::JoinHandle<T>, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+    R: FnOnce() + Send + 'static,
+{
     let permit = slots.try_acquire_owned().map_err(|_| "Another PDF upload is still being prepared. Please wait before retrying.".to_string())?;
-    Ok(tokio::task::spawn_blocking(move || { let result = work(); drop(permit); result }))
+    Ok(tokio::task::spawn_blocking(move || {
+        let result = work();
+        drop(permit);
+        on_permit_released();
+        result
+    }))
 }
 
 /// Decodes the bounded PDF payload off the async executor under a single-worker limit.
 async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base64: String) -> Result<Vec<u8>, String> {
-    let worker = spawn_bounded_pdf_worker(pdf_decode_slots(), move || {
-        emit_task_progress(&app, &task_id, "decode_started", "PDF upload decoding started in the bounded worker.", 8);
-        let result = decode_pdf_upload(&data_base64);
-        emit_task_progress(&app, &task_id, "decode_finished", "PDF upload decoder worker has exited.", 10);
-        result
-    })?;
+    let release_app = app.clone();
+    let release_task_id = task_id.clone();
+    let worker = spawn_bounded_pdf_worker(
+        pdf_decode_slots(),
+        move || {
+            emit_task_progress(&app, &task_id, "decode_started", "PDF upload decoding started in the bounded worker.", 8);
+            let result = decode_pdf_upload(&data_base64);
+            emit_task_progress(&app, &task_id, "decode_finished", "PDF upload decoder work has finished.", 10);
+            result
+        },
+        move || emit_task_progress(&release_app, &release_task_id, "decode_permit_released", "PDF decoder capacity has been released.", 10),
+    )?;
     worker.await.map_err(|error| format!("PDF decode worker failed: {error}"))?
 }
 
@@ -1307,10 +1326,10 @@ mod pdf_upload_tests {
         let worker = spawn_bounded_pdf_worker(slots.clone(), move || {
             started_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-        }).unwrap();
+        }, || {}).unwrap();
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         drop(worker);
-        assert!(spawn_bounded_pdf_worker(slots.clone(), || ()).is_err());
+        assert!(spawn_bounded_pdf_worker(slots.clone(), || (), || {}).is_err());
         release_tx.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
@@ -1321,7 +1340,7 @@ mod pdf_upload_tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }).await.unwrap();
-        assert!(spawn_bounded_pdf_worker(slots, || ()).unwrap().await.is_ok());
+        assert!(spawn_bounded_pdf_worker(slots, || (), || {}).unwrap().await.is_ok());
     }
 
     #[test]
