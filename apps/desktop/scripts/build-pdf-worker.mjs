@@ -33,11 +33,10 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 const built = path.join(targetDir, ...(explicitTarget || process.env.TAURI_ENV_TARGET_TRIPLE ? [target] : []), profile, 'ujani-pdf-worker' + extension);
 if (!fs.existsSync(built)) throw new Error('PDF worker build output was not found: ' + built);
 fs.copyFileSync(built, destination);
-if (process.platform !== 'win32') fs.chmodSync(destination, 0o755);
-// Also place the worker beside the unbundled Tauri executable for `tauri dev`
-// and direct target/debug or target/release launches. The app never searches PATH.
-const appBinaryDir = path.join(targetDir, ...(explicitTarget || process.env.TAURI_ENV_TARGET_TRIPLE ? [target] : []), profile);
-const adjacent = path.join(appBinaryDir, 'ujani-pdf-worker' + extension);
-fs.copyFileSync(built, adjacent);
-if (process.platform !== 'win32') fs.chmodSync(adjacent, 0o755);
-console.log('Staged dedicated PDF worker for ' + target + ': ' + destination + ' and ' + adjacent);
+if (process.platform !== 'win32') {
+  fs.chmodSync(destination, 0o755);
+  fs.chmodSync(built, 0o755);
+}
+// Cargo already places the unbundled worker beside the desktop executable in
+// target/<triple>/<profile>; the target-specific copy above is for Tauri bundling.
+console.log('Staged dedicated PDF worker for ' + target + ': ' + destination);
