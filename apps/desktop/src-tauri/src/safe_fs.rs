@@ -2,7 +2,7 @@
 //!
 //! Callers retain their own scope, traversal, extension, size and cancellation policy.
 //! This module centralizes the platform-specific no-follow open and handle validation.
-use std::{io, path::Path};
+use std::{fs, io, ffi::OsString, path::{Path, PathBuf}};
 #[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
 
@@ -30,6 +30,199 @@ pub(crate) fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
             "The selected path is not a regular non-reparse file."));
     }
     Ok(file)
+}
+
+/// Whether links encountered during a selected-folder walk are rejected or skipped.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LinkPolicy { Reject, Skip }
+
+/// Whether non-root traversal errors abort the walk or produce a truncated result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WalkErrorPolicy { Strict, BestEffort }
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WalkOptions {
+    /// Root is depth zero; zero visits immediate children only.
+    pub max_depth: usize,
+    pub max_entries: usize,
+    pub link_policy: LinkPolicy,
+    pub error_policy: WalkErrorPolicy,
+}
+
+pub(crate) struct WalkEntry {
+    pub path: PathBuf,
+    pub name: OsString,
+    pub metadata: fs::Metadata,
+    pub is_file: bool,
+    pub is_dir: bool,
+}
+
+pub(crate) struct WalkReport {
+    pub root: PathBuf,
+    pub entries: Vec<WalkEntry>,
+    pub entries_seen: usize,
+    pub truncated: bool,
+}
+
+/// One bounded traversal implementation shared by local search and folder import.
+/// The caller supplies cancellation and retains its own file-type, extension,
+/// content-size and authorization policy. Returned file paths are canonical and
+/// remain subject to open_regular_file before any content is read.
+pub(crate) fn walk_directory<F>(
+    selected_root: &Path,
+    options: WalkOptions,
+    mut is_cancelled: F,
+) -> Result<WalkReport, String>
+where
+    F: FnMut() -> bool,
+{
+    if options.max_entries == 0 {
+        return Err("Directory traversal entry limit must be greater than zero.".into());
+    }
+    let root_metadata = fs::symlink_metadata(selected_root)
+        .map_err(|error| format!("Cannot inspect selected folder: {error}"))?;
+    if is_reparse_point(&root_metadata) || !root_metadata.is_dir() {
+        return Err("Choose a real directory, not a symbolic link or reparse point.".into());
+    }
+    let root = fs::canonicalize(selected_root)
+        .map_err(|error| format!("Cannot resolve selected folder: {error}"))?;
+    let mut stack = vec![(root.clone(), 0usize)];
+    let mut entries = Vec::new();
+    let mut entries_seen = 0usize;
+    let mut truncated = false;
+
+    while let Some((directory, depth)) = stack.pop() {
+        if is_cancelled() {
+            return Err("Directory traversal cancelled by user.".into());
+        }
+        let directory_metadata = match fs::symlink_metadata(&directory) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                if options.error_policy == WalkErrorPolicy::Strict {
+                    return Err(format!("Cannot inspect a selected directory: {error}"));
+                }
+                truncated = true;
+                continue;
+            }
+        };
+        if is_reparse_point(&directory_metadata) || !directory_metadata.is_dir() {
+            if options.link_policy == LinkPolicy::Reject {
+                return Err("Selected folder contains a symbolic link or reparse point.".into());
+            }
+            truncated = true;
+            continue;
+        }
+        let canonical_directory = match fs::canonicalize(&directory) {
+            Ok(path) if path.starts_with(&root) => path,
+            Ok(_) => {
+                if options.error_policy == WalkErrorPolicy::Strict {
+                    return Err("A directory resolves outside the selected folder.".into());
+                }
+                truncated = true;
+                continue;
+            }
+            Err(error) => {
+                if options.error_policy == WalkErrorPolicy::Strict {
+                    return Err(format!("Cannot resolve a selected directory: {error}"));
+                }
+                truncated = true;
+                continue;
+            }
+        };
+        let iterator = match fs::read_dir(&canonical_directory) {
+            Ok(iterator) => iterator,
+            Err(error) if depth == 0 => return Err(format!("Cannot read selected folder: {error}")),
+            Err(error) if options.error_policy == WalkErrorPolicy::Strict => {
+                return Err(format!("Cannot read a selected subdirectory: {error}"));
+            }
+            Err(_) => {
+                truncated = true;
+                continue;
+            }
+        };
+
+        for item in iterator {
+            if is_cancelled() {
+                return Err("Directory traversal cancelled by user.".into());
+            }
+            let item = match item {
+                Ok(item) => item,
+                Err(error) if options.error_policy == WalkErrorPolicy::Strict => {
+                    return Err(format!("Cannot inspect a folder entry: {error}"));
+                }
+                Err(_) => {
+                    truncated = true;
+                    continue;
+                }
+            };
+            entries_seen = entries_seen.saturating_add(1);
+            if entries_seen > options.max_entries {
+                if options.error_policy == WalkErrorPolicy::Strict {
+                    return Err("Selected folder exceeds the bounded directory-entry limit.".into());
+                }
+                truncated = true;
+                break;
+            }
+            let path = item.path();
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if options.error_policy == WalkErrorPolicy::Strict => {
+                    return Err(format!("Cannot inspect a folder entry: {error}"));
+                }
+                Err(_) => {
+                    truncated = true;
+                    continue;
+                }
+            };
+            if is_reparse_point(&metadata) {
+                if options.link_policy == LinkPolicy::Reject {
+                    return Err("Selected folder contains a symbolic link or reparse point.".into());
+                }
+                continue;
+            }
+            let file_type = metadata.file_type();
+            if file_type.is_dir() {
+                entries.push(WalkEntry {
+                    path: path.clone(), name: item.file_name(), metadata,
+                    is_file: false, is_dir: true,
+                });
+                if depth < options.max_depth {
+                    stack.push((path, depth + 1));
+                } else if options.max_depth > 0 {
+                    truncated = true;
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let canonical_file = match fs::canonicalize(&path) {
+                Ok(path) if path.starts_with(&root) => path,
+                Ok(_) => {
+                    if options.error_policy == WalkErrorPolicy::Strict {
+                        return Err("A selected file resolves outside the chosen folder.".into());
+                    }
+                    truncated = true;
+                    continue;
+                }
+                Err(error) if options.error_policy == WalkErrorPolicy::Strict => {
+                    return Err(format!("Cannot resolve selected file: {error}"));
+                }
+                Err(_) => {
+                    truncated = true;
+                    continue;
+                }
+            };
+            entries.push(WalkEntry {
+                path: canonical_file, name: item.file_name(), metadata,
+                is_file: true, is_dir: false,
+            });
+        }
+        if entries_seen > options.max_entries {
+            break;
+        }
+    }
+    Ok(WalkReport { root, entries, entries_seen, truncated })
 }
 
 /// Detects links and Windows reparse points from filesystem metadata.
