@@ -21,6 +21,27 @@ const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
 
+/// Records a PDF text-search outcome without treating an extraction error as a negative match.
+fn record_pdf_search_result(
+    extraction: Result<String, String>,
+    query: &str,
+    matched_in: &mut Vec<String>,
+    incomplete: &mut bool,
+) {
+    match extraction {
+        Ok(text) if text.to_lowercase().contains(query) => {
+            matched_in.push("PDF text (isolated worker)".to_string());
+        }
+        Ok(_) => {}
+        Err(_) => *incomplete = true,
+    }
+}
+
+/// Partial or truncated scans must never be persisted as complete search results.
+fn search_result_is_cacheable(truncated: bool, incomplete: bool) -> bool {
+    !truncated && !incomplete
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LocalSearchMatch {
     path: String,
@@ -198,13 +219,13 @@ pub async fn find_local_files(
                             remaining.min(std::time::Duration::from_secs(45)),
                             crate::task_engine::extract_pdf_isolated(bytes)
                         );
-                        match tokio::select! {
+                        let extraction_result = tokio::select! {
                             _ = token.cancelled() => return Err("File search cancelled by user.".into()),
                             result = extraction => result,
-                        } {
-                            Ok(Ok(text)) if text.to_lowercase().contains(&query) => matched_in.push("PDF text (isolated worker)".to_string()),
-                            Ok(Ok(_)) => {},
-                            _ => incomplete = true,
+                        };
+                        match extraction_result {
+                            Ok(result) => record_pdf_search_result(result, &query, &mut matched_in, &mut incomplete),
+                            Err(_) => incomplete = true,
                         }
                     }
                 }
@@ -246,7 +267,7 @@ pub async fn find_local_files(
             }
         },
     };
-    if !result.truncated && !incomplete {
+    if search_result_is_cacheable(result.truncated, incomplete) {
         let cached_payload = CachedSearchPayload { result: result.clone(), file_identities: cached_file_identities };
         if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&cached_payload)) {
             let store_app = app.clone();
@@ -427,6 +448,56 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+    #[test]
+    fn truncated_pdf_extraction_is_incomplete_and_never_cacheable() {
+        let mut matches = Vec::new();
+        let mut incomplete = false;
+        record_pdf_search_result(
+            Err("PDF text extraction exceeded the 1 MiB worker output limit.".into()),
+            "needle",
+            &mut matches,
+            &mut incomplete,
+        );
+        assert!(matches.is_empty());
+        assert!(incomplete);
+        assert!(!search_result_is_cacheable(false, incomplete));
+    }
+
+    #[test]
+    fn worker_truncation_marker_reaches_search_and_prevents_negative_cache() {
+        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
+        let extraction = match crate::task_engine::pdf_worker_output_was_truncated(marker) {
+            Ok(true) => Err("PDF text extraction exceeded the 1 MiB worker output limit.".into()),
+            Ok(false) => Ok(String::new()),
+            Err(error) => Err(error),
+        };
+        let mut matches = Vec::new();
+        let mut incomplete = false;
+        record_pdf_search_result(extraction, "needle", &mut matches, &mut incomplete);
+        assert!(matches.is_empty());
+        assert!(incomplete);
+        assert!(!search_result_is_cacheable(false, incomplete));
+    }
+
+    #[test]
+    fn complete_pdf_non_match_remains_a_cacheable_negative_result() {
+        let mut matches = Vec::new();
+        let mut incomplete = false;
+        record_pdf_search_result(Ok("complete text without target".into()), "needle", &mut matches, &mut incomplete);
+        assert!(matches.is_empty());
+        assert!(!incomplete);
+        assert!(search_result_is_cacheable(false, incomplete));
+    }
+
+    #[test]
+    fn complete_pdf_match_is_recorded_without_marking_search_incomplete() {
+        let mut matches = Vec::new();
+        let mut incomplete = false;
+        record_pdf_search_result(Ok("prefix needle suffix".into()), "needle", &mut matches, &mut incomplete);
+        assert_eq!(matches, vec!["PDF text (isolated worker)"]);
+        assert!(!incomplete);
+    }
 
     #[test]
     fn skips_symlinks_and_limits_directory_depth() {

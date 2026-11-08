@@ -1,6 +1,8 @@
 [package]
 name = "ujani-desktop"
 version = "0.1.0"
+default-run = "ujani-desktop"
+autobins = false
 description = "UJANI Public AI desktop application"
 license = "GPL-3.0-only"
 authors = ["UJANI contributors"]
@@ -10,10 +12,13 @@ edition = "2021"
 # Peer identity/envelope IPC remains disabled until a real authenticated transport ships.
 default = []
 peer-preview = []
+# Build the worker only for sidecar staging/tests; never as a second app executable.
+pdf-worker-build = []
 
 [lib]
 name = "ujani_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -49,3 +54,12 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_Storage_FileSystem", "Win32_System_SecurityCenter", "Win32_System_LibraryLoader"] }
 
 [workspace]
+
+[[bin]]
+name = "ujani-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "ujani-pdf-worker"
+path = "src/bin/ujani-pdf-worker.rs"
+required-features = ["pdf-worker-build"]

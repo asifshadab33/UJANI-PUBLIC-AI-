@@ -353,11 +353,29 @@ fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     denied
 }
 
+/// Resolves the dedicated PDF worker beside the running desktop executable.
+fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
+    let app_executable = std::env::current_exe()
+        .map_err(|error| format!("Could not locate UJANI executable: {error}"))?;
+    let executable_dir = app_executable.parent()
+        .ok_or_else(|| "UJANI executable has no parent directory.".to_string())?;
+    #[cfg(windows)]
+    let worker_name = "ujani-pdf-worker.exe";
+    #[cfg(not(windows))]
+    let worker_name = "ujani-pdf-worker";
+    let worker = executable_dir.join(worker_name);
+    if !worker.is_file() {
+        return Err(format!("Dedicated PDF worker is missing beside UJANI ({}) ; reinstall or repair the application.", worker.display()));
+    }
+    Ok(worker)
+}
+
+/// Extracts PDF text in a resource-limited sidecar and rejects truncated output.
 pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     if data.len() > 10 * 1024 * 1024 { return Err("PDF input exceeds the 10 MiB limit.".into()); }
-    let exe = std::env::current_exe().map_err(|e| format!("Could not locate PDF worker executable: {e}"))?;
+    let exe = pdf_worker_executable()?;
 
     #[cfg(windows)]
     let worker_job = create_pdf_worker_job()?;
@@ -369,14 +387,13 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         // This is a worker profile, not a full application sandbox; fail closed if absent.
         const PDF_PROFILE: &str = "(version 1) (allow default) (deny network*) (deny file-write*)";
         let mut sandboxed = tokio::process::Command::new("/usr/bin/sandbox-exec");
-        sandboxed.arg("-p").arg(PDF_PROFILE).arg(exe);
+        sandboxed.arg("-p").arg(PDF_PROFILE).arg(&exe);
         sandboxed
     };
     #[cfg(not(target_os = "macos"))]
     let mut command = tokio::process::Command::new(exe);
-    command.arg("--pdf-extract-worker")
-        .env_clear()
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+    command.env_clear()
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .kill_on_drop(true);
 
     #[cfg(target_os = "linux")]
@@ -466,20 +483,78 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
     // Do not take or write stdin until all platform resource controls are installed.
     let mut stdin = child.stdin.take().ok_or("PDF worker stdin unavailable")?;
     let mut stdout = child.stdout.take().ok_or("PDF worker stdout unavailable")?;
+    let mut stderr = child.stderr.take().ok_or("PDF worker stderr unavailable")?;
     let work = async move {
         let writer = tokio::spawn(async move { stdin.write_all(&data).await });
+        // Drain stderr concurrently so a noisy parser cannot fill the OS pipe and
+        // deadlock child.wait(). Retain only the final 4 KiB: the worker appends its
+        // fixed truncation marker after extraction diagnostics, so a noisy prefix
+        // cannot hide the status signal.
+        let stderr_reader = tokio::spawn(async move {
+            let mut metadata = Vec::with_capacity(4096);
+            let mut buffer = [0u8; 1024];
+            loop {
+                let read = stderr.read(&mut buffer).await?;
+                if read == 0 { break; }
+                metadata.extend_from_slice(&buffer[..read]);
+                if metadata.len() > 4096 {
+                    let excess = metadata.len() - 4096;
+                    metadata.drain(..excess);
+                }
+            }
+            Ok::<Vec<u8>, std::io::Error>(metadata)
+        });
         let mut output = Vec::new();
         (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
             .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
         writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
             .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
         let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
-        if !status.success() { return Err("PDF text extraction failed or exceeded its output limit.".into()); }
+        let worker_metadata = stderr_reader.await
+            .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
+            .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
+        if !status.success() { return Err("PDF text extraction failed.".into()); }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
+        if pdf_worker_output_was_truncated(&worker_metadata)? {
+            return Err("PDF text extraction exceeded the 1 MiB worker output limit. The incomplete result was rejected; split the PDF into smaller sections and retry.".into());
+        }
         String::from_utf8(output).map_err(|_| "PDF worker returned invalid UTF-8.".into())
     };
     tokio::time::timeout(std::time::Duration::from_secs(45), work).await
         .map_err(|_| "PDF extraction exceeded 45 seconds and was stopped.".to_string())?
+}
+
+/// Detects the worker's fixed, content-free truncation marker in bounded stderr metadata.
+/// Other bounded diagnostics are ignored; the worker's marker is appended after extraction.
+pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
+    const MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
+    Ok(metadata.windows(MARKER.len()).any(|window| window == MARKER))
+}
+
+#[cfg(test)]
+mod pdf_worker_status_tests {
+    use super::pdf_worker_output_was_truncated;
+
+    #[test]
+    fn accepts_complete_worker_status_without_metadata() {
+        assert!(!pdf_worker_output_was_truncated(b"").unwrap());
+    }
+
+    #[test]
+    fn detects_truncated_worker_output_from_fixed_marker() {
+        assert!(pdf_worker_output_was_truncated(b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n").unwrap());
+    }
+
+    #[test]
+    fn detects_truncation_marker_after_bounded_diagnostics() {
+        let metadata = b"extractor warning\nmore diagnostics\nUJANI_PDF_OUTPUT_TRUNCATED_V1\n";
+        assert!(pdf_worker_output_was_truncated(metadata).unwrap());
+    }
+
+    #[test]
+    fn ignores_non_marker_worker_diagnostics() {
+        assert!(!pdf_worker_output_was_truncated(b"extractor warning\n").unwrap());
+    }
 }
 
 /// Split at UTF-8 boundaries, preferring whitespace so multi-stage summarisation
@@ -660,8 +735,8 @@ mod local_capability_tests {
     fn display_file_names_reject_paths_and_control_characters() {
         assert!(super::validate_display_filename("notes.md").is_ok());
         assert!(super::validate_display_filename("../notes.md").is_err());
-        assert!(super::validate_display_filename("folder\\\\notes.md").is_err());
-        assert!(super::validate_display_filename("notes\\nsecret.md").is_err());
+        assert!(super::validate_display_filename("folder\\notes.md").is_err());
+        assert!(super::validate_display_filename("notes\nsecret.md").is_err());
         assert!(super::validate_display_filename("..").is_err());
     }
 

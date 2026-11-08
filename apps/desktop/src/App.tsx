@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import UpdateNotice from "./UpdateNotice";
@@ -57,11 +57,25 @@ const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in 
 
 /// Read a selected file using the browser's native encoder rather than expanding
 /// binary bytes into millions of JSON numbers for Tauri IPC.
-function readFileAsBase64(file: File): Promise<string> {
+function readFileAsBase64(file: File, signal?: AbortSignal, onReadComplete?: () => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read the selected file."));
+    const cleanup = () => signal?.removeEventListener("abort", abort);
+    const abort = () => reader.abort();
+    if (signal?.aborted) {
+      reject(new Error("PDF upload cancelled by user."));
+      return;
+    }
+    reader.onerror = () => {
+      cleanup();
+      reject(reader.error ?? new Error("Could not read the selected file."));
+    };
+    reader.onabort = () => {
+      cleanup();
+      reject(new Error("PDF upload cancelled by user."));
+    };
     reader.onload = () => {
+      cleanup();
       const result = reader.result;
       if (typeof result !== "string") {
         reject(new Error("The selected file could not be encoded."));
@@ -72,8 +86,10 @@ function readFileAsBase64(file: File): Promise<string> {
         reject(new Error("The selected file could not be encoded as base64."));
         return;
       }
+      onReadComplete?.();
       resolve(result.slice(separator + 1));
     };
+    signal?.addEventListener("abort", abort, { once: true });
     reader.readAsDataURL(file);
   });
 }
@@ -131,6 +147,7 @@ export default function App() {
   const [translateSummary, setTranslateSummary] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [activeDocumentTaskId, setActiveDocumentTaskId] = useState<string | null>(null);
+  const pdfReadControllerRef = useRef<AbortController | null>(null);
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
   const [folderResults, setFolderResults] = useState<FolderFileResult[]>([]);
@@ -701,11 +718,18 @@ export default function App() {
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("PDF processing is available in Fortress and Smart only."); return; }
-    const taskId = "pdf-" + Date.now().toString(36);
+    // A fresh cryptographic ID prevents a late cancel from a prior attempt matching this upload.
+    const taskId = "pdf-" + crypto.randomUUID();
+    const readController = new AbortController();
+    pdfReadControllerRef.current = readController;
     setActiveDocumentTaskId(taskId);
     setSummaryBusy(true);
     try {
-      const dataBase64 = await readFileAsBase64(file);
+      const dataBase64 = await readFileAsBase64(file, readController.signal, () => {
+        // Clear the read phase before resolving so a cancel in the promise handoff
+        // queues a native cancellation instead of aborting an already-finished reader.
+        if (pdfReadControllerRef.current === readController) pdfReadControllerRef.current = null;
+      });
       const result = await invoke<DocumentPipelineResult>("process_selected_pdf", {
         taskId, fileName: file.name, dataBase64, mode: executionMode, model: ollamaModel,
         translationLanguage: translateSummary ? targetLanguage : null
@@ -717,13 +741,25 @@ export default function App() {
       await saveToPersistentHistory("PDF: " + file.name, result.summary, "pdf", result.model);
       setFileText("");
     } catch (error) { setFileError(String(error)); }
-    finally { setSummaryBusy(false); setActiveDocumentTaskId(null); }
+    finally {
+      if (pdfReadControllerRef.current === readController) pdfReadControllerRef.current = null;
+      setSummaryBusy(false);
+      setActiveDocumentTaskId(null);
+    }
   }
 
   async function cancelDocumentTask() {
     if (!activeDocumentTaskId) return;
-    try { await invoke<boolean>("cancel_active_task", { taskId: activeDocumentTaskId }); }
-    catch (error) { setFileError("Could not cancel document task: " + String(error)); }
+    const readController = pdfReadControllerRef.current;
+    if (readController) {
+      readController.abort();
+      pdfReadControllerRef.current = null;
+      return;
+    }
+    try {
+      const cancelled = await invoke<boolean>("cancel_active_task", { taskId: activeDocumentTaskId });
+      if (!cancelled) setFileError("The document task was not active when cancellation was requested.");
+    } catch (error) { setFileError("Could not cancel document task: " + String(error)); }
   }
 
   async function cancelTranslationTask() {

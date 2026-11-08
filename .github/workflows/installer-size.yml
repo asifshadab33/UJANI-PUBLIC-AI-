@@ -44,6 +44,9 @@ jobs:
       - name: Generate platform installer icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
+      - name: Build and stage the dedicated PDF worker sidecar
+        working-directory: apps/desktop
+        run: npm run build:pdf-worker
       - name: Disable updater signing artifacts for unsigned size measurement
         working-directory: apps/desktop/src-tauri
         run: node -e "const fs=require('fs');const p='tauri.conf.json';const c=JSON.parse(fs.readFileSync(p,'utf8'));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(p,JSON.stringify(c,null,2));"
