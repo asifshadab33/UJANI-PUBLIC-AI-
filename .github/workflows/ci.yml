@@ -65,6 +65,8 @@ jobs:
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --features peer-preview --locked
       - name: Run desktop native unit tests
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
+      - name: Run dedicated PDF worker regression tests
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin ujani-pdf-worker --locked
 
   dependency-audit:
     name: Rust dependency security audit
