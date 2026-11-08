@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
+/// Extracts text from a validated PDF while enforcing the worker's input-size ceiling.
 fn extract_pdf_text(data: &[u8]) -> Result<String, ()> {
     if data.len() > MAX_INPUT_BYTES || !data.starts_with(b"%PDF-") {
         return Err(());
@@ -10,6 +11,7 @@ fn extract_pdf_text(data: &[u8]) -> Result<String, ()> {
     pdf_extract::extract_text_from_mem(data).map_err(|_| ())
 }
 
+/// Truncates extracted text at the configured byte limit without splitting UTF-8 characters.
 fn bounded_output(text: &str) -> &str {
     let mut end = text.len().min(MAX_OUTPUT_BYTES);
     while !text.is_char_boundary(end) { end -= 1; }
