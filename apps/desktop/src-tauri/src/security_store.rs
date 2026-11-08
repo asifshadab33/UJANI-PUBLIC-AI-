@@ -382,9 +382,15 @@ pub struct ReceiptSlotReservation {
     app: AppHandle,
     task_id: String,
     consumed: bool,
+    archive_warning: Option<String>,
 }
 
 impl ReceiptSlotReservation {
+    /// Warning shown to the user when archival failed but capacity safely remained.
+    pub fn archive_warning(&self) -> Option<&str> {
+        self.archive_warning.as_deref()
+    }
+
     /// Persist while returning the still-live reservation on failure, allowing
     /// the caller to retry without attempting to insert a duplicate task slot.
     pub fn persist_recoverable(
@@ -568,7 +574,7 @@ fn archive_old_receipts(db: &mut Connection, archive_dir: &Path, now: u64) -> Re
 /// Reserve one receipt slot, rotating the oldest records before the hard capacity limit.
 fn reserve_receipt_slot_db(
     db: &mut Connection, task_id: &str, now: u64, archive_dir: &Path,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM receipt_slots WHERE reserved_at <= ?1",
@@ -583,8 +589,16 @@ fn reserve_receipt_slot_db(
             .map_err(|e| e.to_string())?;
         (count, reserved)
     };
+    let mut archive_warning = None;
     if count.saturating_add(reserved) >= ARCHIVE_TRIGGER {
-        archive_old_receipts(db, archive_dir, now)?;
+        if let Err(error) = archive_old_receipts(db, archive_dir, now) {
+            // Preserve service while there is still reserved capacity, but never
+            // cross the hard provenance limit. The warning is surfaced in task progress.
+            if count.saturating_add(reserved) >= MAX_RECEIPTS {
+                return Err(format!("Receipt archive failed at hard capacity; inference is paused to preserve provenance: {error}"));
+            }
+            archive_warning = Some(format!("Receipt archive could not rotate older records: {error}. UJANI continued because receipt capacity remains below its hard limit; check available disk space and storage permissions."));
+        }
     }
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     let already_recorded: bool = tx.query_row(
@@ -605,7 +619,8 @@ fn reserve_receipt_slot_db(
     tx.execute("INSERT INTO receipt_slots(task_id,reserved_at) VALUES(?1,?2)",
         params![task_id, now as i64])
         .map_err(|e| format!("Could not reserve execution receipt capacity: {e}"))?;
-    tx.commit().map_err(|e| e.to_string())
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(archive_warning)
 }
 
 fn release_receipt_slot_db(db: &Connection, task_id: &str) -> Result<(), String> {
@@ -638,8 +653,8 @@ pub fn reserve_execution_receipt_slot(
     let now = now_seconds()?;
     let mut db = open(app)?;
     let archive_dir = receipt_archive_dir(app)?;
-    reserve_receipt_slot_db(&mut db, task_id, now, &archive_dir)?;
-    Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false })
+    let archive_warning = reserve_receipt_slot_db(&mut db, task_id, now, &archive_dir)?;
+    Ok(ReceiptSlotReservation { app: app.clone(), task_id: task_id.to_string(), consumed: false, archive_warning })
 }
 
 /// Append a validated execution receipt to the local SQLite hash chain.
