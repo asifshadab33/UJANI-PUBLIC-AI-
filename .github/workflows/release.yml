@@ -49,6 +49,9 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Generate native Tauri icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
       - name: Build and stage the native PDF worker sidecar
         working-directory: apps/desktop
         run: npm run build:pdf-worker
@@ -124,6 +127,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+      - name: Generate platform installer icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
       - name: Build and stage the matching PDF worker architecture
         working-directory: apps/desktop
         shell: bash
@@ -133,9 +139,6 @@ jobs:
           else
             npm run build:pdf-worker
           fi
-      - name: Generate platform installer icons
-        working-directory: apps/desktop
-        run: npm run tauri icon src-tauri/icons/ujani.svg
       - name: Build and upload signed installers and updater manifest
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f
         env:
