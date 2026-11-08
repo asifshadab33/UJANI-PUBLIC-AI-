@@ -512,6 +512,12 @@ fn register_active_task<'a>(control: &'a TaskControlState, task_id: &str) -> Res
     let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
     if active.contains_key(task_id) { return Err("Task identifier is already active.".into()); }
     let now = Instant::now();
+    let mut finished = control.finished_pdf_tasks.lock().map_err(|_| "Finished PDF registry unavailable.".to_string())?;
+    finished.retain(|_, completed_at| now.duration_since(*completed_at) <= FINISHED_PDF_TASK_TTL);
+    if finished.contains_key(task_id) {
+        return Err("PDF task identifier was already completed; use a fresh identifier.".into());
+    }
+    drop(finished);
     let mut pending = control.pending_cancellations.lock().map_err(|_| "Pending cancellation registry unavailable.".to_string())?;
     pending.retain(|_, requested_at| now.duration_since(*requested_at) <= PENDING_CANCELLATION_TTL);
     let was_cancelled = pending.remove(task_id).is_some();
@@ -1212,7 +1218,8 @@ mod pdf_cancellation_registration_tests {
         let first = register_active_task(&control, "pdf-upload-duplicate").unwrap();
         assert!(register_active_task(&control, "pdf-upload-duplicate").is_err());
         drop(first);
-        assert!(register_active_task(&control, "pdf-upload-duplicate").is_ok());
+        assert!(register_active_task(&control, "pdf-upload-duplicate").is_err());
+        assert!(register_active_task(&control, "pdf-upload-fresh-retry").is_ok());
     }
 
     #[test]
