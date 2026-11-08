@@ -232,9 +232,13 @@ where
     let mut output = String::new();
     let mut received_bytes = 0usize;
     let mut done = false;
-    while let Some(chunk) = response.chunk().await
-        .map_err(|error| format!("Local Ollama chat stream failed: {error}"))?
-    {
+    loop {
+        let chunk = match tokio::time::timeout(Duration::from_secs(35), response.chunk()).await {
+            Err(_) => return Err("Local Ollama chat stream stalled for 35 seconds.".into()),
+            Ok(Err(error)) => return Err(format!("Local Ollama chat stream failed: {error}")),
+            Ok(Ok(None)) => break,
+            Ok(Ok(Some(chunk))) => chunk,
+        };
         received_bytes = received_bytes.checked_add(chunk.len())
             .ok_or_else(|| "Local Ollama stream size overflow.".to_string())?;
         if received_bytes > MAX_RESPONSE_BYTES {
