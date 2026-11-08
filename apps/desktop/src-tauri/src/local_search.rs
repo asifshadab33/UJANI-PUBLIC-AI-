@@ -351,6 +351,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             recursive: true,
             links: crate::safe_fs::LinkPolicy::Skip,
             errors: crate::safe_fs::WalkErrorPolicy::SkipAndMarkTruncated,
+            file_filter: None,
         },
         token,
     ).map_err(|error| format!("Cannot scan selected folder: {error}"))?;
