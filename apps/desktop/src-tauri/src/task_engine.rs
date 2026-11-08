@@ -496,7 +496,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
             .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
         if !status.success() { return Err("PDF text extraction failed.".into()); }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
-        if worker_metadata == b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n" {
+        if worker_metadata == b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n" {
             return Err("PDF text extraction was truncated at 1 MiB; search results are incomplete. Narrow the document or search query.".into());
         }
         if !worker_metadata.is_empty() { return Err("PDF worker returned unknown status metadata.".into()); }
@@ -684,8 +684,8 @@ mod local_capability_tests {
     fn display_file_names_reject_paths_and_control_characters() {
         assert!(super::validate_display_filename("notes.md").is_ok());
         assert!(super::validate_display_filename("../notes.md").is_err());
-        assert!(super::validate_display_filename("folder\\\\notes.md").is_err());
-        assert!(super::validate_display_filename("notes\\nsecret.md").is_err());
+        assert!(super::validate_display_filename("folder\\\notes.md").is_err());
+        assert!(super::validate_display_filename("notes\nsecret.md").is_err());
         assert!(super::validate_display_filename("..").is_err());
     }
 
