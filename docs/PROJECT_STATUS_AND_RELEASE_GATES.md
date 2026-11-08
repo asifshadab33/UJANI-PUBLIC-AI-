@@ -103,3 +103,79 @@
 - [ ] Sandbox escape and network-egress tests on each supported OS.
 - [ ] Cross-language protocol vectors, restart/replay/concurrency tests and signed receipt verification.
 - [ ] Independent penetration test and release-signing verification.
+
+
+## Cross-chat product audit and competitive position — 8 November 2026
+
+This addendum reconciles the user's prior UJANI decisions with the repository state and a public-documentation competitor review. It is an engineering planning assessment, not a certification, benchmark result, or claim of feature parity.
+
+### Product principles to preserve
+
+- **Public AI:** local-first, local-capable and energy/resource-aware assistance. Use the customer's existing CPU/GPU/NPU, installed runtimes and operating-system facilities before requesting remote inference. Cloud/BYOK remains optional, task-scoped, budgeted and explicitly approved. Avoid a permanent background model loop and avoid reimplementing OS services or full third-party engines.
+- **Enterprise AI:** an open-source-first coordination and customer-experience layer above the customer's existing firewall, endpoint protection, Suricata, Zeek, Malcolm and other selected tools. It is not a replacement antivirus, firewall, packet sensor or OT security engine. Prefer integration, orchestration and clear operational workflows over duplicating mature products.
+- Keep the Public and Enterprise trust boundaries separate. Any future bridge needs a versioned interoperable protocol, separate consent, tenant/device identity and receiver-side authorization.
+- Keep new code, dependencies, operating cost and endpoint load low. Make optional capabilities independently installable/removable, explain what each profile consumes, and fail closed when identity, authorization or telemetry is missing.
+- Do not enable arbitrary remote execution, stealth collection, automatic destructive response or fleet-wide containment.
+
+### Competitive review (public product documentation, checked 8 November 2026)
+
+| Area | Existing strengths to respect | UJANI implication |
+|---|---|---|
+| Local personal AI — OpenJarvis | Local-first model execution, Ollama support, agents, file research and energy/cost/latency as explicit efficiency concerns. | Do not compete by shipping another model runtime. Differentiate through low-overhead coordination across existing local resources, transparent routing, permissions, energy evidence and useful OS workflows. |
+| Desktop AI — AnythingLLM | One-click desktop setup, local/cloud model choice, workspaces, document Q&A, agents/skills and MCP; its overlay can use context from open applications. | Installer simplicity, discoverability and workflow polish are table stakes. UJANI must keep screen/app context explicitly user-selected and consented; do not imply arbitrary OS-wide reading. |
+| Self-hosted AI — Open WebUI | Broad provider/model support, RAG, MCP/tools, automation, team controls and scalable deployment options. | Avoid feature-count competition. Keep the core small; integrate through documented provider/MCP contracts and spend effort on safe local execution and resource efficiency. |
+| Enterprise security fabric — Fortinet | Integrated network/endpoint/identity policy, central management, unified telemetry and AI-assisted operations. | UJANI Enterprise should coordinate existing controls and present a coherent workflow; it should not claim to reproduce FortiOS/FortiManager enforcement or threat intelligence. |
+| OT endpoint/network — TXOne | OT-specific endpoint visibility/protection, lightweight user-space visibility option, offline/air-gap operation and central management; network product line includes OT-aware controls. | Installer profiles, legacy/low-resource compatibility, passive/visibility-only mode, coexistence and explicit operational-safety controls matter. Never promise equivalent OT prevention without independent validation. |
+| OT/IoT visibility — Nozomi | Passive network sensors, asset inventory/topology, behavioral baselining, risk prioritization and coordinated response across sites. | Start with read-only, provenance-rich integration and asset/health views. Do not introduce active probing or packet capture by default. |
+| Open network monitoring — Security Onion and Malcolm | Mature Suricata/Zeek/Elastic/Arkime/OpenSearch-based network and host visibility pipelines and analyst interfaces. | Reuse/deploy these components as optional profiles rather than rewriting packet analytics, SIEM, case management or protocol parsers. |
+
+Public references reviewed:
+- OpenJarvis / Ollama: https://ollama.com/blog/openjarvis
+- AnythingLLM desktop assistant and installation: https://docs.anythingllm.com/desktop-assistant/introduction and https://docs.anythingllm.com/installation-desktop/overview
+- Open WebUI comparison: https://docs.openwebui.com/alternatives/anythingllm/
+- Fortinet FortiOS: https://www.fortinet.com/products/fortigate/fortios
+- TXOne portfolio and Stellar: https://www.txone.com/resources/data-sheets/ot-cybersecurity-portfolio/ and https://www.txone.com/products/endpoint-protection/
+- Nozomi platform and Guardian: https://www.nozominetworks.com/platform and https://www.nozominetworks.com/platform/guardian
+- Security Onion: https://docs.securityonion.net/en/3/dev/introduction/
+- CISA Malcolm: https://cisagov.github.io/Malcolm/docs/
+
+### Cross-chat requirements not to lose
+
+1. **Public AI daily-work coordinator:** local reminders, agenda, notifications and later individually consented read-only calendar/email/Zoom/notes adapters. The first release must not scan every installed application, read the whole disk, send messages or mutate external calendars. Existing issues #81 and #83 track the staged planner work; draft PR #82 is specification only.
+2. **Public AI Security Centre:** optional, read-only status aggregation for selected installed security providers, with source, timestamp, honest unknown/unavailable states and explicit consent. PR #80 is draft and its Windows adapter is not a full security audit or a substitute for product-specific endpoint telemetry.
+3. **Everyday OS utilities and computer workflows:** reuse OS APIs and existing integrations; keep capabilities opt-in and bounded. Do not add a parallel plugin/automation framework or an always-on autonomous loop.
+4. **Resource and energy intelligence:** measure CPU/RAM/VRAM, thermals, power/battery, inference latency, failures and energy provenance; schedule only when live measurements are fresh. Label direct measurements separately from OS estimates and modelled estimates.
+5. **Enterprise deployment profiles:** the installer/product plan must support customer-selected profiles: firewall-only, lightweight, full-monitoring and Malcolm-integrated, with optional add/remove components, preflight CPU/RAM/storage/network checks, clear third-party licensing and responsibility boundaries, and a unified graphical operator experience. These are packaging/orchestration profiles, not a claim that UJANI replaces the selected tools. No implementation or validated resource sizing is claimed yet.
+6. **Enterprise security orchestration:** customer-controlled integration of existing firewalls, antivirus/EDR, Suricata, Zeek and Malcolm; read-only status first, then explicit human-approved and reversible actions only after authenticated control-plane enforcement and audit are proven.
+7. **First-release usability:** verify mobile layout/loading, primary navigation and real-time GUI states; generate platform installers and test installation, upgrade, uninstall, permissions, sidecar placement and rollback on real supported devices. CI artifact generation alone is not a human installation test.
+8. **Open-source and liability clarity:** document component licences, optional third-party dependencies, data flows, threat boundaries, operational assumptions and non-replacement/non-certification statements. Obtain legal/security review before making compliance or protection guarantees.
+
+### Self-audit findings and blockers
+
+**Public AI**
+- The current project status records that safety_policy/policy_gate are not universal gates on every native command. Complete a command-by-command capability/authorization matrix before expanding tools or connectors.
+- The managed-task receipt coverage has known holes: `execute_document_workflow`, selected-folder import and model-download operations are not covered; the local hash-chain ledger is unsigned and unanchored. Close or explicitly scope these gaps before claiming complete execution provenance.
+- Fortress is application policy, not an OS sandbox. The PDF worker's platform restrictions are not a full application sandbox. Complete and test OS-enforced isolation separately.
+- PDF upload/worker protections and CI are necessary reliability work, but do not claim OCR for scanned PDFs, screenshot-to-chat, mobile parity or whole-application isolation unless implemented and validated.
+- The Public dependency issue #73 remains a release blocker until the six tracked RustSec warnings are safely remediated or precisely bounded with documented upstream constraints. A green audit job that reports allowed warnings is not remediation.
+- Local model onboarding, runtime compatibility, resource telemetry, measured energy benchmarks, mobile loading, signed reproducible releases, SBOM/provenance, update rollback and independent penetration testing remain separate acceptance gates.
+
+**Enterprise AI**
+- The durable reservation ledger is a single-host prototype; it is not a distributed transactional service or rollback-resistant production trust store. Production KMS/HSM/TPM key custody and a separately hosted linearizable anti-rollback anchor remain missing.
+- P1 issue #20 remains the prerequisite for authenticated device enrollment, key rotation/revocation, tenant-scoped RBAC and authenticated lease APIs. Do not build privileged UI actions or dispatch on top of unauthenticated/local-only primitives.
+- The opt-in read-only sensor, authenticated tenant event ingestion, durable event store, cross-endpoint correlation, fleet dashboard and installer profiles are not yet a production implementation.
+- Keep remote execution and autonomous containment disabled. Any future response action must be narrow, receiver-authorized, expiring, reversible, idempotent, approved and immutably audited.
+
+### Recommended delivery sequence
+
+1. **Release hardening first:** finish Public PR #117 review and manual desktop PDF/cancel/retry checks; resolve dependency advisories; verify signing, SBOM/provenance, update rollback and OS isolation. Keep PR #117 unmerged until required reviews and release gates pass.
+2. **Public product reliability:** audit all native commands against one capability/consent policy; close receipt coverage gaps; validate mobile and GUI navigation; publish verified installer artifacts and a truthful support matrix.
+3. **Public local-first differentiator:** implement measurable resource/energy telemetry and safe capability-aware routing; then deliver the local reminder/agenda MVP. Add provider adapters only with independent consent and minimal read-only scopes.
+4. **Enterprise trust foundation:** complete issue #20 authenticated enrollment, key lifecycle, anti-rollback storage and authenticated acquire/renew/release/cancel lease service; add adversarial tenant/replay/revocation tests.
+5. **Enterprise operator experience:** build read-only inventory/health/fleet views and selected integration status; then customer-selectable install profiles with tested sizing and licensing disclosure.
+6. **Enterprise detection and response:** read-only sensor and event ingestion, deterministic explainable correlation and analyst alerts; only later consider separately reviewed approval-gated reversible actions.
+7. **Benchmark continuously:** compare install friction, idle CPU/RAM, model latency/quality, energy per task, crash rate, permission clarity and operator time-to-triage against the relevant open-source and commercial alternatives. Publish methodology and raw measurements; do not infer superiority from feature lists.
+
+### Audit limitations
+
+This review inspected the two repository backlogs, current pull-request metadata, selected project-status documentation, prior UJANI decisions available in conversation context, and public product documentation. It did not inspect every line of every branch, run a local build, perform penetration testing, validate a physical installer, measure power consumption, or independently verify competitor marketing claims. The label “success” on GitHub Actions means that workflow completed successfully for the inspected commit; it does not close manual, legal, security or hardware gates.
