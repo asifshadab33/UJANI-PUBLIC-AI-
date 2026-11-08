@@ -711,7 +711,8 @@ export default function App() {
     if (!isTauri()) { setFileError("Launch the Tauri desktop app to extract PDF text."); return; }
     if (!ollamaStatus?.available || !ollamaModel) { setFileError("Start local Ollama and select a model before processing a PDF."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") { setFileError("PDF processing is available in Fortress and Smart only."); return; }
-    const taskId = "pdf-" + Date.now().toString(36);
+    // A fresh cryptographic ID prevents a late cancel from a prior attempt matching this upload.
+    const taskId = "pdf-" + crypto.randomUUID();
     const readController = new AbortController();
     pdfReadControllerRef.current = readController;
     setActiveDocumentTaskId(taskId);
