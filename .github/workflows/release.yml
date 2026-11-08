@@ -138,7 +138,8 @@ jobs:
         run: |
           $pfxPath = Join-Path $env:RUNNER_TEMP "ujani-publisher.pfx"
           try {
-            $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+            $base64 = $env:WINDOWS_CERTIFICATE -replace '-----BEGIN [^-]+-----', '' -replace '-----END [^-]+-----', '' -replace '\s', ''
+            $bytes = [Convert]::FromBase64String($base64)
             [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
             $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
             $certificates = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
