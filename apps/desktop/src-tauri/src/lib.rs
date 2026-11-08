@@ -1038,19 +1038,22 @@ async fn execute_local_ai_task(
     result
 }
 
-#[tauri::command]
-fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
-    if !valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
-    }
+/// Requests cancellation for an active task or a bounded PDF registration handoff.
+fn request_task_cancellation(control: &TaskControlState, task_id: &str) -> Result<bool, String> {
+    if !valid_command_identifier(task_id, 96) { return Err("Invalid task identifier.".into()); }
     let active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-    if let Some(token) = active.get(&task_id) { token.cancel(); return Ok(true); }
+    if let Some(token) = active.get(task_id) { token.cancel(); return Ok(true); }
     if !task_id.starts_with("pdf-") { return Ok(false); }
     let now = Instant::now();
     let mut pending = control.pending_cancellations.lock().map_err(|_| "Pending cancellation registry unavailable.".to_string())?;
     pending.retain(|_, requested_at| now.duration_since(*requested_at) <= PENDING_CANCELLATION_TTL);
-    if !pending.contains_key(&task_id) && pending.len() >= MAX_PENDING_CANCELLATIONS { return Ok(false); }
-    pending.insert(task_id, now); Ok(true)
+    if !pending.contains_key(task_id) && pending.len() >= MAX_PENDING_CANCELLATIONS { return Ok(false); }
+    pending.insert(task_id.to_string(), now); Ok(true)
+}
+
+#[tauri::command]
+fn cancel_active_task(control: State<'_, TaskControlState>, task_id: String) -> Result<bool, String> {
+    request_task_cancellation(&control, &task_id)
 }
 
 
@@ -1150,6 +1153,40 @@ async fn decode_pdf_upload_off_thread(app: AppHandle, task_id: String, data_base
         result
     })?;
     worker.await.map_err(|error| format!("PDF decode worker failed: {error}"))?
+}
+
+
+#[cfg(test)]
+mod pdf_cancellation_registration_tests {
+    use super::{register_active_task, request_task_cancellation, TaskControlState, MAX_PENDING_CANCELLATIONS};
+
+    #[test]
+    fn cancellation_during_native_pdf_preparation_reaches_registered_task() {
+        let control = TaskControlState::default();
+        let registration = register_active_task(&control, "pdf-upload-active").unwrap();
+        assert!(request_task_cancellation(&control, "pdf-upload-active").unwrap());
+        assert!(registration.token.is_cancelled());
+    }
+
+    #[test]
+    fn cancellation_in_ipc_handoff_is_applied_on_registration() {
+        let control = TaskControlState::default();
+        assert!(request_task_cancellation(&control, "pdf-upload-pending").unwrap());
+        let registration = register_active_task(&control, "pdf-upload-pending").unwrap();
+        assert!(registration.token.is_cancelled());
+        assert!(!control.pending_cancellations.lock().unwrap().contains_key("pdf-upload-pending"));
+    }
+
+    #[test]
+    fn pre_registration_cancellation_is_bounded_and_pdf_only() {
+        let control = TaskControlState::default();
+        assert!(!request_task_cancellation(&control, "ordinary-task").unwrap());
+        for index in 0..MAX_PENDING_CANCELLATIONS {
+            assert!(request_task_cancellation(&control, &format!("pdf-pending-{index}")).unwrap());
+        }
+        assert!(!request_task_cancellation(&control, "pdf-pending-overflow").unwrap());
+        assert_eq!(control.pending_cancellations.lock().unwrap().len(), MAX_PENDING_CANCELLATIONS);
+    }
 }
 
 #[cfg(test)]
