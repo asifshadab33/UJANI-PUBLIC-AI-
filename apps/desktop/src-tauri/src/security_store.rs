@@ -953,6 +953,50 @@ mod tests {
         assert_eq!(db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
     }
 
+    fn seed_receipts(db: &mut Connection, count: i64) {
+        let tx = db.transaction().unwrap();
+        let mut previous = GENESIS_HASH.to_string();
+        for index in 0..count {
+            let item = receipt(&format!("capacity-{index}"));
+            let json = serde_json::to_string(&item).unwrap();
+            let hash = sha256_hex(format!("{previous}:{json}").as_bytes());
+            tx.execute(
+                "INSERT INTO execution_receipts(task_id,receipt_json,previous_hash,record_hash) VALUES(?1,?2,?3,?4)",
+                params![item.task_id, json, previous, hash],
+            ).unwrap();
+            previous = hash;
+        }
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn archive_failure_warns_but_reserves_while_below_hard_capacity() {
+        let mut db = db();
+        seed_receipts(&mut db, ARCHIVE_TRIGGER);
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let archive_path = std::env::temp_dir().join(format!("ujani-archive-blocked-{unique}"));
+        fs::write(&archive_path, b"not a directory").unwrap();
+        let warning = reserve_receipt_slot_db(&mut db, "task-with-warning", 4_000, &archive_path).unwrap();
+        assert!(warning.unwrap().contains("continued because receipt capacity remains below its hard limit"));
+        let reserved: i64 = db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |row| row.get(0)).unwrap();
+        assert_eq!(reserved, 1);
+        fs::remove_file(archive_path).unwrap();
+    }
+
+    #[test]
+    fn archive_failure_fails_closed_at_hard_capacity() {
+        let mut db = db();
+        seed_receipts(&mut db, MAX_RECEIPTS);
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let archive_path = std::env::temp_dir().join(format!("ujani-archive-blocked-hard-{unique}"));
+        fs::write(&archive_path, b"not a directory").unwrap();
+        let error = reserve_receipt_slot_db(&mut db, "task-at-hard-limit", 4_000, &archive_path).unwrap_err();
+        assert!(error.contains("Receipt archive failed at hard capacity"));
+        let reserved: i64 = db.query_row("SELECT COUNT(*) FROM receipt_slots", [], |row| row.get(0)).unwrap();
+        assert_eq!(reserved, 0);
+        fs::remove_file(archive_path).unwrap();
+    }
+
     #[test]
     fn receipt_archive_cleanup_removes_only_unindexed_or_temporary_files() {
         let db = db();
