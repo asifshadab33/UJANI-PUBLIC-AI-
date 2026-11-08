@@ -84,3 +84,195 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 }
+
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
+
+/// Whether encountered links/reparse points should be skipped or reject the selected folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkPolicy {
+    Skip,
+    Reject,
+}
+
+/// How traversal should handle unreadable entries and paths that escape the selected root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WalkErrorPolicy {
+    SkipAndMarkTruncated,
+    Reject,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WalkOptions {
+    /// Maximum directory depth below the selected root. Zero means immediate children only.
+    pub max_depth: usize,
+    /// Maximum total directory entries examined across the traversal.
+    pub max_entries: usize,
+    /// Whether to descend into child directories.
+    pub recursive: bool,
+    pub links: LinkPolicy,
+    pub errors: WalkErrorPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WalkFile {
+    pub path: PathBuf,
+    pub name: OsString,
+    pub size_bytes: u64,
+    pub depth: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct WalkResult {
+    pub root: PathBuf,
+    pub files: Vec<WalkFile>,
+    pub entries_seen: usize,
+    pub truncated: bool,
+}
+
+/// Shared bounded directory walker. It never follows an encountered symbolic link or
+/// reparse point intentionally, confines canonical paths to the selected root, and
+/// leaves extension, size, content, hashing and cancellation-result policy to callers.
+pub(crate) fn walk_directory(
+    selected_root: &Path,
+    options: WalkOptions,
+    cancellation: &CancellationToken,
+) -> Result<WalkResult, String> {
+    let root_metadata = std::fs::symlink_metadata(selected_root)
+        .map_err(|error| format!("Cannot inspect selected folder: {error}"))?;
+    if is_reparse_point(&root_metadata) || !root_metadata.is_dir() {
+        return Err("Choose a real directory, not a symbolic link or reparse point.".into());
+    }
+    let root = std::fs::canonicalize(selected_root)
+        .map_err(|error| format!("Cannot resolve selected folder: {error}"))?;
+    let mut stack = vec![(root.clone(), 0usize)];
+    let mut files = Vec::new();
+    let mut entries_seen = 0usize;
+    let mut truncated = false;
+
+    while let Some((directory, depth)) = stack.pop() {
+        if cancellation.is_cancelled() {
+            return Err("Directory traversal cancelled by user.".into());
+        }
+        let directory_metadata = match std::fs::symlink_metadata(&directory) {
+            Ok(metadata) => metadata,
+            Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                return Err(format!("Cannot inspect directory: {error}"));
+            }
+            Err(_) => { truncated = true; continue; }
+        };
+        if is_reparse_point(&directory_metadata) || !directory_metadata.is_dir() {
+            if options.links == LinkPolicy::Reject {
+                return Err("The selected folder contains a symbolic link or reparse point.".into());
+            }
+            continue;
+        }
+        let canonical_directory = match std::fs::canonicalize(&directory) {
+            Ok(path) if path.starts_with(&root) => path,
+            Ok(_) if options.errors == WalkErrorPolicy::Reject => {
+                return Err("A directory resolves outside the selected folder.".into());
+            }
+            Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                return Err(format!("Cannot resolve a selected directory: {error}"));
+            }
+            _ => { truncated = true; continue; }
+        };
+        let iterator = match std::fs::read_dir(&canonical_directory) {
+            Ok(entries) => entries,
+            Err(error) if options.errors == WalkErrorPolicy::Reject || depth == 0 => {
+                return Err(format!("Cannot read selected folder: {error}"));
+            }
+            Err(_) => { truncated = true; continue; }
+        };
+
+        for entry in iterator {
+            if cancellation.is_cancelled() {
+                return Err("Directory traversal cancelled by user.".into());
+            }
+            entries_seen = entries_seen.saturating_add(1);
+            if entries_seen > options.max_entries {
+                truncated = true;
+                break;
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                    return Err(format!("Cannot inspect a folder entry: {error}"));
+                }
+                Err(_) => { truncated = true; continue; }
+            };
+            let path = entry.path();
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                    return Err(format!("Cannot inspect a folder entry: {error}"));
+                }
+                Err(_) => { truncated = true; continue; }
+            };
+            if is_reparse_point(&metadata) {
+                if options.links == LinkPolicy::Reject {
+                    return Err("The selected folder contains a symbolic link or reparse point. Remove it and try again.".into());
+                }
+                continue;
+            }
+            if metadata.is_dir() {
+                if options.recursive && depth < options.max_depth {
+                    let canonical_child = match std::fs::canonicalize(&path) {
+                        Ok(child) if child.starts_with(&root) => child,
+                        Ok(_) if options.errors == WalkErrorPolicy::Reject => {
+                            return Err("A child directory resolves outside the selected folder.".into());
+                        }
+                        Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                            return Err(format!("Cannot resolve child directory: {error}"));
+                        }
+                        _ => { truncated = true; continue; }
+                    };
+                    stack.push((canonical_child, depth + 1));
+                } else if options.recursive && depth >= options.max_depth {
+                    truncated = true;
+                }
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let canonical_file = match std::fs::canonicalize(&path) {
+                Ok(file) if file.starts_with(&root) => file,
+                Ok(_) if options.errors == WalkErrorPolicy::Reject => {
+                    return Err("A selected file resolves outside the chosen folder.".into());
+                }
+                Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                    return Err(format!("Cannot resolve selected file: {error}"));
+                }
+                _ => { truncated = true; continue; }
+            };
+            let canonical_metadata = match std::fs::symlink_metadata(&canonical_file) {
+                Ok(metadata) => metadata,
+                Err(error) if options.errors == WalkErrorPolicy::Reject => {
+                    return Err(format!("Cannot inspect selected file: {error}"));
+                }
+                Err(_) => { truncated = true; continue; }
+            };
+            if is_reparse_point(&canonical_metadata) || !canonical_metadata.is_file() {
+                if options.links == LinkPolicy::Reject {
+                    return Err("A selected file is not a regular non-reparse file.".into());
+                }
+                truncated = true;
+                continue;
+            }
+            files.push(WalkFile {
+                path: canonical_file,
+                name: entry.file_name(),
+                size_bytes: canonical_metadata.len(),
+                depth,
+            });
+        }
+        if entries_seen > options.max_entries {
+            break;
+        }
+    }
+
+    Ok(WalkResult { root, files, entries_seen, truncated })
+}
