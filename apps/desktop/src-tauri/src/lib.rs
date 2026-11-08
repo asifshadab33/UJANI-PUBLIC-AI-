@@ -1299,6 +1299,13 @@ mod pdf_upload_tests {
             Ok::<(), String>(())
         }).unwrap();
 
+        // Convert Tokio's JoinError into the task helper's string error contract.
+        // Dropping this wrapper still drops only the JoinHandle; the blocking closure
+        // continues to own the decoder permit until its work exits.
+        let worker_result = async move {
+            worker.await.map_err(|error| format!("PDF decode worker failed: {error}"))?
+        };
+
         // The blocking worker is definitely active before cancellation is requested.
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let token = CancellationToken::new();
@@ -1308,7 +1315,7 @@ mod pdf_upload_tests {
                 &wait_token,
                 Duration::from_secs(30),
                 "PDF decode timed out.",
-                worker,
+                worker_result,
             ).await
         });
         tokio::task::yield_now().await;
