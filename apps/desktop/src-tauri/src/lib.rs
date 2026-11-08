@@ -15,7 +15,6 @@ mod resource_runtime;
 // Peer enrollment/replay commands are not registered in the default IPC surface.
 #[allow(dead_code, unused_imports)]
 mod security_store;
-pub mod pdf_worker;
 mod task_engine;
 
 use task_engine::LocalTaskEngine;
