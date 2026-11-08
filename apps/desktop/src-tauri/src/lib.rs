@@ -471,6 +471,12 @@ struct TaskProgressEvent {
     progress_percent: u8,
 }
 
+#[derive(Clone, Serialize)]
+struct ChatDeltaEvent {
+    task_id: String,
+    delta: String,
+}
+
 fn emit_task_progress(app: &AppHandle, task_id: &str, stage: &str, message: &str, progress_percent: u8) {
     let _ = app.emit("ujani-task-progress", TaskProgressEvent {
         task_id: task_id.to_string(),
@@ -930,7 +936,14 @@ async fn execute_local_ai_task(
     let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
     emit_task_progress(&app, &task_id, "inference", "Local model request sent; waiting for Ollama response.", 25);
-    let execution = LocalTaskEngine::execute(prompt, mode, model);
+    let stream_app = app.clone();
+    let stream_task_id = task_id.clone();
+    let execution = LocalTaskEngine::execute_stream(prompt, mode, model, move |delta| {
+        let _ = stream_app.emit("ujani-chat-delta", ChatDeltaEvent {
+            task_id: stream_task_id.clone(),
+            delta,
+        });
+    });
     let result = tokio::select! {
         _ = token.cancelled() => Err("Task cancelled by user.".to_string()),
         outcome = tokio::time::timeout(std::time::Duration::from_secs(140), execution) => {
