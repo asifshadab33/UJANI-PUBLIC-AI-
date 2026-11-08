@@ -24,6 +24,7 @@ fn observed_at_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn status_from_windows_result(hresult: i32, health: i32) -> (&'static str, &'static str) {
     if hresult == 1 {
         return (
