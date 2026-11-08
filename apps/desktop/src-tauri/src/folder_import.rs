@@ -195,7 +195,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             continue;
         }
 
-        let mut handle = crate::safe_fs::open_regular_file(&entry.path)
+        let handle = crate::safe_fs::open_regular_file(&entry.path)
             .map_err(|error| format!("Cannot safely open selected file: {error}"))?;
         let metadata = handle.metadata()
             .map_err(|error| format!("Cannot inspect selected file handle: {error}"))?;
