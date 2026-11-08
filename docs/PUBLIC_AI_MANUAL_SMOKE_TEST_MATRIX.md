@@ -60,6 +60,8 @@ Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empt
 
 ## D. Navigation, sublinks, and UI freeze recovery
 
+**Mobile scope:** D-06 is a responsive/narrow-viewport check for the current desktop UI only. It is not evidence of a native iOS/Android application or a supported mobile installation target.
+
 | ID | Scenario | Procedure | Expected result |
 |---|---|---|---|
 | D-01 | Primary navigation | Open every primary sidebar destination once. | Correct view opens; no blank page or uncaught exception. |
