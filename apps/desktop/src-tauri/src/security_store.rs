@@ -1157,8 +1157,8 @@ mod tests {
     fn cloud_budget_settlement_refunds_only_unused_reservation() {
         let mut db = db();
         let day = 1_i64;
-        reserve_budget_db(&mut db, 4_000, 8_000, day as u64).unwrap();
-        reserve_budget_db(&mut db, 1_000, 1_000, day as u64).unwrap();
+        reserve_budget_db(&mut db, 4_000, 8_000, (day as u64 * 86_400)).unwrap();
+        reserve_budget_db(&mut db, 1_000, 1_000, (day as u64 * 86_400)).unwrap();
         settle_budget_reservation_db(&mut db, day, 12_000, 3_000).unwrap();
         let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
         assert_eq!(used, 5_000);
@@ -1168,7 +1168,7 @@ mod tests {
     fn cloud_budget_refunds_a_reservation_that_was_never_dispatched() {
         let mut db = db();
         let day = 1_i64;
-        reserve_budget_db(&mut db, 2_000, 2_000, day as u64).unwrap();
+        reserve_budget_db(&mut db, 2_000, 2_000, (day as u64 * 86_400)).unwrap();
         settle_budget_reservation_db(&mut db, day, 4_000, 0).unwrap();
         let used: i64 = db.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0)).unwrap();
         assert_eq!(used, 0);
