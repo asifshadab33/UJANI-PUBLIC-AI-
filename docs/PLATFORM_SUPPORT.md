@@ -46,6 +46,10 @@ The release workflow verifies Tauri updater signatures before publication. On Wi
 
 Unsigned CI preview artifacts are for controlled evaluation only and must be labelled as such. A green cross-platform build matrix is not equivalent to OS compatibility certification.
 
+## Current verification record — 2026-11-08
+
+The platform matrix remains a **proposed baseline**, not a certified support list. The human device-test record is maintained in [`docs/PUBLIC_AI_MANUAL_SMOKE_TEST_MATRIX.md`](PUBLIC_AI_MANUAL_SMOKE_TEST_MATRIX.md); its Windows, macOS, Linux and mobile/narrow-viewport rows remain **NOT RUN** until a tester records the exact OS build, architecture, installer, cases and evidence. Hosted CI and unsigned preview artifacts do not satisfy these install/launch gates. The release workflow does not ingest manual test results automatically: keep releases in draft and do not approve the `production-release` environment until the applicable manual evidence, Windows Authenticode verification, and Apple signature/notarization evidence have been independently reviewed. If required environment reviewers are not configured, do not treat the environment name as a publication safeguard.
+
 ## Maintenance
 
 When changing Tauri, WebView2, WebKitGTK, Rust or native dependencies, rerun the minimum-version matrix and update this document. Record exact OS image/version, architecture, installer type, app version and test outcome in release evidence.
