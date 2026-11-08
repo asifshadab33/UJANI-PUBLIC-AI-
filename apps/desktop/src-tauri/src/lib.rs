@@ -486,6 +486,7 @@ fn ensure_task_not_cancelled(token: &CancellationToken) -> Result<(), String> {
     }
 }
 
+/// Registers a task before preparation and returns its cancellation token and cleanup guard.
 fn register_active_task<'a>(
     control: &'a TaskControlState,
     task_id: &str,
