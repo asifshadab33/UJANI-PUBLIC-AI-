@@ -18,7 +18,7 @@ The current `ujani_invoke_handler!` registration contains **42 statically named 
 | Capability and planning | `plan_local_operation` |
 | Capability and planning | `plan_task_workflow` |
 | Capability and planning | `get_model_recommendation` |
-| Capability and planning | `get_model_runtime_inventory` |
+| Capability and planning | `get_model_runtime_inventory` (read-only, loopback-only model inventory; unknown capabilities remain unknown) |
 | Capability and planning | `get_ollama_status` |
 | Capability and planning | `get_device_info` |
 | Capability and planning | `list_local_models` |
