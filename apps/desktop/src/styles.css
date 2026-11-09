@@ -96,3 +96,13 @@
 @media(max-width:850px){.security-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.security-workspace{grid-template-columns:1fr}}@media(max-width:520px){.security-centre .section-heading{gap:8px}.security-prototype-label{font-size:8px}.security-metrics{grid-template-columns:1fr 1fr}.security-metric{padding:10px}.security-choice{gap:7px}.security-choice em{font-size:8px}}
 
 .security-error{padding:10px 12px;border:1px solid #8a4b45;border-radius:8px;background:#321f1e;color:#f1b9b1;font-size:10px;line-height:1.5}
+
+
+/* Task-first shortcuts reuse the existing prompt and local inference path. */
+.everyday-writing-actions{margin:12px 0 15px;padding:12px;border:1px solid #35483a;border-radius:9px;background:#141f18}
+.everyday-writing-actions>div:first-child b,.everyday-writing-actions>div:first-child small{display:block}
+.everyday-writing-actions>div:first-child b{font-size:11px;color:#dce8de}
+.everyday-writing-actions>div:first-child small{font-size:9px;color:#91a095;line-height:1.5;margin-top:3px}
+.writing-action-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.writing-action{border:1px solid #496047;background:#1d3022;color:#cde8bc;border-radius:20px;padding:7px 10px;font:inherit;font-size:10px;cursor:pointer}
+.writing-action:hover{border-color:#a8df72;background:#263b2a}.writing-action:focus-visible{outline:2px solid #bdf27e;outline-offset:2px}
