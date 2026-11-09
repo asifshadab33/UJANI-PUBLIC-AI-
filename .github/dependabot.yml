@@ -8,6 +8,16 @@ updates:
     labels:
       - dependencies
       - rust
+  # The Tauri desktop app is an independent Cargo workspace with its own lockfile.
+  - package-ecosystem: cargo
+    directory: /apps/desktop/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - rust
+      - desktop
   - package-ecosystem: npm
     directory: /apps/desktop
     schedule:
