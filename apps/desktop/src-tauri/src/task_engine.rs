@@ -201,6 +201,7 @@ impl LocalTaskEngine {
         F: FnMut(&str, u8),
     {
         validate_document_request(&file_name, &content, &mode)?;
+        on_progress("Checking local model readiness", 8);
         ensure_local_model_ready("document.summarize", &model).await?;
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
@@ -244,6 +245,7 @@ impl LocalTaskEngine {
         F: FnMut(&str, u8),
     {
         validate_pdf_input(&file_name, &data, &mode)?;
+        on_progress("Checking local model readiness", 8);
         ensure_local_model_ready("pdf.extract_and_summarize", &model).await?;
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
