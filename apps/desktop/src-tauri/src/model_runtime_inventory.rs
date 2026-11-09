@@ -208,6 +208,79 @@ mod tests {
     }
 
     #[test]
+    fn inventory_serialization_matches_v1_required_shape() {
+        let evidence = Evidence {
+            source: "unknown",
+            confidence: "unknown",
+            observed_at_unix_ms: None,
+        };
+        let inventory = ModelRuntimeInventory {
+            schema_version: 1,
+            generated_at_unix_ms: 1,
+            device_ref: None,
+            platform: PlatformInfo {
+                os: "linux".into(),
+                os_version: None,
+                architecture: "x86_64".into(),
+            },
+            hardware: HardwareInfo {
+                cpu_logical_cores: None,
+                memory_total_mb: None,
+                memory_available_mb: None,
+                storage_free_mb: None,
+                accelerators: Vec::new(),
+            },
+            runtimes: vec![RuntimeInfo {
+                runtime_id: "ollama.local".into(),
+                provider: "Ollama".into(),
+                version: None,
+                availability: "unknown",
+                network_scope: "loopback_only",
+                evidence: evidence.clone(),
+            }],
+            models: vec![ModelInfo {
+                model_ref: "ollama:example".into(),
+                runtime_id: "ollama.local".into(),
+                display_name: "example".into(),
+                family: None,
+                version: None,
+                availability: "installed",
+                size_bytes: Some(1),
+                context_length_tokens: None,
+                estimated_min_memory_mb: None,
+                capabilities: vec!["unknown"],
+                evidence: evidence.clone(),
+            }],
+            privacy: PrivacyInfo {
+                contains_prompts: false,
+                contains_user_files: false,
+                contains_local_paths: false,
+                contains_credentials: false,
+            },
+        };
+
+        let value = serde_json::to_value(inventory).unwrap();
+        let top_level = value.as_object().unwrap();
+        for key in [
+            "schema_version", "generated_at_unix_ms", "device_ref", "platform",
+            "hardware", "runtimes", "models", "privacy",
+        ] {
+            assert!(top_level.contains_key(key), "missing v1 field: {key}");
+        }
+        assert_eq!(top_level.len(), 8, "unexpected top-level v1 field");
+        assert_eq!(value["schema_version"], 1);
+        assert!(value["device_ref"].is_null());
+        assert!(value["platform"]["os_version"].is_null());
+        assert!(value["hardware"]["accelerators"].is_array());
+        assert_eq!(value["runtimes"][0]["availability"], "unknown");
+        assert_eq!(value["models"][0]["capabilities"][0], "unknown");
+        assert_eq!(value["privacy"]["contains_prompts"], false);
+        assert_eq!(value["privacy"]["contains_user_files"], false);
+        assert_eq!(value["privacy"]["contains_local_paths"], false);
+        assert_eq!(value["privacy"]["contains_credentials"], false);
+    }
+
+    #[test]
     fn inventory_serializes_privacy_and_unknown_capabilities_explicitly() {
         let evidence = Evidence { source: "unknown", confidence: "unknown", observed_at_unix_ms: None };
         let model = ModelInfo {
