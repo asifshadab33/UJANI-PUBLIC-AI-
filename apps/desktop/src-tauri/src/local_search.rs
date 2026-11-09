@@ -16,10 +16,11 @@ use tokio_util::sync::CancellationToken;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
 const MAX_MATCHES: usize = 250;
-const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
-const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
-const MAX_PDF_FILES: usize = 20;
+const MAX_PDF_FILES: usize = 1_000;
+const MAX_PDF_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Records a PDF text-search outcome without treating an extraction error as a negative match.
 fn record_pdf_search_result(
@@ -167,8 +168,9 @@ pub async fn find_local_files(
     let mut cached_file_identities = Vec::new();
     let mut text_bytes = 0u64;
     let mut pdf_count = 0usize;
+    let mut pdf_bytes = 0u64;
     let mut incomplete = false;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
 
     for candidate in candidates {
         if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
@@ -202,12 +204,14 @@ pub async fn find_local_files(
         }
 
         if matched_in.is_empty() && candidate.extension == "pdf" && search_pdf_text {
-            if candidate.size > MAX_PDF_BYTES || pdf_count >= MAX_PDF_FILES {
+            if candidate.size > MAX_PDF_BYTES || pdf_count >= MAX_PDF_FILES
+                || pdf_bytes.saturating_add(candidate.size) > MAX_PDF_TOTAL_BYTES {
                 incomplete = true;
                 continue;
             }
             if tokio::time::Instant::now() >= deadline { truncated = true; break; }
             pdf_count += 1;
+            pdf_bytes = pdf_bytes.saturating_add(candidate.size);
             let read_path = candidate.path.clone();
             match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
@@ -256,7 +260,7 @@ pub async fn find_local_files(
         cache_hit: false,
         note: {
             let base = if search_pdf_text {
-                "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs and 180 seconds."
+                "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 1,000 PDFs, 512 MiB of PDF input, and 10 minutes."
             } else {
                 "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included."
             };
