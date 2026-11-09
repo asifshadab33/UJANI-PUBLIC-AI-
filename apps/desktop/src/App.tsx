@@ -18,6 +18,15 @@ type ToolManifest = { id: string; version: string; name: string; description: st
 type WorkflowNode = { id: string; operation_id: string; depends_on: string[] };
 type WorkflowPlan = { accepted: boolean; schema_version: number; ordered_node_ids: string[]; required_capabilities: string[]; estimated_peak_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type ModelRecommendation = { recommended_model: string | null; available_memory_mb: number; usable_memory_budget_mb: number; candidates: { name: string; size_bytes: number; estimated_working_memory_mb: number | null; estimated_to_fit: boolean; reason: string }[]; explanation: string };
+type ModelRuntimeInventory = {
+  schema_version: number;
+  generated_at_unix_ms: number;
+  platform: { os: string; os_version: string | null; architecture: string };
+  hardware: { cpu_logical_cores: number | null; memory_total_mb: number | null; memory_available_mb: number | null };
+  runtimes: { runtime_id: string; provider: string; availability: "available" | "unavailable" | "unknown"; network_scope: string }[];
+  models: { model_ref: string; runtime_id: string; display_name: string; availability: string; size_bytes: number | null; capabilities: string[] }[];
+  privacy: { contains_prompts: boolean; contains_user_files: boolean; contains_local_paths: boolean; contains_credentials: boolean };
+};
 type WorkflowExecution = { plan: WorkflowPlan; result: DocumentPipelineResult };
 type TaskPlan = { operation_id: string; accepted: boolean; execution_location: string; required_capabilities: string[]; missing_capabilities: string[]; minimum_available_memory_mb: number; available_memory_mb: number; reason: string; execution_started: boolean };
 type RunResult = { operation: string; output: string; execution: string };
@@ -174,6 +183,9 @@ export default function App() {
   const [modelRecommendation, setModelRecommendation] = useState<ModelRecommendation | null>(null);
   const [recommendationError, setRecommendationError] = useState("");
   const [recommendationBusy, setRecommendationBusy] = useState(false);
+  const [runtimeInventory, setRuntimeInventory] = useState<ModelRuntimeInventory | null>(null);
+  const [runtimeInventoryBusy, setRuntimeInventoryBusy] = useState(false);
+  const [runtimeInventoryError, setRuntimeInventoryError] = useState("");
   const [cloudEndpoint, setCloudEndpoint] = useState("https://api.openai.com/v1/chat/completions");
   const [cloudModel, setCloudModel] = useState("gpt-4o-mini");
   const [cloudTokenParameter, setCloudTokenParameter] = useState("auto");
@@ -294,7 +306,7 @@ export default function App() {
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
-  /** Open local setup guidance and lazily refresh device/model information. */
+  /** Open local setup and inspect installed models only after the user asks to view setup guidance. */
   function openLocalSetup(focusTarget = false) {
     setActiveSidebarSection("resources");
     const target = document.getElementById("local-resources");
@@ -302,6 +314,8 @@ export default function App() {
     if (focusTarget) target?.focus({ preventScroll: true });
     void loadDeviceInfo();
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
+    if (!modelRecommendation && !recommendationBusy) void refreshModelRecommendation();
+    if (!runtimeInventory && !runtimeInventoryBusy) void refreshModelRuntimeInventory();
   }
 
   /** Refresh the opt-in setting independently from the encrypted history entries. */
@@ -524,6 +538,20 @@ export default function App() {
     try { setModelRecommendation(await invoke<ModelRecommendation>("get_model_recommendation")); }
     catch (error) { setRecommendationError(String(error)); }
     finally { setRecommendationBusy(false); }
+  }
+
+  /** Read local runtime and device metadata only after the user opens Local Setup. */
+  async function refreshModelRuntimeInventory() {
+    if (!isTauri() || runtimeInventoryBusy) return;
+    setRuntimeInventoryBusy(true);
+    setRuntimeInventoryError("");
+    try {
+      setRuntimeInventory(await invoke<ModelRuntimeInventory>("get_model_runtime_inventory"));
+    } catch (error) {
+      setRuntimeInventoryError(String(error));
+    } finally {
+      setRuntimeInventoryBusy(false);
+    }
   }
 
   async function executeValidatedDocumentWorkflow() {
@@ -1123,6 +1151,21 @@ export default function App() {
               </> : <p>{recommendationBusy ? "Checking installed models and available memory…" : "No model-fit estimate is available yet. You can retry the check."}</p>}
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
+            </div>
+            <div className="install-guide">
+              <b>Discovered device and local model inventory</b>
+              {runtimeInventory ? <>
+                <p>{runtimeInventory.platform.os}{runtimeInventory.platform.os_version ? " " + runtimeInventory.platform.os_version : ""} · {runtimeInventory.platform.architecture} · {runtimeInventory.hardware.cpu_logical_cores ?? "Unknown"} logical CPU cores</p>
+                <p>RAM: {runtimeInventory.hardware.memory_available_mb == null ? "Unknown" : runtimeInventory.hardware.memory_available_mb.toLocaleString() + " MiB available"} / {runtimeInventory.hardware.memory_total_mb == null ? "Unknown" : runtimeInventory.hardware.memory_total_mb.toLocaleString() + " MiB total"}</p>
+                {runtimeInventory.runtimes.map((runtime) => <p key={runtime.runtime_id}>{runtime.provider}: {runtime.availability} · {runtime.network_scope}</p>)}
+                {runtimeInventory.models.length ? runtimeInventory.models.map((model) => <div key={model.model_ref}>
+                  <p>{model.display_name} · {model.size_bytes == null ? "size unknown" : (model.size_bytes / (1024 * 1024)).toLocaleString(undefined, { maximumFractionDigits: 0 }) + " MiB"} · capabilities: {model.capabilities.join(", ")}</p>
+                  {model.runtime_id === "ollama.local" && model.availability === "installed" && <button className="model-run" onClick={() => setOllamaModel(model.display_name)}>Choose this installed model</button>}
+                </div>) : <p>No installed local models were reported by the detected runtime.</p>}
+              </> : <p>{runtimeInventoryBusy ? "Inspecting local runtimes and device resources…" : "Local inventory has not been checked yet."}</p>}
+              {runtimeInventoryError && <p className="error" role="alert">Local inventory unavailable: {runtimeInventoryError}</p>}
+              <button className="model-run" onClick={refreshModelRuntimeInventory} disabled={runtimeInventoryBusy}>{runtimeInventoryBusy ? "Inspecting local inventory…" : "Refresh device and model inventory"}</button>
+              <small className="muted">Read-only inspection. UJANI does not start, download, or switch a model during discovery. Unknown capabilities remain unknown; model choice stays with you.</small>
             </div>
             <div className="install-guide">
               <b>Install a local model from UJANI</b>
