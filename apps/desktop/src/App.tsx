@@ -54,6 +54,21 @@ const CLOUD_PROVIDER_PRESETS = [
   { id: "custom", label: "Custom OpenAI-compatible API", endpoint: "", model: "" }
 ] as const;
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v1";
+type ModelSelectionMode = "auto" | "manual";
+function readModelSelectionPreference(): { mode: ModelSelectionMode; model: string } {
+  if (typeof window === "undefined") return { mode: "auto", model: "" };
+  try {
+    const value = JSON.parse(window.localStorage.getItem(MODEL_SELECTION_STORAGE_KEY) || "null");
+    if (value && (value.mode === "auto" || value.mode === "manual")
+      && typeof value.model === "string" && value.model.length <= 128) {
+      return { mode: value.mode, model: value.model };
+    }
+  } catch {
+    // Storage may be unavailable or contain an older/corrupt value; use safe defaults.
+  }
+  return { mode: "auto", model: "" };
+}
 
 /// Read a selected file using the browser's native encoder rather than expanding
 /// binary bytes into millions of JSON numbers for Tauri IPC.
@@ -128,7 +143,8 @@ export default function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaError, setOllamaError] = useState("");
   const [ollamaBusy, setOllamaBusy] = useState(false);
-  const [ollamaModel, setOllamaModel] = useState("");
+  const [modelSelectionMode, setModelSelectionMode] = useState<ModelSelectionMode>(() => readModelSelectionPreference().mode);
+  const [ollamaModel, setOllamaModel] = useState(() => readModelSelectionPreference().model);
   const [modelPullName, setModelPullName] = useState("llama3.2");
   const [modelPullBusy, setModelPullBusy] = useState(false);
   const [activeModelPullTaskId, setActiveModelPullTaskId] = useState<string | null>(null);
@@ -182,6 +198,43 @@ export default function App() {
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
   const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
+
+  // Persist only the user's model-selection preference; never store prompts, files or credentials.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MODEL_SELECTION_STORAGE_KEY, JSON.stringify({
+        mode: modelSelectionMode,
+        model: ollamaModel,
+      }));
+    } catch {
+      // Persistence is best-effort; model selection remains usable for this session.
+    }
+  }, [modelSelectionMode, ollamaModel]);
+
+  // Automatic mode selects only an installed Ollama model with a conservative RAM fit estimate.
+  // The estimate is advisory and does not imply GPU/NPU or model-quality benchmarking.
+  useEffect(() => {
+    if (modelSelectionMode !== "auto" || !isTauri() || !ollamaStatus?.available || !ollamaStatus.models.length) return;
+    let active = true;
+    setRecommendationBusy(true);
+    void invoke<ModelRecommendation>("get_model_recommendation")
+      .then((recommendation) => {
+        if (!active) return;
+        setModelRecommendation(recommendation);
+        setRecommendationError("");
+        const recommended = recommendation.recommended_model;
+        setOllamaModel(recommended && ollamaStatus.models.some((model) => model.name === recommended)
+          ? recommended
+          : "");
+      })
+      .catch((error) => {
+        if (active) setRecommendationError(String(error));
+      })
+      .finally(() => {
+        if (active) setRecommendationBusy(false);
+      });
+    return () => { active = false; };
+  }, [modelSelectionMode, ollamaStatus]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
@@ -503,9 +556,12 @@ export default function App() {
     try {
       const status = await invoke<OllamaStatus>("get_ollama_status");
       setOllamaStatus(status);
-      setOllamaModel((current) => status.models.some((model) => model.name === current)
-        ? current
-        : (status.models[0]?.name ?? ""));
+      if (modelSelectionMode === "manual" && ollamaModel
+        && !status.models.some((model) => model.name === ollamaModel)) {
+        // A removed model invalidates the manual preference; return to automatic selection.
+        setModelSelectionMode("auto");
+        setOllamaModel("");
+      }
       if (!status.available) {
         setOllamaError("Ollama is not responding at 127.0.0.1:11434. Start the local Ollama application and retry.");
       } else if (status.models.length === 0) {
@@ -1119,7 +1175,7 @@ export default function App() {
                 <p>Available RAM: {modelRecommendation.available_memory_mb.toLocaleString()} MiB · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
                 {modelRecommendation.recommended_model ? <p>Suggested installed model: <b>{modelRecommendation.recommended_model}</b></p> : <p>No installed model can currently be recommended from the available information.</p>}
                 {modelRecommendation.candidates.slice(0,5).map(candidate => <p key={candidate.name}>{candidate.name}: {candidate.estimated_working_memory_mb===null?"unknown estimate":candidate.estimated_working_memory_mb.toLocaleString()+" MiB estimated"} · {candidate.estimated_to_fit?"within advisory budget":"not recommended"}</p>)}
-                {modelRecommendation.recommended_model && <button className="model-run" onClick={() => setOllamaModel(modelRecommendation.recommended_model!)}>Choose suggested model</button>}
+                {modelRecommendation.recommended_model && <button className="model-run" onClick={() => { setModelSelectionMode("manual"); setOllamaModel(modelRecommendation.recommended_model!); }}>Choose suggested model</button>}
               </> : <p>{recommendationBusy ? "Checking installed models and available memory…" : "No model-fit estimate is available yet. You can retry the check."}</p>}
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
@@ -1133,12 +1189,30 @@ export default function App() {
               {modelPullError && <p className="error" role="alert">{modelPullError}</p>}
               <small className="muted">Only download models from sources you trust. Review each model's license, size and hardware requirements before installing.</small>
             </div>
-            <label className="model-select">Installed Ollama model
-              <select value={ollamaModel} onChange={(event) => setOllamaModel(event.target.value)} disabled={!ollamaStatus?.models.length}>
-                {!ollamaStatus?.models.length && <option value="">No local models detected</option>}
+            <label className="model-select">Model selection
+              <select
+                value={modelSelectionMode === "auto" ? "__automatic__" : ollamaModel}
+                onChange={(event) => {
+                  if (event.target.value === "__automatic__") {
+                    setModelSelectionMode("auto");
+                  } else {
+                    setModelSelectionMode("manual");
+                    setOllamaModel(event.target.value);
+                  }
+                }}
+                disabled={!ollamaStatus?.models.length}
+              >
+                <option value="__automatic__">Automatic — best estimated local fit</option>
                 {ollamaStatus?.models.map((model) => <option key={model.name} value={model.name}>{model.name}</option>)}
               </select>
             </label>
+            <small className="muted">
+              {modelSelectionMode === "auto"
+                ? (ollamaModel
+                  ? `Automatic choice: ${ollamaModel}. Uses an advisory RAM-fit estimate; it does not benchmark model quality or guarantee runtime fit.`
+                  : "No installed model currently meets the advisory RAM-fit estimate. Choose a model manually or install one explicitly.")
+                : `Manual choice: ${ollamaModel}. This preference is saved on this device.`}
+            </small>
             <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
