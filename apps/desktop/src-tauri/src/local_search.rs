@@ -43,6 +43,13 @@ fn search_result_is_cacheable(truncated: bool, incomplete: bool) -> bool {
     !truncated && !incomplete
 }
 
+/// Keeps large-corpus PDF inspection bounded by per-file, count, and aggregate input limits.
+fn pdf_candidate_within_limits(size: u64, count: usize, total_bytes: u64) -> bool {
+    size <= MAX_PDF_BYTES
+        && count < MAX_PDF_FILES
+        && total_bytes.saturating_add(size) <= MAX_PDF_TOTAL_BYTES
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LocalSearchMatch {
     path: String,
@@ -204,8 +211,7 @@ pub async fn find_local_files(
         }
 
         if matched_in.is_empty() && candidate.extension == "pdf" && search_pdf_text {
-            if candidate.size > MAX_PDF_BYTES || pdf_count >= MAX_PDF_FILES
-                || pdf_bytes.saturating_add(candidate.size) > MAX_PDF_TOTAL_BYTES {
+            if !pdf_candidate_within_limits(candidate.size, pdf_count, pdf_bytes) {
                 incomplete = true;
                 continue;
             }
@@ -452,6 +458,17 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+    #[test]
+    fn large_corpus_pdf_limits_allow_one_thousand_bounded_documents() {
+        assert!(pdf_candidate_within_limits(MAX_PDF_BYTES, 0, 0));
+        assert!(pdf_candidate_within_limits(1, MAX_PDF_FILES - 1, 0));
+        assert!(!pdf_candidate_within_limits(1, MAX_PDF_FILES, 0));
+        assert!(!pdf_candidate_within_limits(MAX_PDF_BYTES + 1, 0, 0));
+        assert!(!pdf_candidate_within_limits(1, 0, MAX_PDF_TOTAL_BYTES));
+        assert_eq!(MAX_PDF_FILES, 1_000);
+        assert_eq!(MAX_PDF_TOTAL_BYTES, 512 * 1024 * 1024);
+    }
 
     #[test]
     fn truncated_pdf_extraction_is_incomplete_and_never_cacheable() {
