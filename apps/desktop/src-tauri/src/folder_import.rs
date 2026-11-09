@@ -134,6 +134,9 @@ pub async fn process_selected_folder(
                         mode.clone(),
                         model.clone(),
                         None,
+                        // Folder import reports its own per-file result; the document
+                        // pipeline progress callback is intentionally unused here.
+                        |_, _| {},
                     )
                     .await
                     {
@@ -187,6 +190,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             links: crate::safe_fs::LinkPolicy::Reject,
             errors: crate::safe_fs::WalkErrorPolicy::Reject,
             file_filter: Some(is_supported_text_file),
+            max_duration: None,
         },
         &tokio_util::sync::CancellationToken::new(),
     )?;
