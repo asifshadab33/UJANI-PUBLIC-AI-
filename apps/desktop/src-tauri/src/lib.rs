@@ -1020,9 +1020,27 @@ async fn execute_local_ai_task(
     if !validate_model_identifier(&model) {
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
-    // Enforce the same live OS/runtime capability snapshot exposed by route preview.
-    // A UI-selected model is not proof that the local service is actually available.
-    let capability_snapshot = get_capability_snapshot().await?;
+    resource_runtime::validate_task_id(&task_id)?;
+    // Register before any runtime/network preflight so the UI's Cancel action can
+    // interrupt slow local-service checks instead of appearing unresponsive.
+    let token = CancellationToken::new();
+    {
+        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
+        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+        active.insert(task_id.clone(), token.clone());
+    }
+    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    emit_task_progress(&app, &task_id, "preflight", "Checking local device capability and installed model availability.", 2);
+
+    // Keep the route-preview policy check, but make both preflight stages cancellable
+    // and bounded. The engine repeats the critical runtime/model check immediately
+    // before inference after queue admission.
+    let capability_snapshot = await_task_with_limits(
+        &token,
+        std::time::Duration::from_secs(12),
+        "Local capability preflight exceeded its 12-second time budget.",
+        get_capability_snapshot(),
+    ).await?;
     let local_plan = plan_local_task(
         "local.ai.generate",
         &mode,
@@ -1032,18 +1050,15 @@ async fn execute_local_ai_task(
     if !local_plan.accepted {
         return Err(format!("UJANI local-first policy blocked this task: {}", local_plan.reason));
     }
-    let installed_models = ollama::list_models().await?;
+    let installed_models = await_task_with_limits(
+        &token,
+        std::time::Duration::from_secs(8),
+        "Checking installed local models exceeded its 8-second time budget.",
+        ollama::list_models(),
+    ).await?;
     if !installed_models.iter().any(|installed| installed.name == model) {
         return Err("The selected model is not installed in the local Ollama runtime. Choose an installed model or download it explicitly; UJANI will not silently send this task to the cloud.".into());
     }
-    resource_runtime::validate_task_id(&task_id)?;
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 1);
     let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
     flush_pending_receipts(&app).await;
