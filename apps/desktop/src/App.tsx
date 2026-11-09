@@ -167,6 +167,16 @@ export default function App() {
   const streamDeltaBufferRef = useRef("");
   const streamFlushTimerRef = useRef<number | null>(null);
 
+  function flushLocalStreamBuffer() {
+    if (streamFlushTimerRef.current !== null) {
+      window.clearTimeout(streamFlushTimerRef.current);
+      streamFlushTimerRef.current = null;
+    }
+    const pending = streamDeltaBufferRef.current;
+    streamDeltaBufferRef.current = "";
+    if (pending) setLocalStreamingText((current) => current + pending);
+  }
+
   function resetLocalStreamBuffer() {
     if (streamFlushTimerRef.current !== null) {
       window.clearTimeout(streamFlushTimerRef.current);
@@ -666,7 +676,12 @@ export default function App() {
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
       setRequest("");
     } catch (error) { setOllamaError(String(error)); }
-    finally { resetLocalStreamBuffer(); setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
+    finally {
+      // Preserve any final buffered token (and partial output on cancellation/error).
+      flushLocalStreamBuffer();
+      setAiBusy(false);
+      setActiveTaskId(null);
+    }
   }
 
   async function cancelLocalAi() {
