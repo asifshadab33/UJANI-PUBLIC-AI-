@@ -234,7 +234,6 @@ pub async fn find_local_files(
                                     match_preview = Some(preview);
                                 }
                             },
-                            Ok(_) => {},
                             Err(_) => incomplete = true,
                         }
                     }
@@ -721,6 +720,7 @@ mod tests {
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in: vec!["text content".into()],
+                match_preview: None,
             }],
             truncated: false,
             note: "cached".into(),
@@ -758,6 +758,7 @@ mod tests {
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in: vec!["filename".into()],
+                match_preview: None,
             }],
             truncated: false,
             note: "cached".into(),
