@@ -143,7 +143,7 @@ export default function LocalFinder() {
       </div>}
     </div>
     {busy && <button className="model-run" type="button" onClick={cancelSearch} disabled={!taskId}>Cancel search</button>}
-    <small className="muted">UJANI opens a native folder picker. It does not scan the whole disk, upload files, move or delete anything. Search is bounded to 5,000 entries, six directory levels, 20 PDFs and 180 seconds. Scanned PDFs need OCR, which is not included.</small>
+    <small className="muted">UJANI opens a native folder picker. It does not scan the whole disk, upload files, move or delete anything. Search is bounded to 5,000 entries, six directory levels, 1,000 text-based PDFs (up to 512 MiB total) and 10 minutes. Scanned PDFs need OCR, which is not included.</small>
     {error && <p className="error" role="alert">{error}</p>}
     {result && !result.cancelled && <div className="result">
       <div className="result-title">Search results <span>{result.matches.length} matches · {result.scanned_files} files checked · {result.cache_hit ? "validated cache" : "fresh search"}</span></div>
