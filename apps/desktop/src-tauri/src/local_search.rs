@@ -513,11 +513,13 @@ mod tests {
     #[test]
     fn truncated_pdf_extraction_is_incomplete_and_never_cacheable() {
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
         record_pdf_search_result(
             Err("PDF text extraction exceeded the 1 MiB worker output limit.".into()),
             "needle",
             &mut matches,
+            &mut preview,
             &mut incomplete,
         );
         assert!(matches.is_empty());
@@ -534,8 +536,9 @@ mod tests {
             Err(error) => Err(error),
         };
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
-        record_pdf_search_result(extraction, "needle", &mut matches, &mut incomplete);
+        record_pdf_search_result(extraction, "needle", &mut matches, &mut preview, &mut incomplete);
         assert!(matches.is_empty());
         assert!(incomplete);
         assert!(!search_result_is_cacheable(false, incomplete));
@@ -544,8 +547,9 @@ mod tests {
     #[test]
     fn complete_pdf_non_match_remains_a_cacheable_negative_result() {
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
-        record_pdf_search_result(Ok("complete text without target".into()), "needle", &mut matches, &mut incomplete);
+        record_pdf_search_result(Ok("complete text without target".into()), "needle", &mut matches, &mut preview, &mut incomplete);
         assert!(matches.is_empty());
         assert!(!incomplete);
         assert!(search_result_is_cacheable(false, incomplete));
@@ -554,10 +558,42 @@ mod tests {
     #[test]
     fn complete_pdf_match_is_recorded_without_marking_search_incomplete() {
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
-        record_pdf_search_result(Ok("prefix needle suffix".into()), "needle", &mut matches, &mut incomplete);
+        record_pdf_search_result(Ok("prefix needle suffix".into()), "needle", &mut matches, &mut preview, &mut incomplete);
         assert_eq!(matches, vec!["PDF text (isolated worker)"]);
         assert!(!incomplete);
+    }
+
+    #[test]
+    fn finds_a_unique_company_name_in_the_last_of_one_thousand_documents() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-search-thousand-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..999 {
+            fs::write(root.join(format!("document-{index:04}.txt")), format!("Ordinary agreement number {index}")).unwrap();
+        }
+        fs::write(root.join("document-0999.txt"), "A supplier contract with ACME-RARE-ENTITY-9917 mentioned once.").unwrap();
+
+        let (_, candidates, scanned, truncated) =
+            collect_candidates(&root, &CancellationToken::new()).unwrap();
+        assert_eq!(scanned, 1_000);
+        assert_eq!(candidates.len(), 1_000);
+        assert!(!truncated);
+
+        let mut found = Vec::new();
+        for candidate in candidates {
+            if candidate.extension != "txt" { continue; }
+            let bytes = read_bounded(&candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let content = String::from_utf8(bytes).unwrap();
+            if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
+                found.push((candidate.name, preview));
+            }
+        }
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "document-0999.txt");
+        assert!(found[0].1.contains("acme-rare-entity-9917"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
