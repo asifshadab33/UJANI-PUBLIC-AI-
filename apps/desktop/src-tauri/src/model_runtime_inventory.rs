@@ -91,7 +91,12 @@ fn observed_at() -> Result<u64, String> {
 fn valid_model_ref(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 153
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
+        && name
+            .split('/')
+            .all(|component| !component.is_empty() && component != "." && component != "..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
 }
 
 pub async fn collect() -> Result<ModelRuntimeInventory, String> {
@@ -194,6 +199,10 @@ mod tests {
         assert!(valid_model_ref("library/qwen2.5:7b"));
         assert!(!valid_model_ref(""));
         assert!(!valid_model_ref("../outside"));
+        assert!(!valid_model_ref("library/../outside"));
+        assert!(!valid_model_ref("/absolute/model"));
+        assert!(!valid_model_ref("library//model"));
+        assert!(!valid_model_ref("library/./model"));
         assert!(!valid_model_ref(&"m".repeat(161)));
         assert!(!valid_model_ref("model name"));
     }
