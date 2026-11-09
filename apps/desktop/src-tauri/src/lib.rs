@@ -213,10 +213,21 @@ struct OllamaStatus {
 /// Advisory model-fit estimates; no model is automatically selected or loaded.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
- let mut system=System::new(); system.refresh_memory();
- let available_memory_mb=system.available_memory()/(1024*1024);
- let models=if ollama::is_available().await {ollama::list_models().await?.into_iter().map(|m|InstalledModelSize{name:m.name,size_bytes:m.size}).collect::<Vec<_>>()}else{Vec::new()};
- Ok(recommend_local_model(&models,available_memory_mb))
+    // Use the same bounded, privacy-minimised inventory as the model discovery UI.
+    // This avoids a second, independently collected Ollama/hardware snapshot.
+    let inventory = model_runtime_inventory::collect().await?;
+    let available_memory_mb = inventory.hardware.memory_available_mb.unwrap_or(0);
+    let models = inventory
+        .models
+        .into_iter()
+        .filter(|model| model.runtime_id == "ollama.local" && model.availability == "installed")
+        .map(|model| InstalledModelSize {
+            name: model.display_name,
+            // Unknown size is represented as zero so the advisor never recommends it.
+            size_bytes: model.size_bytes.unwrap_or(0),
+        })
+        .collect::<Vec<_>>();
+    Ok(recommend_local_model(&models, available_memory_mb))
 }
 
 #[derive(Serialize)]
