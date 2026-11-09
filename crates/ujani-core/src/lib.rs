@@ -185,6 +185,8 @@ pub use reminders::{upcoming_reminders, LocalReminder, ReminderState, ReminderVa
 pub mod file_processor;
 pub mod image_processor;
 pub mod capability;
+pub mod local_first;
+pub use local_first::{plan_local_first, LocalFirstPlan, LocalFirstPolicy, SegmentDecision, SegmentPlacement, TaskSegment};
 pub mod tool_registry;
 pub mod impact;
 
