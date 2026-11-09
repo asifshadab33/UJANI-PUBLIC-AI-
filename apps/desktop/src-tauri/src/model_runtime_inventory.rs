@@ -90,7 +90,7 @@ fn observed_at() -> Result<u64, String> {
 
 fn valid_model_ref(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= 160
+        && name.len() <= 153
         && name.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
 }
 
