@@ -27,15 +27,34 @@ fn record_pdf_search_result(
     extraction: Result<String, String>,
     query: &str,
     matched_in: &mut Vec<String>,
+    match_preview: &mut Option<String>,
     incomplete: &mut bool,
 ) {
     match extraction {
-        Ok(text) if text.to_lowercase().contains(query) => {
-            matched_in.push("PDF text (isolated worker)".to_string());
+        Ok(text) => {
+            if let Some(preview) = match_preview_for(&text, query) {
+                matched_in.push("PDF text (isolated worker)".to_string());
+                *match_preview = Some(preview);
+            }
         }
-        Ok(_) => {}
         Err(_) => *incomplete = true,
     }
+}
+
+/// Returns a bounded, lowercase excerpt around the first exact phrase match.
+/// Lowercasing both values keeps matching consistent with the search operation.
+fn match_preview_for(content: &str, query: &str) -> Option<String> {
+    let normalized = content.to_lowercase();
+    let query = query.to_lowercase();
+    let start = normalized.find(&query)?;
+    let end = start.saturating_add(query.len()).min(normalized.len());
+    let mut excerpt_start = start.saturating_sub(100);
+    while !normalized.is_char_boundary(excerpt_start) { excerpt_start = excerpt_start.saturating_sub(1); }
+    let mut excerpt_end = end.saturating_add(180).min(normalized.len());
+    while !normalized.is_char_boundary(excerpt_end) { excerpt_end = excerpt_end.saturating_sub(1); }
+    let prefix = if excerpt_start > 0 { "…" } else { "" };
+    let suffix = if excerpt_end < normalized.len() { "…" } else { "" };
+    Some(format!("{prefix}{}{suffix}", normalized[excerpt_start..excerpt_end].trim()))
 }
 
 /// Partial or truncated scans must never be persisted as complete search results.
@@ -58,6 +77,8 @@ pub struct LocalSearchMatch {
     size_bytes: u64,
     modified_unix_ms: Option<u64>,
     matched_in: Vec<String>,
+    #[serde(default)]
+    match_preview: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -184,6 +205,7 @@ pub async fn find_local_files(
         if tokio::time::Instant::now() >= deadline { truncated = true; break; }
         if matches.len() >= MAX_MATCHES { truncated = true; break; }
         let mut matched_in = Vec::new();
+        let mut match_preview = None;
         if candidate.name.to_lowercase().contains(&query) {
             matched_in.push("filename".to_string());
         }
@@ -200,7 +222,12 @@ pub async fn find_local_files(
                     Ok(Ok(bytes)) => {
                         text_bytes = text_bytes.saturating_add(bytes.len() as u64);
                         match String::from_utf8(bytes) {
-                            Ok(content) if content.to_lowercase().contains(&query) => matched_in.push("text content".to_string()),
+                            Ok(content) => {
+                                if let Some(preview) = match_preview_for(&content, &query) {
+                                    matched_in.push("text content".to_string());
+                                    match_preview = Some(preview);
+                                }
+                            },
                             Ok(_) => {},
                             Err(_) => incomplete = true,
                         }
@@ -234,7 +261,7 @@ pub async fn find_local_files(
                             result = extraction => result,
                         };
                         match extraction_result {
-                            Ok(result) => record_pdf_search_result(result, &query, &mut matched_in, &mut incomplete),
+                            Ok(result) => record_pdf_search_result(result, &query, &mut matched_in, &mut match_preview, &mut incomplete),
                             Err(_) => incomplete = true,
                         }
                     }
@@ -251,6 +278,7 @@ pub async fn find_local_files(
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in,
+                match_preview,
             });
             cached_file_identities.push(candidate.identity.clone());
         }
@@ -458,6 +486,18 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+    #[test]
+    fn match_preview_returns_a_bounded_excerpt_for_rare_exact_terms() {
+        let content = format!("{} ACME-HOLDINGS-XYZ {}",
+            "background ".repeat(30), "closing ".repeat(30));
+        let preview = match_preview_for(&content, "acme-holdings-xyz").unwrap();
+        assert!(preview.contains("acme-holdings-xyz"));
+        assert!(preview.starts_with("…"));
+        assert!(preview.ends_with("…"));
+        assert!(preview.len() < 400);
+        assert!(match_preview_for("nothing relevant here", "acme-holdings-xyz").is_none());
+    }
 
     #[test]
     fn large_corpus_pdf_limits_allow_one_thousand_bounded_documents() {
