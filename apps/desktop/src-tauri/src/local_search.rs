@@ -47,14 +47,20 @@ fn match_preview_for(content: &str, query: &str) -> Option<String> {
     let normalized = content.to_lowercase();
     let query = query.to_lowercase();
     let start = normalized.find(&query)?;
-    let end = start.saturating_add(query.len()).min(normalized.len());
-    let mut excerpt_start = start.saturating_sub(100);
-    while !normalized.is_char_boundary(excerpt_start) { excerpt_start = excerpt_start.saturating_sub(1); }
-    let mut excerpt_end = end.saturating_add(180).min(normalized.len());
-    while !normalized.is_char_boundary(excerpt_end) { excerpt_end = excerpt_end.saturating_sub(1); }
+    // Convert the normalized byte offset to a character offset, then slice the
+    // original text by characters so the evidence keeps its original casing.
+    let start_char = normalized[..start].chars().count();
+    let query_chars = query.chars().count();
+    let total_chars = content.chars().count();
+    let excerpt_start = start_char.saturating_sub(100);
+    let excerpt_end = start_char.saturating_add(query_chars).saturating_add(180).min(total_chars);
     let prefix = if excerpt_start > 0 { "…" } else { "" };
-    let suffix = if excerpt_end < normalized.len() { "…" } else { "" };
-    Some(format!("{prefix}{}{suffix}", normalized[excerpt_start..excerpt_end].trim()))
+    let suffix = if excerpt_end < total_chars { "…" } else { "" };
+    let excerpt: String = content.chars()
+        .skip(excerpt_start)
+        .take(excerpt_end.saturating_sub(excerpt_start))
+        .collect();
+    Some(format!("{prefix}{}{suffix}", excerpt.trim()))
 }
 
 /// Partial or truncated scans must never be persisted as complete search results.
@@ -492,7 +498,7 @@ mod tests {
         let content = format!("{} ACME-HOLDINGS-XYZ {}",
             "background ".repeat(30), "closing ".repeat(30));
         let preview = match_preview_for(&content, "acme-holdings-xyz").unwrap();
-        assert!(preview.contains("acme-holdings-xyz"));
+        assert!(preview.to_lowercase().contains("acme-holdings-xyz"));
         assert!(preview.starts_with("…"));
         assert!(preview.ends_with("…"));
         assert!(preview.len() < 400);
@@ -592,7 +598,7 @@ mod tests {
         }
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "document-0999.txt");
-        assert!(found[0].1.contains("acme-rare-entity-9917"));
+        assert!(found[0].1.to_lowercase().contains("acme-rare-entity-9917"));
         fs::remove_dir_all(root).unwrap();
     }
 
