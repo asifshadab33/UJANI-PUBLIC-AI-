@@ -19,8 +19,8 @@ const MAX_MATCHES: usize = 250;
 const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
-const MAX_PDF_FILES: usize = 1_000;
-const MAX_PDF_TOTAL_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_PDF_FILES: usize = 20;
+const MAX_PDF_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Records a PDF text-search outcome without treating an extraction error as a negative match.
 fn record_pdf_search_result(
@@ -512,8 +512,8 @@ mod tests {
         assert!(!pdf_candidate_within_limits(1, MAX_PDF_FILES, 0));
         assert!(!pdf_candidate_within_limits(MAX_PDF_BYTES + 1, 0, 0));
         assert!(!pdf_candidate_within_limits(1, 0, MAX_PDF_TOTAL_BYTES));
-        assert_eq!(MAX_PDF_FILES, 1_000);
-        assert_eq!(MAX_PDF_TOTAL_BYTES, 512 * 1024 * 1024);
+        assert_eq!(MAX_PDF_FILES, 20);
+        assert_eq!(MAX_PDF_TOTAL_BYTES, 128 * 1024 * 1024);
     }
 
     #[test]
