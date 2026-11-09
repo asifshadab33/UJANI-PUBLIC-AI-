@@ -54,6 +54,7 @@ The current `ujani_invoke_handler!` registration contains **42 statically named 
 | Receipts and cloud budget | `security_store::list_execution_receipts` |
 | Receipts and cloud budget | `security_store::get_cloud_budget_status` |
 | Receipts and cloud budget | `security_store::set_cloud_budget_limit` |
+| Security Centre | `get_security_provider_status` |
 
 ### Conditional peer-preview surface
 
