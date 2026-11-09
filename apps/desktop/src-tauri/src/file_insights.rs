@@ -1,7 +1,6 @@
 //! Bounded, read-only large-file discovery scoped to a user-selected folder.
 use serde::Serialize;
 use std::{
-    fs,
     path::Path,
     time::Duration,
 };
@@ -159,7 +158,7 @@ fn scan_large_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
     fn temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
