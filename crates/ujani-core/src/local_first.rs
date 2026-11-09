@@ -180,6 +180,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_or_oversized_capability_requirements() {
+        let invalid = TaskSegment {
+            id: "invalid-capability".into(),
+            required_capabilities: vec!["../escape".into()],
+            external_fallback_available: true,
+        };
+        assert!(plan_local_first(
+            &[invalid],
+            &BTreeSet::new(),
+            LocalFirstPolicy::default(),
+        )
+        .is_err());
+
+        let oversized = TaskSegment {
+            id: "too-many-capabilities".into(),
+            required_capabilities: (0..=MAX_CAPABILITIES_PER_SEGMENT)
+                .map(|index| format!("capability.{index}"))
+                .collect(),
+            external_fallback_available: true,
+        };
+        assert!(plan_local_first(
+            &[oversized],
+            &BTreeSet::new(),
+            LocalFirstPolicy::default(),
+        )
+        .is_err());
+    }
+
+    #[test]
     fn rejects_duplicate_or_invalid_segments_and_oversized_plans() {
         assert!(plan_local_first(
             &[segment("same", &[], false), segment("same", &[], false)],
