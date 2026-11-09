@@ -7,7 +7,7 @@ Scope: Tauri command surface registered by `apps/desktop/src-tauri/src/lib.rs` o
 
 ## Inventory source and count
 
-The current `ujani_invoke_handler!` registration contains **42 statically named command entries**, plus a feature-supplied peer-command expansion. The main native source also contains 18 directly annotated command functions; module-level commands are registered by qualified module path. The inventory must be refreshed whenever the handler or command modules change.
+The current `ujani_invoke_handler!` registration contains **42 statically named command entries**, plus a feature-supplied peer-command expansion. The main native source also contains 23 directly annotated command functions; module-level commands are registered by qualified module path. The inventory must be refreshed whenever the handler or command modules change.
 
 ## Registered command inventory
 
@@ -58,7 +58,19 @@ The current `ujani_invoke_handler!` registration contains **42 statically named 
 
 ### Conditional peer-preview surface
 
-The handler macro accepts additional peer commands through a feature-supplied expansion. The peer identity/enrolment and envelope-claim commands are not part of the default IPC surface and must remain unavailable in normal builds unless the opt-in peer-preview feature is deliberately enabled. Their authorization, replay, persistence and receipt requirements remain part of the audit.
+The handler macro accepts seven additional commands only when the opt-in `peer-preview` Cargo feature is enabled. They are not registered in normal builds:
+
+| Area | Conditional command (peer-preview only) |
+|---|---|
+| Peer trust | `security_store::enroll_trusted_peer` |
+| Peer trust | `security_store::revoke_trusted_peer` |
+| Peer trust | `security_store::list_trusted_peers` |
+| Peer envelope | `security_store::verify_and_claim_peer_envelope` |
+| Device identity | `device_identity::get_or_create_device_identity` |
+| Device identity | `device_identity::rotate_device_identity` |
+| Device identity | `device_identity::sign_peer_task_envelope` |
+
+These commands must remain unavailable in normal builds unless the opt-in feature is deliberately enabled. Their authorization, replay, persistence, revocation and receipt requirements remain part of the audit.
 
 ## High-priority findings to close
 
