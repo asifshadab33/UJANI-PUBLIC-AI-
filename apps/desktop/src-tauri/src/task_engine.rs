@@ -189,23 +189,34 @@ impl LocalTaskEngine {
 
     /// One-step pipeline: analyse user-selected text, then summarise it with local Ollama.
     /// No filesystem paths or remote endpoints are accepted.
-    pub async fn process_document(
+    pub async fn process_document<F>(
         file_name: String,
         content: String,
         mode: String,
         model: String,
         translation_language: Option<String>,
-    ) -> Result<DocumentPipelineResult, String> {
+        mut on_progress: F,
+    ) -> Result<DocumentPipelineResult, String>
+    where
+        F: FnMut(&str, u8),
+    {
         validate_document_request(&file_name, &content, &mode)?;
+        on_progress("Checking local model readiness", 8);
         ensure_local_model_ready("document.summarize", &model).await?;
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
         }
+        on_progress("Analysing document text", 12);
         let analysis = core_analyze_text(&file_name, &content)?;
         let (summary, chunks_processed, total_chunks) =
-            summarise_document_content(&file_name, &content, &model).await?;
+            summarise_document_content(&file_name, &content, &model, &mut on_progress).await?;
         let translated_summary = match translation_language.as_deref() {
-            Some(language) => Some(Self::translate_local(summary.clone(), language.to_string(), mode.clone(), model.clone()).await?),
+            Some(language) => {
+                on_progress("Translating the completed summary locally", 90);
+                let translated = Self::translate_local(summary.clone(), language.to_string(), mode.clone(), model.clone()).await?;
+                on_progress("Translation completed", 96);
+                Some(translated)
+            },
             None => None,
         };
         Ok(DocumentPipelineResult {
@@ -222,18 +233,24 @@ impl LocalTaskEngine {
     }
 
     /// Extracts text from a user-selected PDF held in memory, then runs the local document pipeline.
-    pub async fn process_pdf(
+    pub async fn process_pdf<F>(
         file_name: String,
         data: Vec<u8>,
         mode: String,
         model: String,
         translation_language: Option<String>,
-    ) -> Result<DocumentPipelineResult, String> {
+        mut on_progress: F,
+    ) -> Result<DocumentPipelineResult, String>
+    where
+        F: FnMut(&str, u8),
+    {
         validate_pdf_input(&file_name, &data, &mode)?;
+        on_progress("Checking local model readiness", 8);
         ensure_local_model_ready("pdf.extract_and_summarize", &model).await?;
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
         }
+        on_progress("Extracting PDF text on this computer", 10);
         let extracted = extract_pdf_isolated(data).await?;
         if extracted.trim().is_empty() {
             return Err("No selectable text was found. This may be a scanned PDF; OCR is not yet supported.".into());
@@ -241,11 +258,17 @@ impl LocalTaskEngine {
         if extracted.len() > MAX_DOCUMENT_PIPELINE_BYTES {
             return Err("Extracted PDF text exceeds the 256 KiB integrated pipeline limit. Split the PDF into smaller sections.".into());
         }
+        on_progress("Analysing extracted PDF text", 12);
         let analysis = core_analyze_text(&file_name, &extracted)?;
         let (summary, chunks_processed, total_chunks) =
-            summarise_document_content(&file_name, &extracted, &model).await?;
+            summarise_document_content(&file_name, &extracted, &model, &mut on_progress).await?;
         let translated_summary = match translation_language.as_deref() {
-            Some(language) => Some(Self::translate_local(summary.clone(), language.to_string(), mode.clone(), model.clone()).await?),
+            Some(language) => {
+                on_progress("Translating the completed summary locally", 90);
+                let translated = Self::translate_local(summary.clone(), language.to_string(), mode.clone(), model.clone()).await?;
+                on_progress("Translation completed", 96);
+                Some(translated)
+            },
             None => None,
         };
         Ok(DocumentPipelineResult {
@@ -582,11 +605,15 @@ fn split_document_chunks(content: &str) -> Vec<&str> {
 
 /// Summarise in bounded local stages. Intermediate summaries are capped so the
 /// final synthesis prompt remains inside the Ollama adapter's 32 KiB limit.
-async fn summarise_document_content(
+async fn summarise_document_content<F>(
     file_name: &str,
     content: &str,
     model: &str,
-) -> Result<(String, usize, usize), String> {
+    on_progress: &mut F,
+) -> Result<(String, usize, usize), String>
+where
+    F: FnMut(&str, u8),
+{
     let chunks = split_document_chunks(content);
     if chunks.is_empty() { return Err("The document contains no summarizable text.".into()); }
     if chunks.len() > MAX_DOCUMENT_CHUNKS {
@@ -594,22 +621,31 @@ async fn summarise_document_content(
     }
 
     if chunks.len() == 1 {
+        on_progress("Summarising document section 1 of 1 locally", 35);
         let prompt = format!("File: {file_name}\n\n{}", fence_document(chunks[0]));
         let summary = ollama::chat(model, Some(SUMMARY_SYSTEM), &[ollama::Turn { role: "user", content: &prompt }]).await?;
+        on_progress("Document summary ready", 85);
         return Ok((summary, 1, 1));
     }
 
     let mut partials = Vec::with_capacity(chunks.len());
     for (index, chunk) in chunks.iter().enumerate() {
-        let section = format!("File: {file_name}; section {} of {}\n\n{}", index + 1, chunks.len(), fence_document(chunk));
+        let section_number = index + 1;
+        let start_percent = 20 + (index * 55 / chunks.len()) as u8;
+        let finish_percent = 20 + (section_number * 55 / chunks.len()) as u8;
+        on_progress(&format!("Summarising section {section_number} of {} locally", chunks.len()), start_percent);
+        let section = format!("File: {file_name}; section {} of {}\n\n{}", section_number, chunks.len(), fence_document(chunk));
         let partial = ollama::chat(model, Some(SUMMARY_SYSTEM), &[ollama::Turn { role: "user", content: &section }]).await?;
         let partial = clamp_utf8(&partial, MAX_PARTIAL_SUMMARY_BYTES).to_string();
-        partials.push(format!("SECTION {} SUMMARY:\n{}", index + 1, partial));
+        partials.push(format!("SECTION {} SUMMARY:\n{}", section_number, partial));
+        on_progress(&format!("Completed section {section_number} of {}", chunks.len()), finish_percent);
     }
 
+    on_progress("Combining the section summaries locally", 85);
     let combined = partials.join("\n\n");
     let final_prompt = format!("File: {file_name}\n\n<document>\n{}\n</document>", combined.replace("</document>", "</ document>"));
     let summary = ollama::chat(model, Some(SUMMARY_SYSTEM), &[ollama::Turn { role: "user", content: &final_prompt }]).await?;
+    on_progress("Document summary ready", 88);
     Ok((summary, chunks.len(), chunks.len()))
 }
 
