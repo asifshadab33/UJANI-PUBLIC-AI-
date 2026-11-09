@@ -6,6 +6,7 @@ on:
       - security/upgrade-rusqlite-041
     paths:
       - apps/desktop/src-tauri/Cargo.toml
+      - .github/workflows/one-shot-rusqlite-lock.yml
 
 permissions:
   contents: write
@@ -32,13 +33,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
-      - name: Install frontend and build PDF worker sidecar
+      - name: Install frontend dependencies
         working-directory: apps/desktop
-        run: |
-          npm ci
-          npm run build:pdf-worker
+        run: npm ci
       - name: Regenerate desktop lockfile for maintained rusqlite
         run: cargo update --manifest-path apps/desktop/src-tauri/Cargo.toml -p rusqlite --precise 0.41.0
+      - name: Build PDF worker sidecar with regenerated lockfile
+        working-directory: apps/desktop
+        run: npm run build:pdf-worker
       - name: Verify SQLite FFI version
         run: cargo tree --manifest-path apps/desktop/src-tauri/Cargo.toml -i libsqlite3-sys
       - name: Check formatting
