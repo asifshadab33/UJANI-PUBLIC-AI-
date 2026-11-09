@@ -294,7 +294,7 @@ export default function App() {
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
-  /** Open local setup guidance and lazily refresh device/model information. */
+  /** Open local setup and inspect installed models only after the user asks to view setup guidance. */
   function openLocalSetup(focusTarget = false) {
     setActiveSidebarSection("resources");
     const target = document.getElementById("local-resources");
@@ -302,6 +302,7 @@ export default function App() {
     if (focusTarget) target?.focus({ preventScroll: true });
     void loadDeviceInfo();
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
+    if (!modelRecommendation && !recommendationBusy) void refreshModelRecommendation();
   }
 
   /** Refresh the opt-in setting independently from the encrypted history entries. */
