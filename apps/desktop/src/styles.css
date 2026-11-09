@@ -96,3 +96,15 @@
 @media(max-width:850px){.security-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.security-workspace{grid-template-columns:1fr}}@media(max-width:520px){.security-centre .section-heading{gap:8px}.security-prototype-label{font-size:8px}.security-metrics{grid-template-columns:1fr 1fr}.security-metric{padding:10px}.security-choice{gap:7px}.security-choice em{font-size:8px}}
 
 .security-error{padding:10px 12px;border:1px solid #8a4b45;border-radius:8px;background:#321f1e;color:#f1b9b1;font-size:10px;line-height:1.5}
+
+
+/* Lightweight application directory: static links only, no background integrations. */
+.integration-directory{scroll-margin-top:22px}
+.integration-notice{padding:11px 13px;border:1px solid #405343;border-radius:8px;background:#121b15;color:#b8c9bb;font-size:10px;line-height:1.55}
+.integration-category{margin-top:17px}.integration-category h3{font:600 12px 'Space Grotesk';color:#c9e9b6;margin:0 0 9px}
+.integration-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.integration-link{display:flex;gap:11px;align-items:flex-start;min-width:0;padding:12px;border:1px solid #304035;border-radius:9px;background:#141f18;color:#dce8de;text-decoration:none}
+.integration-link:hover{border-color:#8bad69;background:#1b2b21}.integration-link:focus-visible{outline:2px solid #bdf27e;outline-offset:2px}
+.integration-icon{display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:8px;background:#263b2a;color:#bdf27e}
+.integration-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.integration-copy b{font-size:11px}.integration-copy small{font-size:9px;line-height:1.45;color:#91a095}.integration-copy em{display:flex;align-items:center;gap:4px;font-size:9px;color:#c7ef9b;font-style:normal;font-weight:700}
+@media(max-width:520px){.integration-grid{grid-template-columns:1fr}}
