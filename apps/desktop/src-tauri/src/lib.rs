@@ -10,6 +10,7 @@ mod local_search;
 mod search_cache;
 mod history;
 mod model_runtime;
+mod model_runtime_inventory;
 mod ollama;
 mod resource_runtime;
 mod security_providers;
@@ -25,7 +26,7 @@ use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo
 use serde::Serialize;
 use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
-
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tokio_util::sync::CancellationToken;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
 use sysinfo::System;
@@ -212,10 +213,21 @@ struct OllamaStatus {
 /// Advisory model-fit estimates; no model is automatically selected or loaded.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
- let mut system=System::new(); system.refresh_memory();
- let available_memory_mb=system.available_memory()/(1024*1024);
- let models=if ollama::is_available().await {ollama::list_models().await?.into_iter().map(|m|InstalledModelSize{name:m.name,size_bytes:m.size}).collect::<Vec<_>>()}else{Vec::new()};
- Ok(recommend_local_model(&models,available_memory_mb))
+    // Use the same bounded, privacy-minimised inventory as the model discovery UI.
+    // This avoids a second, independently collected Ollama/hardware snapshot.
+    let inventory = model_runtime_inventory::collect().await?;
+    let available_memory_mb = inventory.hardware.memory_available_mb.unwrap_or(0);
+    let models = inventory
+        .models
+        .into_iter()
+        .filter(|model| model.runtime_id == "ollama.local" && model.availability == "installed")
+        .map(|model| InstalledModelSize {
+            name: model.display_name,
+            // Unknown size is represented as zero so the advisor never recommends it.
+            size_bytes: model.size_bytes.unwrap_or(0),
+        })
+        .collect::<Vec<_>>();
+    Ok(recommend_local_model(&models, available_memory_mb))
 }
 
 #[derive(Serialize)]
@@ -402,11 +414,20 @@ async fn pull_ollama_model(
     if !ollama::valid_pull_model(&model) {
         return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2.".into());
     }
+    let (approval_tx, approval_rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry."))
+        .title("Approve model download")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::YesNo)
+        .show(move |approved| { let _ = approval_tx.send(approved); });
+    let approved = approval_rx.await.unwrap_or(false);
+    if !approved {
+        return Err("Model download was not approved. No download was started.".into());
+    }
     if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
         return Err("Invalid task identifier.".into());
     }
-
-    // Register before showing the native prompt so cancellation works while consent is pending.
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
@@ -414,16 +435,6 @@ async fn pull_ollama_model(
         active.insert(task_id.clone(), token.clone());
     }
     let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
-    let approved = native_consent::confirm_native(
-        &app,
-        "Approve model download",
-        format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry. This download may use network bandwidth and local disk space. No download starts unless you approve."),
-        token.clone(),
-        Duration::from_secs(120),
-    ).await;
-    if !approved {
-        return Err("Model download consent was declined, cancelled or timed out. No download was started.".into());
-    }
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
@@ -445,6 +456,13 @@ async fn pull_ollama_model(
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
     result
+}
+
+/// Returns a privacy-minimised, read-only inventory of local runtimes, models and OS resources.
+/// This command never downloads models, starts runtimes, probes non-loopback hosts or sends user data.
+#[tauri::command]
+async fn get_model_runtime_inventory() -> Result<model_runtime_inventory::ModelRuntimeInventory, String> {
+    model_runtime_inventory::collect().await
 }
 
 /// Checks only the local Ollama service at 127.0.0.1:11434.
@@ -1526,47 +1544,14 @@ fn run_local_task(request: String) -> Result<RunResult, String> {
     })
 }
 
-fn validate_security_provider_ids(provider_ids: &[String]) -> Result<(), &'static str> {
-    if provider_ids.is_empty() || provider_ids.len() > 2 {
-        return Err("select one or two supported security provider categories");
-    }
-    for (index, id) in provider_ids.iter().enumerate() {
-        if !matches!(id.as_str(), "windows.antivirus" | "windows.firewall") {
-            return Err("unsupported security provider category");
-        }
-        if provider_ids[..index].contains(id) {
-            return Err("duplicate security provider category");
-        }
-    }
-    Ok(())
-}
-
-/// Reads aggregate OS security-provider status only after a native confirmation.
-/// The React consent checkbox is a usability gate, not an authorization boundary:
-/// direct IPC callers must receive the same native, scope-specific confirmation.
+/// Reads aggregate OS security-provider status after an explicit user request.
 #[tauri::command]
-async fn get_security_provider_status(
-    app: AppHandle,
+fn get_security_provider_status(
     provider_ids: Vec<String>,
 ) -> Result<Vec<security_providers::SecurityProviderStatus>, String> {
-    validate_security_provider_ids(&provider_ids).map_err(str::to_owned)?;
-
-    let scope = provider_ids.iter().map(|id| match id.as_str() {
-        "windows.antivirus" => "Windows Security Center antivirus category",
-        "windows.firewall" => "Windows Security Center firewall category",
-        _ => unreachable!("provider identifiers were validated above"),
-    }).collect::<Vec<_>>().join("\n• ");
-    let approved = crate::native_consent::confirm_native(
-        &app,
-        "Approve UJANI local security status check",
-        format!("UJANI is requesting a read-only local status query for:\n• {scope}\n\nOnly aggregate health and a local observation timestamp are read. No settings are changed and no data is uploaded. Allow this one-time query?"),
-        CancellationToken::new(),
-        Duration::from_secs(120),
-    ).await;
-    if !approved {
-        return Err("The native confirmation was declined, cancelled or expired; no provider query was made.".into());
+    if provider_ids.len() > 2 {
+        return Err("Security provider selection exceeds the supported limit.".into());
     }
-
     security_providers::read_only_status(&provider_ids)
 }
 
@@ -1577,7 +1562,7 @@ macro_rules! ujani_invoke_handler {
             get_security_provider_status,
             plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
             run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
-            get_model_recommendation, execute_document_workflow, execute_local_ai_task,
+            get_model_recommendation, get_model_runtime_inventory, execute_document_workflow, execute_local_ai_task,
             cancel_active_task, analyze_text_file, summarize_selected_text, process_selected_document,
             process_selected_pdf, translate_text_local, inspect_image_file,
             folder_import::process_selected_folder, local_search::find_local_files,
@@ -1653,36 +1638,5 @@ mod ipc_input_tests {
         assert!(!valid_command_identifier("../task", 96));
         assert!(!valid_command_identifier("task\nadmin", 96));
         assert!(!valid_command_identifier(&"x".repeat(97), 96));
-    }
-}
-
-
-#[cfg(test)]
-mod security_provider_command_tests {
-    use super::validate_security_provider_ids;
-
-    #[test]
-    fn provider_scope_rejects_empty_unknown_duplicate_and_oversized_requests() {
-        assert!(validate_security_provider_ids(&[]).is_err());
-        assert!(validate_security_provider_ids(&["windows.unknown".into()]).is_err());
-        assert!(validate_security_provider_ids(&[
-            "windows.antivirus".into(),
-            "windows.antivirus".into(),
-        ]).is_err());
-        assert!(validate_security_provider_ids(&[
-            "windows.antivirus".into(),
-            "windows.firewall".into(),
-            "windows.firewall".into(),
-        ]).is_err());
-    }
-
-    #[test]
-    fn provider_scope_accepts_each_supported_category_and_both_together() {
-        assert!(validate_security_provider_ids(&["windows.antivirus".into()]).is_ok());
-        assert!(validate_security_provider_ids(&["windows.firewall".into()]).is_ok());
-        assert!(validate_security_provider_ids(&[
-            "windows.antivirus".into(),
-            "windows.firewall".into(),
-        ]).is_ok());
     }
 }
