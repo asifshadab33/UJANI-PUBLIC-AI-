@@ -10,6 +10,7 @@ mod local_search;
 mod search_cache;
 mod history;
 mod model_runtime;
+mod model_runtime_inventory;
 mod ollama;
 mod resource_runtime;
 mod security_providers;
@@ -444,6 +445,13 @@ async fn pull_ollama_model(
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
     }
     result
+}
+
+/// Returns a privacy-minimised, read-only inventory of local runtimes, models and OS resources.
+/// This command never downloads models, starts runtimes, probes non-loopback hosts or sends user data.
+#[tauri::command]
+async fn get_model_runtime_inventory() -> Result<model_runtime_inventory::ModelRuntimeInventory, String> {
+    model_runtime_inventory::collect().await
 }
 
 /// Checks only the local Ollama service at 127.0.0.1:11434.
@@ -1543,7 +1551,7 @@ macro_rules! ujani_invoke_handler {
             get_security_provider_status,
             plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
             run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
-            get_model_recommendation, execute_document_workflow, execute_local_ai_task,
+            get_model_recommendation, get_model_runtime_inventory, execute_document_workflow, execute_local_ai_task,
             cancel_active_task, analyze_text_file, summarize_selected_text, process_selected_document,
             process_selected_pdf, translate_text_local, inspect_image_file,
             folder_import::process_selected_folder, local_search::find_local_files,
