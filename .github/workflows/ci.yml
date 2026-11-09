@@ -28,6 +28,8 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Check documentation claims against protocol version
         run: bash scripts/check-doc-claims.sh
+      - name: Check native IPC command inventory parity
+        run: python3 scripts/check_native_command_inventory.py
       - name: Run workspace tests
         run: cargo test --workspace --locked
 
