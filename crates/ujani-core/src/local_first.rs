@@ -153,8 +153,8 @@ mod tests {
             LocalFirstPolicy::default(),
         ).unwrap();
 
-        assert_eq!(plan.local_segment_ids, vec!["extract", "english"]);
-        assert_eq!(plan.external_candidate_segment_ids, vec!["unsupported-language"]);
+        assert_eq!(plan.local_segment_ids, vec!["extract".to_string(), "english".to_string()]);
+        assert_eq!(plan.external_candidate_segment_ids, vec!["unsupported-language".to_string()]);
         assert!(plan.unsupported_segment_ids.is_empty());
         assert!(plan.decisions[2].external_approval_required);
         assert!(!plan.execution_started);
@@ -169,7 +169,7 @@ mod tests {
             LocalFirstPolicy::LocalOnly,
         ).unwrap();
         assert!(plan.external_candidate_segment_ids.is_empty());
-        assert_eq!(plan.unsupported_segment_ids, vec!["ocr"]);
+        assert_eq!(plan.unsupported_segment_ids, vec!["ocr".to_string()]);
     }
 
     #[test]
@@ -179,7 +179,7 @@ mod tests {
             &BTreeSet::new(),
             LocalFirstPolicy::default(),
         ).unwrap();
-        assert_eq!(plan.unsupported_segment_ids, vec!["special-parser"]);
+        assert_eq!(plan.unsupported_segment_ids, vec!["special-parser".to_string()]);
     }
 
     #[test]
