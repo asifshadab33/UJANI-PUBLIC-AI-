@@ -157,6 +157,17 @@ export default function App() {
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [activeDocumentTaskId, setActiveDocumentTaskId] = useState<string | null>(null);
   const pdfReadControllerRef = useRef<AbortController | null>(null);
+  // Batch tiny Ollama deltas to avoid re-rendering the full application tree per token.
+  const streamDeltaBufferRef = useRef("");
+  const streamFlushTimerRef = useRef<number | null>(null);
+
+  function resetLocalStreamBuffer() {
+    if (streamFlushTimerRef.current !== null) {
+      window.clearTimeout(streamFlushTimerRef.current);
+      streamFlushTimerRef.current = null;
+    }
+    streamDeltaBufferRef.current = "";
+  }
   const [imageInfo, setImageInfo] = useState<ImageInfo | null>(null);
   const [fileError, setFileError] = useState("");
   const [folderResults, setFolderResults] = useState<FolderFileResult[]>([]);
@@ -265,7 +276,14 @@ export default function App() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen<ChatDeltaEvent>("ujani-chat-delta", (event) => {
-      setLocalStreamingText((current) => current + event.payload.delta);
+      streamDeltaBufferRef.current += event.payload.delta;
+      if (streamFlushTimerRef.current !== null) return;
+      streamFlushTimerRef.current = window.setTimeout(() => {
+        streamFlushTimerRef.current = null;
+        const pending = streamDeltaBufferRef.current;
+        streamDeltaBufferRef.current = "";
+        if (pending) setLocalStreamingText((current) => current + pending);
+      }, 100);
     }).then((stop) => {
       if (cancelled) stop();
       else unlisten = stop;
@@ -275,6 +293,7 @@ export default function App() {
     return () => {
       cancelled = true;
       unlisten?.();
+      resetLocalStreamBuffer();
     };
   }, []);
 
@@ -629,6 +648,7 @@ export default function App() {
     const userMessage = request.trim();
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
+    resetLocalStreamBuffer();
     setLocalStreamingText("");
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null);
@@ -640,7 +660,7 @@ export default function App() {
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
       setRequest("");
     } catch (error) { setOllamaError(String(error)); }
-    finally { setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
+    finally { resetLocalStreamBuffer(); setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
   }
 
   async function cancelLocalAi() {
