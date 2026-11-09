@@ -1,5 +1,3 @@
-#![cfg(not(feature = "pdf-worker-build"))]
-
 mod cloud_gateway;
 mod native_consent;
 // Peer identity commands are retained for the opt-in peer-preview build only.
