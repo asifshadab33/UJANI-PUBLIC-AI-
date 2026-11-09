@@ -25,7 +25,7 @@ export default function IntegrationDirectory() {
       <div><h2 id="integration-directory-title"><Globe2 size={18}/> Open application directory</h2><p>Use the applications you already prefer. UJANI does not require you to replace them.</p></div>
       <span className="muted">OPTIONAL LINKS</span>
     </div>
-    <p className="integration-notice">These links open the provider's website. They do not connect accounts, transfer UJANI content, or use a paid subscription through an API. Those capabilities require a separately supported and authorised integration.</p>
+    <p className="integration-notice">In browser preview, these links open the provider's website. Native desktop hand-off to the system browser is not yet validated and needs a restricted OS opener integration. These links do not connect accounts, transfer UJANI content, or use a paid subscription through an API.</p>
     {categories.map((category) => <div className="integration-category" key={category}>
       <h3>{category}</h3>
       <div className="integration-grid">
