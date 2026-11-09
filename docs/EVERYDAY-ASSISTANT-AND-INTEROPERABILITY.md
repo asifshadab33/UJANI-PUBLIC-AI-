@@ -50,7 +50,7 @@ Do not start, download, switch or run models automatically. Do not run multiple 
 ## Interoperability tiers
 
 ### Tier 1 — open and launch
-The first directory increment contains official provider website links only. Installed desktop-application launching requires a separate, allow-listed OS opener adapter and platform validation. Links must be clearly labelled as external. No account is connected and no UJANI content is transferred by merely opening a link.
+The first directory increment contains official provider website links only. Browser-preview links open in a new tab; native desktop hand-off to the system browser is not yet validated and must not be claimed until a restricted Tauri opener adapter is added and tested. Installed desktop-application launching requires a separate, allow-listed OS opener adapter and platform validation. Links must be clearly labelled as external. No account is connected and no UJANI content is transferred by merely opening a link.
 
 ### Tier 2 — user-directed hand-off
 Where safe and supported, prepare content in UJANI and let the user copy it, open a native share/file picker, or create a draft using a documented URI/API. Show exactly what will be handed off. Never silently read another application's private content.
