@@ -25,7 +25,7 @@ use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo
 use serde::Serialize;
 use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
 use tokio_util::sync::CancellationToken;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
 use sysinfo::System;
