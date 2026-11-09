@@ -1080,9 +1080,10 @@ export default function App() {
       </div>
       <div className="workspace" id="chat-workspace">
         <div className="task-panel">
-          <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a task, or continue in the local or online chat workspace below.</p></div><Zap size={20}/></div>
+          <div className="section-heading"><div><h2>What would you like to do?</h2><p>Choose an everyday writing shortcut or enter a task. Local AI runs only when you press the Ollama button.</p></div><Zap size={20}/></div>
+          <EverydayWritingActions onSelect={(prompt) => { setRequest(prompt); document.getElementById("task-request")?.scrollIntoView({ behavior: "smooth", block: "center" }); document.getElementById("task-request")?.focus(); }} />
           <textarea id="task-request" value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
-          <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
+          <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button><button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>Run with local Ollama</button></div>
           <div className="mode-panel">
             <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
             <label className="model-select">Execution mode
@@ -1102,7 +1103,6 @@ export default function App() {
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
           <div className="model-box" id="local-ai-workspace">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Local Ollama AI chat</h2><p>Real inference through the local Ollama service</p></div><span className="muted">LOOPBACK ONLY</span></div>
-            <EverydayWritingActions onSelect={(prompt) => { setRequest(prompt); document.getElementById("task-request")?.scrollIntoView({ behavior: "smooth", block: "center" }); document.getElementById("task-request")?.focus(); }} />
             <div className="ollama-status"><span className={ollamaStatus?.available ? "dot online" : "dot"}/><div><b>Ollama: {ollamaBusy ? "Checking local service…" : ollamaStatus === null ? "Not checked yet" : ollamaStatus.available ? "Connected locally" : "Not detected"}</b><small>{ollamaBusy ? "Checking 127.0.0.1:11434…" : ollamaStatus === null ? "UJANI checks the local service only when you open Local AI or choose Refresh." : ollamaStatus.available ? ollamaStatus.models.length + " local model(s) detected at 127.0.0.1:11434" : "Install Ollama and start its local service. No remote endpoint is used."}</small></div></div>
             <button className="model-run" onClick={refreshOllamaStatus} disabled={!isTauri() || ollamaBusy}>{ollamaBusy ? "Checking Ollama…" : "Refresh Ollama status"}</button>
             {(!ollamaStatus?.available || ollamaStatus.models.length === 0) && <div className="install-guide">
