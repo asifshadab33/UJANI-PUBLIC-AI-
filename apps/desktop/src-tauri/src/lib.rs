@@ -247,6 +247,8 @@ async fn execute_document_workflow(
  translation_language: Option<String>,
 ) -> Result<WorkflowExecutionResult, String> {
  let language = translation_language.as_deref().unwrap_or("");
+ let progress_app = app.clone();
+ let progress_task = task_id.clone();
  let receipt = local_receipt_context(
   "document.workflow",
   &model,
@@ -270,7 +272,10 @@ async fn execute_document_workflow(
    return Err(format!("Workflow preflight rejected execution: {}", plan.reason));
   }
   // Only the fixed validated sequence is executable; arbitrary graph data is never interpreted as code.
-  let result = LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await?;
+  let result = LocalTaskEngine::process_document(
+   file_name, content, mode, model, translation_language,
+   move |message, percent| emit_task_progress(&progress_app, &progress_task, "document_processing", message, percent),
+  ).await?;
   Ok(WorkflowExecutionResult { plan, result })
  }).await
 }
@@ -1189,13 +1194,18 @@ async fn process_selected_document(
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
     let language = translation_language.as_deref().unwrap_or("");
+    let progress_app = app.clone();
+    let progress_task = task_id.clone();
     let receipt = local_receipt_context(
         "document.summarize",
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
     )?;
     run_managed_task(app, &control, task_id, "Document pipeline", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
+        LocalTaskEngine::process_document(
+            file_name, content, mode, model, translation_language,
+            move |message, percent| emit_task_progress(&progress_app, &progress_task, "document_processing", message, percent),
+        )).await
 }
 
 const MAX_PDF_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
@@ -1457,13 +1467,18 @@ async fn process_selected_pdf(
     ).await?;
 
     let language = translation_language.as_deref().unwrap_or("");
+    let progress_app = app.clone();
+    let progress_task = task_id.clone();
     let receipt = local_receipt_context(
         "pdf.extract_and_summarize",
         &model,
         &[file_name.as_bytes(), data.as_slice(), mode.as_bytes(), language.as_bytes()],
     )?;
     run_managed_task_registered(app, task_id, "PDF extraction and summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language), registration).await
+        LocalTaskEngine::process_pdf(
+            file_name, data, mode, model, translation_language,
+            move |message, percent| emit_task_progress(&progress_app, &progress_task, "document_processing", message, percent),
+        ), registration).await
 }
 
 /// Translates user-provided text through the selected local Ollama model.
