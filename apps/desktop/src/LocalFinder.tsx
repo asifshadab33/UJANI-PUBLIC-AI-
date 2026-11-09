@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Search, FolderSearch, FileVideo, FileText, Trash2, RefreshCw, Clock3 } from "lucide-react";
 
-type SearchMatch = { path: string; file_name: string; extension: string; size_bytes: number; modified_unix_ms: number | null; matched_in: string[] };
+type SearchMatch = { path: string; file_name: string; extension: string; size_bytes: number; modified_unix_ms: number | null; matched_in: string[]; match_preview: string | null };
 type SearchResult = { cancelled: boolean; root_name: string | null; scanned_files: number; matches: SearchMatch[]; truncated: boolean; note: string; cache_hit: boolean };
 type CacheSettings = { enabled: boolean; retention_days: number; max_entries: number; max_bytes: number };
 type RecentSearch = { query: string; created_at: number };
@@ -143,7 +143,7 @@ export default function LocalFinder() {
       </div>}
     </div>
     {busy && <button className="model-run" type="button" onClick={cancelSearch} disabled={!taskId}>Cancel search</button>}
-    <small className="muted">UJANI opens a native folder picker. It does not scan the whole disk, upload files, move or delete anything. Search is bounded to 5,000 entries, six directory levels, 20 PDFs and 180 seconds. Scanned PDFs need OCR, which is not included.</small>
+    <small className="muted">UJANI opens a native folder picker. It does not scan the whole disk, upload files, move or delete anything. Search is bounded to 5,000 entries, six directory levels, 1,000 text-based PDFs (up to 512 MiB total) and 10 minutes. Scanned PDFs need OCR, which is not included.</small>
     {error && <p className="error" role="alert">{error}</p>}
     {result && !result.cancelled && <div className="result">
       <div className="result-title">Search results <span>{result.matches.length} matches · {result.scanned_files} files checked · {result.cache_hit ? "validated cache" : "fresh search"}</span></div>
@@ -154,6 +154,7 @@ export default function LocalFinder() {
         <b>{item.extension === "mp4" || item.extension === "mov" || item.extension === "mkv" ? <FileVideo size={14}/> : <FileText size={14}/>} {item.file_name}</b>
         <small>{item.path}</small>
         <small>{formatSize(item.size_bytes)} · {item.matched_in.join(", ")} · {item.modified_unix_ms ? new Date(item.modified_unix_ms).toLocaleString() : "Modified time unavailable"}</small>
+        {item.match_preview && <p className="muted search-match-preview">{item.match_preview}</p>}
       </div>) : <p>No matches found in the selected folder. Try a shorter phrase or another folder.</p>}
     </div>}
   </section>;
