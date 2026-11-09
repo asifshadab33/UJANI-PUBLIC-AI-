@@ -30,6 +30,8 @@ jobs:
         run: bash scripts/check-doc-claims.sh
       - name: Check native IPC command inventory parity
         run: python3 scripts/check_native_command_inventory.py
+      - name: Validate model/runtime inventory v1 schema
+        run: python3 scripts/validate_model_runtime_inventory_schema.py
       - name: Run workspace tests
         run: cargo test --workspace --locked
 
