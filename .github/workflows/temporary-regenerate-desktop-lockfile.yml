@@ -1,0 +1,28 @@
+name: Temporary desktop lockfile regeneration
+
+on:
+  push:
+    branches:
+      - security/upgrade-rusqlite-041
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      - name: Regenerate only the rusqlite dependency graph
+        working-directory: apps/desktop/src-tauri
+        run: cargo update -p rusqlite@0.31.0
+      - name: Verify the regenerated lockfile is consumable in locked mode
+        run: cargo metadata --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --format-version 1 > /dev/null
+      - name: Upload generated lockfile for reviewed commit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: regenerated-desktop-cargo-lock
+          path: apps/desktop/src-tauri/Cargo.lock
+          if-no-files-found: error
+          retention-days: 1
