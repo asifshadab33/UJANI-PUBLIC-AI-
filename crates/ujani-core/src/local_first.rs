@@ -11,17 +11,14 @@ const MAX_SEGMENTS: usize = 64;
 const MAX_ID_BYTES: usize = 64;
 const MAX_CAPABILITIES_PER_SEGMENT: usize = 32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalFirstPolicy {
     /// External assistance is never permitted.
     LocalOnly,
     /// Keep supported work local; external fallback is a proposal requiring approval.
+    #[default]
     LocalFirstWithApproval,
-}
-
-impl Default for LocalFirstPolicy {
-    fn default() -> Self { Self::LocalFirstWithApproval }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
