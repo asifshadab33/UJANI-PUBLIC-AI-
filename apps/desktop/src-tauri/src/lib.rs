@@ -419,27 +419,28 @@ async fn pull_ollama_model(
     if !ollama::valid_pull_model(&model) {
         return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2.".into());
     }
-    let (approval_tx, approval_rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .message(format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry."))
-        .title("Approve model download")
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::YesNo)
-        .show(move |approved| { let _ = approval_tx.send(approved); });
-    let approved = approval_rx.await.unwrap_or(false);
-    if !approved {
-        return Err("Model download was not approved. No download was started.".into());
-    }
-    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier.".into());
-    }
+    resource_runtime::validate_task_id(&task_id)?;
+    // Register before the native consent prompt so cancellation works while
+    // approval is pending. The helper also applies a bounded dialog timeout.
     let token = CancellationToken::new();
     {
         let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+        if active.contains_key(&task_id) {
+            return Err("Task identifier is already active.".into());
+        }
         active.insert(task_id.clone(), token.clone());
     }
     let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let approved = native_consent::confirm_native(
+        &app,
+        "Approve model download",
+        format!("Download {model} from the internet via the local Ollama service?\\n\\nOllama will contact its model registry. This download may use network bandwidth and local disk space. No download starts unless you approve."),
+        token.clone(),
+        Duration::from_secs(120),
+    ).await;
+    if !approved {
+        return Err("Model download consent was declined, cancelled or timed out. No download was started.".into());
+    }
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
