@@ -6,6 +6,7 @@ on:
       - security/upgrade-rusqlite-041
     paths:
       - apps/desktop/src-tauri/Cargo.toml
+      - apps/desktop/src-tauri/src/lib.rs
       - .github/workflows/one-shot-rusqlite-lock.yml
 
 permissions:
