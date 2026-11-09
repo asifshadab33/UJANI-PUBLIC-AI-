@@ -5370,7 +5370,7 @@ name = "ujani-desktop"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "base64 0.22.1",
+ "base64 0.23.1",
  "ed25519-dalek",
  "keyring",
  "libc",
