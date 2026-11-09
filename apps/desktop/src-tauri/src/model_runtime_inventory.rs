@@ -101,7 +101,7 @@ pub async fn collect() -> Result<ModelRuntimeInventory, String> {
     system.refresh_memory();
 
     let cores = u16::try_from(system.cpus().len()).ok().filter(|count| *count > 0);
-    let memory_total_mb = Some(system.total_memory() / (1024 * 1024));
+    let memory_total_mb = Some(system.total_memory() / (1024 * 1024)).filter(|value| *value > 0);
     let memory_available_mb = Some(system.available_memory() / (1024 * 1024));
 
     // Ollama's adapter is hard-coded to 127.0.0.1 and disables proxies/redirects.
