@@ -134,6 +134,9 @@ pub async fn process_selected_folder(
                         mode.clone(),
                         model.clone(),
                         None,
+                        // Folder import reports its own per-file result; the document
+                        // pipeline progress callback is intentionally unused here.
+                        |_, _| {},
                     )
                     .await
                     {
