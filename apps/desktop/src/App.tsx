@@ -556,11 +556,16 @@ export default function App() {
     try {
       const status = await invoke<OllamaStatus>("get_ollama_status");
       setOllamaStatus(status);
-      if (modelSelectionMode === "manual" && ollamaModel
-        && !status.models.some((model) => model.name === ollamaModel)) {
+      const selectedModelStillInstalled = status.available
+        && status.models.some((model) => model.name === ollamaModel);
+      if (modelSelectionMode === "manual" && ollamaModel && !selectedModelStillInstalled) {
         // A removed model invalidates the manual preference; return to automatic selection.
         setModelSelectionMode("auto");
         setOllamaModel("");
+      } else if (modelSelectionMode === "auto" && ollamaModel && !selectedModelStillInstalled) {
+        // Never leave a stale automatic choice selected after runtime/model discovery changes.
+        setOllamaModel("");
+        setModelRecommendation(null);
       }
       if (!status.available) {
         setOllamaError("Ollama is not responding at 127.0.0.1:11434. Start the local Ollama application and retry.");
