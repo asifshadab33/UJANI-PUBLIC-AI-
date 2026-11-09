@@ -1065,7 +1065,7 @@ async fn execute_local_ai_task(
     if !installed_models.iter().any(|installed| installed.name == model) {
         return Err("The selected model is not installed in the local Ollama runtime. Choose an installed model or download it explicitly; UJANI will not silently send this task to the cloud.".into());
     }
-    emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 1);
+    emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 3);
     let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
