@@ -16,6 +16,16 @@ UJANI Public AI decomposes requests into bounded, registered operations or conte
 
 A plan is not an execution grant. NeedsExternalApproval never triggers a request by itself. No content is transferred by the core planner.
 
+## No fixed local/external allocation ratio
+
+UJANI does not target a fixed percentage split such as 50:50. Placement is decided independently for each bounded operation or content segment. The amount handled locally versus proposed for external assistance can therefore vary from task to task and from one segment to another.
+
+The planner and orchestrator should prefer local execution when the device has the required capability and safe resource headroom. For each segment, selection considers (in order): data classification and user policy; capability fit and output quality; local model/runtime readiness; available memory, compute and thermal/power headroom; latency and reliability; and only then the value of a configured external provider. A remote provider is not selected merely because it is larger or faster.
+
+Keep deterministic OS-native work on-device. If only one subtask lacks a local capability, isolate that subtask rather than exporting the full request or source document. External assistance is a proposal, never an automatic fallback: show the exact provider, model, purpose and content scope, obtain task-specific approval, and record the decision and result provenance. If approval is absent, continue locally where possible and clearly report unsupported work.
+
+These are placement principles, not a promise that all tasks can currently be partitioned or dispatched. The core planner currently plans capability-based segments; production orchestration, selective dispatch, consent UI and end-to-end receipts remain separate integration requirements.
+
 ## Automatic model selection
 
 Automatic selection is the default. Rank only models discovered from trusted, explicitly configured runtimes that are healthy, available, compatible with task modalities/capabilities, within conservative memory/context/resource limits, and permitted by execution policy and data classification. Prefer a suitable local model over any remote provider. Do not assume the largest model is best. If no local candidate qualifies, explain the missing capability and propose only a narrowly scoped external subtask when a configured provider can perform it.
