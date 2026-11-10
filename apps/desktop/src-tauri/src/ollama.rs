@@ -172,10 +172,14 @@ pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
         .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
     let list: ModelList = parse_limited(response).await?;
     if list.models.len() > MAX_INSTALLED_MODELS {
-        return Err(format!("Local Ollama reports more than the {MAX_INSTALLED_MODELS}-model inventory limit."));
+        return Err(format!(
+            "Local Ollama reports more than the {MAX_INSTALLED_MODELS}-model inventory limit."
+        ));
     }
     if list.models.iter().any(|model| !valid_model(&model.name)) {
-        return Err("Local Ollama returned a model identifier outside the supported safe format.".into());
+        return Err(
+            "Local Ollama returned a model identifier outside the supported safe format.".into(),
+        );
     }
     Ok(list.models)
 }
@@ -189,7 +193,12 @@ pub async fn runtime_version() -> Result<String, String> {
         .map_err(|error| format!("Could not read local Ollama version: {error}"))?;
     let version: VersionResponse = parse_limited(response).await?;
     let version = version.version.trim();
-    if version.is_empty() || version.len() > 64 || !version.chars().all(|c| c.is_ascii_alphanumeric() || ".-_+".contains(c)) {
+    if version.is_empty()
+        || version.len() > 64
+        || !version
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".-_+".contains(c))
+    {
         return Err("Local Ollama returned an invalid version identifier.".into());
     }
     Ok(version.to_string())
