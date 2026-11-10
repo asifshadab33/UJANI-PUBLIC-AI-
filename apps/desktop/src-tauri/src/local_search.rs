@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
 const MAX_MATCHES: usize = 250;
-const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
+const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
 const MAX_PDF_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
@@ -321,7 +321,7 @@ pub async fn find_local_files(
         cache_hit: false,
         note: {
             let base = if search_pdf_text {
-                "Read-only search. Text files are limited to 2 MiB each and 256 MiB total; directory traversal is limited to 5,000 entries, depth 6 and 30 seconds. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. PDF inspection is limited to 20 files, 128 MiB aggregate input (10 MiB per PDF), and a 10-minute search deadline."
+                "Read-only search. Text files are limited to 256 KiB each and 10 MiB total; directory traversal is limited to 5,000 entries and depth 6. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. PDF inspection is limited to 20 files, 128 MiB aggregate input (10 MiB per PDF), and a 10-minute search deadline."
             } else {
                 "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included."
             };
@@ -525,6 +525,12 @@ mod tests {
         assert!(preview.ends_with("…"));
         assert!(preview.len() < 400);
         assert!(match_preview_for("nothing relevant here", "acme-holdings-xyz").is_none());
+    }
+
+    #[test]
+    fn large_corpus_text_limits_preserve_main_branch_resource_bounds() {
+        assert_eq!(MAX_TEXT_FILE_BYTES, 256 * 1024);
+        assert_eq!(MAX_TEXT_TOTAL_BYTES, 10 * 1024 * 1024);
     }
 
     #[test]
