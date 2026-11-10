@@ -29,7 +29,16 @@ use tauri::{AppHandle, Emitter, State};
 
 use tokio_util::sync::CancellationToken;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
-use sysinfo::System;
+use sysinfo::{CpuRefreshKind, System};
+
+/// Read only CPU and memory telemetry; avoid scanning unrelated processes or devices.
+fn system_snapshot() -> Result<System, String> {
+    let mut system = System::new()
+        .map_err(|error| format!("System information unavailable: {error}"))?;
+    system.refresh_cpu_list(CpuRefreshKind::nothing());
+    system.refresh_memory();
+    Ok(system)
+}
 use ujani_core::{FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, registered_operations, CapabilityRecord, CapabilityState, OperationDescriptor, TaskPlan};
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
@@ -116,9 +125,7 @@ fn pdf_worker_network_isolation_state() -> CapabilityState {
 /// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
-    let mut system = System::new().unwrap_or_default();
-    system.refresh_cpu();
-    system.refresh_memory();
+    let system = system_snapshot()?;
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
     let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
@@ -266,8 +273,7 @@ fn chat_capable_model_sizes(
 /// Advisory fit estimate over installed models whose local runtime explicitly reports chat support.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
-    let mut system = System::new().unwrap_or_default();
-    system.refresh_memory();
+    let system = system_snapshot()?;
     let available_memory_mb = system.available_memory() / (1024 * 1024);
     let models = if ollama::is_available().await {
         let installed = ollama::list_models().await?;
@@ -577,9 +583,7 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         (None, None)
     };
 
-    let mut system = System::new().unwrap_or_default();
-    system.refresh_cpu();
-    system.refresh_memory();
+    let system = system_snapshot()?;
     let cpu_logical_cores = std::thread::available_parallelism()
         .ok()
         .map(|count| count.get().min(65_535) as u32)
@@ -600,8 +604,8 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         metadata: &metadata,
         runtime_available: available,
         runtime_version,
-        os_name: System::name().ok().flatten().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        os_version: System::os_version().ok().flatten(),
+        os_name: System::name().ok().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os_version: System::os_version().ok(),
         architecture: std::env::consts::ARCH.to_string(),
         cpu_logical_cores,
         memory_total_mb,
@@ -1642,15 +1646,13 @@ struct RunResult {
 
 #[tauri::command]
 fn get_device_info() -> DeviceInfo {
-    let mut system = System::new().unwrap_or_default();
-    system.refresh_cpu();
-    system.refresh_memory();
+    let system = system_snapshot().ok();
     DeviceInfo {
-        os: System::name().ok().flatten().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os: System::name().ok().unwrap_or_else(|| std::env::consts::OS.to_string()),
         architecture: std::env::consts::ARCH.to_string(),
-        logical_cpus: system.cpus().len(),
-        total_memory_mb: system.total_memory() / (1024 * 1024),
-        available_memory_mb: system.available_memory() / (1024 * 1024),
+        logical_cpus: system.as_ref().map_or(0, |system| system.cpus().len()),
+        total_memory_mb: system.as_ref().map_or(0, |system| system.total_memory() / (1024 * 1024)),
+        available_memory_mb: system.as_ref().map_or(0, |system| system.available_memory() / (1024 * 1024)),
         system_locale: sys_locale::get_locale().unwrap_or_else(|| "Unknown".into()),
     }
 }
@@ -1658,17 +1660,17 @@ fn get_device_info() -> DeviceInfo {
 /// Returns only models registered by the application. No model files are scanned.
 #[tauri::command]
 fn list_local_models() -> Vec<ModelInfo> {
-    let mut system = System::new().unwrap_or_default();
-    system.refresh_cpu();
-    discover_models(!system.cpus().is_empty())
+    let cpu_available = system_snapshot()
+        .map(|system| !system.cpus().is_empty())
+        .unwrap_or(false);
+    discover_models(cpu_available)
 }
 
 /// Runs an explicitly selected local adapter. No network or cloud fallback exists.
 #[tauri::command]
 fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
     let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
-    let mut system = System::new().unwrap_or_default();
-    system.refresh_cpu();
+    let system = system_snapshot()?;
     run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
 }
 
