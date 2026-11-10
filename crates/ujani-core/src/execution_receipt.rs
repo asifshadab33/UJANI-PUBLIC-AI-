@@ -138,7 +138,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Validate structural provenance before a trusted adapter persists a receipt.
 pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> {
-    if !matches!(receipt.schema_version, 1 | 2 | 3) {
+    if !matches!(receipt.schema_version, 1..=3) {
         return Err(ReceiptError::UnsupportedSchema);
     }
     if receipt.schema_version == 3 && receipt.outcome.is_none() {
