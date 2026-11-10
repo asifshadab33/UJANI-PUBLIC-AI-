@@ -24,7 +24,24 @@ type RunResult = { operation: string; output: string; execution: string };
 type ModelInfo = { id: string; name: string; provider: string; available: boolean; is_mock: boolean; required_capabilities: string[]; status: string };
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
 type RouteDecision = { mode: string; action: string; allowed: boolean; external_data_transfer_permitted: boolean; collaboration_rounds: number; reason: string; enforcement_boundary_required: boolean };
-type OllamaStatus = { available: boolean; models: { name: string; size: number }[] };
+type InventoryEvidence = { source: string; confidence: string; observed_at_unix_ms: number | null };
+type InventoryModel = { model_ref: string; display_name: string; family: string | null; version: string | null; context_length_tokens: number | null; capabilities: string[]; evidence: InventoryEvidence };
+type ModelRuntimeInventory = {
+  schema_version: number;
+  generated_at_unix_ms: number;
+  platform: { os: string; os_version: string | null; architecture: string };
+  hardware: {
+    cpu_logical_cores: number | null;
+    memory_total_mb: number | null;
+    memory_available_mb: number | null;
+    storage_free_mb: number | null;
+    accelerators: { kind: string; vendor: string | null; device_family: string | null; memory_mb: number | null; runtime_api: string | null; evidence: InventoryEvidence }[];
+  };
+  runtimes: { runtime_id: string; provider: string; version: string | null; availability: string; network_scope: string; evidence: InventoryEvidence }[];
+  models: InventoryModel[];
+  privacy: { contains_prompts: boolean; contains_user_files: boolean; contains_local_paths: boolean; contains_credentials: boolean };
+};
+type OllamaStatus = { available: boolean; models: { name: string; size: number }[]; inventory: ModelRuntimeInventory; recommendation: ModelRecommendation };
 type AiTaskResult = { mode_used: string; execution_location: string; model: string; output: string };
 type DocumentPipelineResult = { analysis: FileAnalysis; summary: string; translated_summary: string | null; translation_language: string | null; source_text_bytes: number; chunks_processed: number; total_chunks: number; execution_location: string; model: string };
 type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; content_preview: string; word_count: number; line_count: number; top_keywords: string[] };
@@ -198,6 +215,8 @@ export default function App() {
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
   const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
+  const selectedInventoryModel = ollamaStatus?.inventory.models.find((model) => model.model_ref === ollamaModel);
+  const inventoryRuntime = ollamaStatus?.inventory.runtimes.find((runtime) => runtime.runtime_id === "ollama.local");
 
   // Persist only the user's model-selection preference; never store prompts, files or credentials.
   useEffect(() => {
@@ -211,29 +230,18 @@ export default function App() {
     }
   }, [modelSelectionMode, ollamaModel]);
 
-  // Automatic mode selects only an installed Ollama model with a conservative RAM fit estimate.
-  // The estimate is advisory and does not imply GPU/NPU or model-quality benchmarking.
+  // Automatic mode uses the native inventory result: a model must have runtime-reported
+  // chat capability and fit the conservative RAM estimate. Unknown capabilities are not
+  // silently treated as chat-capable; the user can still make an explicit manual choice.
   useEffect(() => {
-    if (modelSelectionMode !== "auto" || !isTauri() || !ollamaStatus?.available || !ollamaStatus.models.length) return;
-    let active = true;
-    setRecommendationBusy(true);
-    void invoke<ModelRecommendation>("get_model_recommendation")
-      .then((recommendation) => {
-        if (!active) return;
-        setModelRecommendation(recommendation);
-        setRecommendationError("");
-        const recommended = recommendation.recommended_model;
-        setOllamaModel(recommended && ollamaStatus.models.some((model) => model.name === recommended)
-          ? recommended
-          : "");
-      })
-      .catch((error) => {
-        if (active) setRecommendationError(String(error));
-      })
-      .finally(() => {
-        if (active) setRecommendationBusy(false);
-      });
-    return () => { active = false; };
+    if (modelSelectionMode !== "auto" || !isTauri() || !ollamaStatus?.available) return;
+    const recommendation = ollamaStatus.recommendation;
+    setModelRecommendation(recommendation);
+    setRecommendationError("");
+    const recommended = recommendation.recommended_model;
+    setOllamaModel(recommended && ollamaStatus.models.some((model) => model.name === recommended)
+      ? recommended
+      : "");
   }, [modelSelectionMode, ollamaStatus]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
@@ -556,6 +564,8 @@ export default function App() {
     try {
       const status = await invoke<OllamaStatus>("get_ollama_status");
       setOllamaStatus(status);
+      setModelRecommendation(status.recommendation);
+      setRecommendationError("");
       const selectedModelStillInstalled = status.available
         && status.models.some((model) => model.name === ollamaModel);
       if (modelSelectionMode === "manual" && ollamaModel && !selectedModelStillInstalled) {
@@ -1207,17 +1217,27 @@ export default function App() {
                 }}
                 disabled={!ollamaStatus?.models.length}
               >
-                <option value="__automatic__">Automatic — best estimated local fit</option>
+                <option value="__automatic__">Automatic — reported chat capability + RAM fit</option>
                 {ollamaStatus?.models.map((model) => <option key={model.name} value={model.name}>{model.name}</option>)}
               </select>
             </label>
             <small className="muted">
               {modelSelectionMode === "auto"
                 ? (ollamaModel
-                  ? `Automatic choice: ${ollamaModel}. Uses an advisory RAM-fit estimate; it does not benchmark model quality or guarantee runtime fit.`
-                  : "No installed model currently meets the advisory RAM-fit estimate. Choose a model manually or install one explicitly.")
+                  ? `Automatic choice: ${ollamaModel}. Ollama reported chat support and the model fits an advisory RAM estimate; this is not a quality benchmark or runtime guarantee.`
+                  : "No installed model currently has runtime-reported chat support plus an advisory RAM fit. Choose manually if you trust the model; unreported capabilities are not assumed.")
                 : `Manual choice: ${ollamaModel}. This preference is saved on this device.`}
             </small>
+            {ollamaStatus?.inventory && <div className="install-guide">
+              <b>Device and local model evidence</b>
+              <p>Inventory v{ollamaStatus.inventory.schema_version} · Read-only discovery · Generated {new Date(ollamaStatus.inventory.generated_at_unix_ms).toLocaleTimeString()}</p>
+              <p>Device: {ollamaStatus.inventory.platform.os}{ollamaStatus.inventory.platform.os_version ? ` ${ollamaStatus.inventory.platform.os_version}` : ""} · {ollamaStatus.inventory.platform.architecture} · {ollamaStatus.inventory.hardware.cpu_logical_cores ?? "Unknown"} logical CPU cores · RAM {ollamaStatus.inventory.hardware.memory_total_mb?.toLocaleString() ?? "Unknown"} MiB total / {ollamaStatus.inventory.hardware.memory_available_mb?.toLocaleString() ?? "Unknown"} MiB available</p>
+              <p>Runtime: {inventoryRuntime ? `${inventoryRuntime.provider} ${inventoryRuntime.version || "(version unknown)"} · ${inventoryRuntime.availability} · ${inventoryRuntime.network_scope}` : "Ollama not detected"}</p>
+              <p>Storage free: {ollamaStatus.inventory.hardware.storage_free_mb === null ? "Unknown (not measured)" : `${ollamaStatus.inventory.hardware.storage_free_mb.toLocaleString()} MiB`}</p>
+              {ollamaStatus.inventory.hardware.accelerators.map((accelerator) => <p key={accelerator.kind}>{accelerator.kind.toUpperCase()}: {accelerator.evidence.confidence === "reported" ? "Ollama reported active GPU model use; total device VRAM is not known" : "Unknown — no supported evidence confirms availability"}</p>)}
+              {selectedInventoryModel ? <p>Selected model: {selectedInventoryModel.display_name} · Family {selectedInventoryModel.family || "unknown"} · Context {selectedInventoryModel.context_length_tokens?.toLocaleString() || "unknown"} tokens · Reported capabilities: {selectedInventoryModel.capabilities.join(", ")} · Evidence: {selectedInventoryModel.evidence.source}/{selectedInventoryModel.evidence.confidence}</p> : <p>Selected model metadata: not available until a model is selected and inspected.</p>}
+              <p>Runtime metadata inspected for {ollamaStatus.inventory.models.filter((model) => model.evidence.source === "runtime_metadata").length} of {ollamaStatus.inventory.models.length} installed models. Reasoning, coding and language quality are not inferred from model names; unknown remains unknown. Inventory contains no prompts, user files, local paths or credentials.</p>
+            </div>}
             <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
             {aiBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Local task running…"}</p><button className="model-run" onClick={cancelLocalAi}>Cancel current task</button></>}
             {ollamaError && <p className="error" role="alert">{ollamaError}</p>}
