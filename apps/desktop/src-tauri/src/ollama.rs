@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn pull_progress_text_is_bounded_and_strips_control_characters() {
-        assert_eq!(bounded_progress_text("Downloading\\nmodel\\u{0007}", 64), "Downloadingmodel");
+        assert_eq!(bounded_progress_text("Downloading\nmodel\u{0007}", 64), "Downloadingmodel");
         assert_eq!(bounded_progress_text("abcdef", 3), "abc");
         assert_eq!(bounded_progress_text("م".repeat(8).as_str(), 2), "م");
     }
