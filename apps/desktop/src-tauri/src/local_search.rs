@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
 const MAX_MATCHES: usize = 250;
-const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
-const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
 const MAX_PDF_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
@@ -69,6 +69,12 @@ fn search_result_is_cacheable(truncated: bool, incomplete: bool) -> bool {
 }
 
 /// Keeps large-corpus PDF inspection bounded by per-file, count, and aggregate input limits.
+/// Keeps text inspection bounded by per-file and aggregate bytes before opening a candidate.
+fn text_candidate_within_limits(size: u64, total_bytes: u64) -> bool {
+    size <= MAX_TEXT_FILE_BYTES
+        && total_bytes.saturating_add(size) <= MAX_TEXT_TOTAL_BYTES
+}
+
 fn pdf_candidate_within_limits(size: u64, count: usize, total_bytes: u64) -> bool {
     size <= MAX_PDF_BYTES
         && count < MAX_PDF_FILES
@@ -246,8 +252,7 @@ pub async fn find_local_files(
         let is_text = matches!(candidate.extension.as_str(),
             "txt" | "md" | "csv" | "log" | "json" | "xml" | "html" | "htm" | "rtf");
         if matched_in.is_empty() && is_text {
-            if candidate.size > MAX_TEXT_FILE_BYTES
-                || text_bytes.saturating_add(candidate.size) > MAX_TEXT_TOTAL_BYTES {
+            if !text_candidate_within_limits(candidate.size, text_bytes) {
                 incomplete = true;
             } else {
                 let read_path = candidate.path.clone();
@@ -336,7 +341,7 @@ pub async fn find_local_files(
         cache_hit: false,
         note: {
             let base = if search_pdf_text {
-                "Read-only search. Text files are limited to 256 KiB each and 10 MiB total; directory traversal is limited to 5,000 entries and depth 6. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. PDF inspection is limited to 20 files, 128 MiB aggregate input (10 MiB per PDF), and a 10-minute search deadline."
+                "Read-only search. Text files are limited to 2 MiB each and 256 MiB total; directory traversal is limited to 5,000 entries and depth 6. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. PDF inspection is limited to 20 files, 128 MiB aggregate input (10 MiB per PDF), and a 10-minute search deadline."
             } else {
                 "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included."
             };
@@ -529,6 +534,16 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+
+    #[test]
+    fn text_search_limits_match_the_documented_large_corpus_budget() {
+        assert_eq!(MAX_TEXT_FILE_BYTES, 2 * 1024 * 1024);
+        assert_eq!(MAX_TEXT_TOTAL_BYTES, 256 * 1024 * 1024);
+        assert!(text_candidate_within_limits(MAX_TEXT_FILE_BYTES, 0));
+        assert!(!text_candidate_within_limits(MAX_TEXT_FILE_BYTES + 1, 0));
+        assert!(text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES - 1));
+        assert!(!text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES));
+    }
 
     #[test]
     fn match_preview_returns_a_bounded_excerpt_for_rare_exact_terms() {
