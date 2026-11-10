@@ -206,8 +206,20 @@ pub async fn find_local_files(
     let mut incomplete = false;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
 
-    for candidate in candidates {
+    let candidate_total = candidates.len().max(1);
+    for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+        if candidate_index % 25 == 0 {
+            let completed = candidate_index + 1;
+            let progress = 10 + (completed.saturating_mul(85) / candidate_total).min(85) as u8;
+            super::emit_task_progress(
+                &app,
+                &task_id,
+                "searching",
+                &format!("Searching local files ({completed}/{candidate_total})."),
+                progress,
+            );
+        }
         if tokio::time::Instant::now() >= deadline { truncated = true; break; }
         if matches.len() >= MAX_MATCHES { truncated = true; break; }
         let mut matched_in = Vec::new();
