@@ -1,10 +1,6 @@
 //! Bounded, read-only large-file discovery scoped to a user-selected folder.
 use serde::Serialize;
-use std::{
-    fs,
-    path::Path,
-    time::{Duration, Instant, UNIX_EPOCH},
-};
+use std::{path::Path, time::Duration};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
@@ -109,146 +105,57 @@ fn scan_large_files(
     min_size_bytes: u64,
     token: &CancellationToken,
 ) -> Result<LargeFileScanResult, String> {
-    let root_meta = fs::symlink_metadata(folder).map_err(|error| format!("Cannot inspect folder: {error}"))?;
-    if is_link_or_reparse(&root_meta) || !root_meta.is_dir() {
-        return Err("Choose a real folder, not a symbolic link.".into());
-    }
-    let root = fs::canonicalize(folder).map_err(|error| format!("Cannot resolve folder: {error}"))?;
-    let root_name = root.file_name().map(|name| name.to_string_lossy().into_owned())
+    let walked = crate::safe_fs::walk_directory(
+        folder,
+        crate::safe_fs::WalkOptions {
+            max_depth: MAX_DEPTH,
+            max_entries: MAX_ENTRIES,
+            recursive: true,
+            links: crate::safe_fs::LinkPolicy::Skip,
+            errors: crate::safe_fs::WalkErrorPolicy::SkipAndMarkTruncated,
+            file_filter: None,
+            max_duration: Some(Duration::from_secs(SCAN_TIMEOUT_SECS)),
+        },
+        token,
+    ).map_err(|error| {
+        if error.contains("cancelled") {
+            "Large-file scan cancelled by user.".to_string()
+        } else {
+            format!("Cannot scan selected folder: {error}")
+        }
+    })?;
+
+    let root_name = walked.root.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Selected folder".into());
-    let started = Instant::now();
-    let mut stack = vec![(root.clone(), 0usize)];
-    let mut scanned_files = 0usize;
-    let mut entries_seen = 0usize;
-    let mut truncated = false;
-    let mut large_files = Vec::new();
-
-    while let Some((directory, depth)) = stack.pop() {
-        if token.is_cancelled() {
-            return Err("Large-file scan cancelled by user.".into());
-        }
-        if started.elapsed() >= Duration::from_secs(SCAN_TIMEOUT_SECS) {
-            truncated = true;
-            break;
-        }
-        if depth > MAX_DEPTH {
-            truncated = true;
-            continue;
-        }
-        let metadata = match fs::symlink_metadata(&directory) {
-            Ok(value) => value,
-            Err(_) => { truncated = true; continue; }
-        };
-        if is_link_or_reparse(&metadata) || !metadata.is_dir() {
-            continue;
-        }
-        let canonical = match fs::canonicalize(&directory) {
-            Ok(path) if path.starts_with(&root) => path,
-            _ => { truncated = true; continue; }
-        };
-        let entries = match fs::read_dir(&canonical) {
-            Ok(value) => value,
-            Err(error) if depth == 0 => return Err(format!("Cannot read selected folder: {error}")),
-            Err(_) => { truncated = true; continue; }
-        };
-
-        for entry in entries {
-            if token.is_cancelled() {
-                return Err("Large-file scan cancelled by user.".into());
-            }
-            if started.elapsed() >= Duration::from_secs(SCAN_TIMEOUT_SECS) {
-                truncated = true;
-                break;
-            }
-            let entry = match entry {
-                Ok(value) => value,
-                Err(_) => { truncated = true; continue; }
-            };
-            entries_seen += 1;
-            if entries_seen > MAX_ENTRIES {
-                truncated = true;
-                break;
-            }
-            let entry_metadata = match fs::symlink_metadata(entry.path()) {
-                Ok(value) => value,
-                Err(_) => { truncated = true; continue; }
-            };
-            // Never traverse symlinks, Windows reparse points, or other special entries.
-            if is_link_or_reparse(&entry_metadata) {
-                continue;
-            }
-            if entry_metadata.is_dir() {
-                if depth < MAX_DEPTH {
-                    stack.push((entry.path(), depth + 1));
-                } else {
-                    truncated = true;
-                }
-                continue;
-            }
-            if !entry_metadata.is_file() {
-                continue;
-            }
-            scanned_files += 1;
-            let path = match fs::canonicalize(entry.path()) {
-                Ok(value) if value.starts_with(&root) => value,
-                _ => { truncated = true; continue; }
-            };
-            let metadata = match fs::symlink_metadata(&path) {
-                Ok(value) if value.is_file() && !is_link_or_reparse(&value) => value,
-                _ => { truncated = true; continue; }
-            };
-            if metadata.len() < min_size_bytes {
-                continue;
-            }
-            let modified_unix_ms = metadata.modified().ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
-            large_files.push(LargeFileEntry {
-                file_name: entry.file_name().to_string_lossy().into_owned(),
-                path: path.display().to_string(),
-                size_bytes: metadata.len(),
-                modified_unix_ms,
-            });
-        }
-        if entries_seen > MAX_ENTRIES || started.elapsed() >= Duration::from_secs(SCAN_TIMEOUT_SECS) {
-            break;
-        }
-    }
-
+    let mut large_files = walked.files.into_iter()
+        .filter(|entry| entry.size_bytes >= min_size_bytes)
+        .map(|entry| LargeFileEntry {
+            file_name: entry.name.to_string_lossy().into_owned(),
+            path: entry.path.display().to_string(),
+            size_bytes: entry.size_bytes,
+            modified_unix_ms: entry.modified_unix_ms,
+        })
+        .collect::<Vec<_>>();
     large_files.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes).then_with(|| a.path.cmp(&b.path)));
+    let mut truncated = walked.truncated;
     if large_files.len() > MAX_RESULTS {
         large_files.truncate(MAX_RESULTS);
         truncated = true;
     }
     Ok(LargeFileScanResult {
         root_name,
-        scanned_files,
+        scanned_files: walked.files_examined,
         large_files,
         truncated,
-        note: "Metadata-only, read-only preview. File contents were not opened and no files were changed.".into(),
+        note: "Metadata-only, read-only preview. File contents were not read and no files were changed.".into(),
     })
-}
-
-fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
     fn temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
