@@ -33,7 +33,9 @@ jobs:
           set -euo pipefail
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -x "$SDKMANAGER"
+          set +o pipefail
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null
+          set -o pipefail
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
