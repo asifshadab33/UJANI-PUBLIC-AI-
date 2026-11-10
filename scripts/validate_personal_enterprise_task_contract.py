@@ -139,6 +139,16 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     samples = _sample_messages()
     valid_fixtures = list(samples.items())
 
+    # Every active state must be valid only when all three authorities have approved.
+    approved_status = copy.deepcopy(samples["task_status"])
+    approved_status["state"] = "running"
+    approved_status["consent_state"]["organisation_admin"] = "approved"
+    approved_status["consent_state"]["worker_device_owner"] = "approved"
+    for state in ("queued", "reserved", "running", "completed"):
+        approved_state = copy.deepcopy(approved_status)
+        approved_state["state"] = state
+        valid_fixtures.append((f"{state} status with dual approval", approved_state))
+
     approved_terminal = copy.deepcopy(samples["task_status"])
     approved_terminal["state"] = "failed"
     approved_terminal["reason_code"] = "internal_error"
@@ -148,6 +158,11 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     allowlisted_envelope["network_access"] = "allowlisted"
     allowlisted_envelope["network_destinations"] = ["models.example.com"]
     valid_fixtures.append(("allowlisted DNS destination", allowlisted_envelope))
+
+    single_label_envelope = copy.deepcopy(samples["task_envelope"])
+    single_label_envelope["network_access"] = "allowlisted"
+    single_label_envelope["network_destinations"] = ["models"]
+    valid_fixtures.append(("single-label DNS destination", single_label_envelope))
 
     receipt_with_output = copy.deepcopy(samples["execution_receipt"])
     receipt_with_output["output_sha256"] = ZERO_SHA256
@@ -177,18 +192,33 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     missing_owner_approval["consent"]["required_approvals"] = ["organisation_admin"]
     invalid.append(("missing worker-owner approval", missing_owner_approval))
 
-    pending_admin = copy.deepcopy(samples["task_status"])
-    pending_admin["state"] = "running"
+    pending_admin = copy.deepcopy(approved_status)
+    pending_admin["consent_state"]["organisation_admin"] = "pending"
     invalid.append(("running before administrator approval", pending_admin))
 
-    revoked_user = copy.deepcopy(samples["task_status"])
-    revoked_user["state"] = "running"
+    denied_admin = copy.deepcopy(approved_status)
+    denied_admin["consent_state"]["organisation_admin"] = "denied"
+    invalid.append(("running after administrator denial", denied_admin))
+
+    revoked_admin = copy.deepcopy(approved_status)
+    revoked_admin["consent_state"]["organisation_admin"] = "revoked"
+    invalid.append(("running after administrator revocation", revoked_admin))
+
+    revoked_user = copy.deepcopy(approved_status)
     revoked_user["consent_state"]["user"] = "revoked"
     invalid.append(("running after user consent revocation", revoked_user))
 
-    pending_owner = copy.deepcopy(samples["task_status"])
-    pending_owner["state"] = "running"
+    pending_owner = copy.deepcopy(approved_status)
+    pending_owner["consent_state"]["worker_device_owner"] = "pending"
     invalid.append(("running before worker-owner approval", pending_owner))
+
+    denied_owner = copy.deepcopy(approved_status)
+    denied_owner["consent_state"]["worker_device_owner"] = "denied"
+    invalid.append(("running after worker-owner denial", denied_owner))
+
+    revoked_owner = copy.deepcopy(approved_status)
+    revoked_owner["consent_state"]["worker_device_owner"] = "revoked"
+    invalid.append(("running after worker-owner revocation", revoked_owner))
 
     missing_terminal_reason = copy.deepcopy(samples["task_status"])
     missing_terminal_reason["state"] = "failed"
@@ -206,8 +236,11 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     digest_without_output["output_sha256"] = ZERO_SHA256
     invalid.append(("digest without output bytes", digest_without_output))
 
-    for hostname in ("Example.com", ".", "..", "a..b", "-bad.example", "bad-.example",
-                     "example.com.", "127.0.0.1", "example.com:443"):
+    for hostname in (
+        "Example.com", ".", "..", "a..b", "-bad.example", "bad-.example",
+        "example.com.", "127.0.0.1", "127.1", "2130706433",
+        "0x7f000001", "0177.0.0.1", "0x7f.1", "example.com:443",
+    ):
         invalid_host = copy.deepcopy(samples["task_envelope"])
         invalid_host["network_access"] = "allowlisted"
         invalid_host["network_destinations"] = [hostname]
@@ -294,7 +327,9 @@ def main() -> None:
     destinations = envelope["properties"]["network_destinations"]
     assert destinations["maxItems"] == 8
     assert destinations["items"]["pattern"].startswith("^[a-z0-9]")
-    assert destinations["items"]["not"]["pattern"] == "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$"
+    assert destinations["items"]["not"]["pattern"] == (
+        r"^(?:(?:[0-9]+|0[xX][0-9A-Fa-f]+)(?:\\.(?:[0-9]+|0[xX][0-9A-Fa-f]+)){0,3})$"
+    )
     allowlisted_rule, restricted_rule = envelope["allOf"]
     assert allowlisted_rule["if"]["properties"]["network_access"]["const"] == "allowlisted"
     assert allowlisted_rule["then"]["properties"]["network_destinations"]["minItems"] == 1
