@@ -56,6 +56,10 @@ The current `ujani_invoke_handler!` registration contains **42 statically named 
 | Receipts and cloud budget | `security_store::set_cloud_budget_limit` |
 | Security Centre | `get_security_provider_status` |
 
+### Read-only local model discovery boundary
+
+`get_ollama_status` reads OS CPU/RAM information and contacts only `127.0.0.1:11434`. It uses bounded `/api/tags` (maximum 512 installed models; existing 2 MiB response ceiling), `/api/show` (maximum 32 models, four concurrent requests, three seconds per request and an eight-second aggregate deadline), `/api/version` (two seconds) and `/api/ps` (three seconds). Redirects and environment proxies are disabled by the existing Ollama client. The command does not send prompts, files, paths or credentials; it does not start/stop a runtime, download a model, change selection or expose a listening endpoint. GPU evidence means only Ollama-reported active model VRAM allocation; total VRAM, NPU and storage remain unknown. The separate `get_model_recommendation` command also uses runtime-reported chat capability and an advisory RAM-fit estimate; it does not infer reasoning, coding or language quality.
+
 ### Conditional peer-preview surface
 
 The handler macro accepts seven additional commands only when the opt-in `peer-preview` Cargo feature is enabled. They are not registered in normal builds:
@@ -74,8 +78,8 @@ These commands must remain unavailable in normal builds unless the opt-in featur
 
 ## High-priority findings to close
 
-1. **Security provider status:** on `main`, `get_security_provider_status` calls the OS provider reader directly. A React checkbox is not a native authorization boundary. PR #121 adds a fresh native, scope-specific confirmation inside the command and fail-closed handling. Keep that PR draft until its latest-head CI, review and Windows device smoke test pass.
-2. **Model download:** on `main`, the consent callback can wait indefinitely and the task is registered after consent, preventing cancellation while the prompt is pending. PR #121 moves registration before the prompt and adds a bounded native-consent timeout and cancellation handling.
+1. **Security provider status:** PR #121 merged on 2026-11-09 and adds fresh native, scope-specific confirmation with fail-closed handling. Its recorded CI/CodeQL/installer checks passed on head `eeabbb9ec18b4d656791a97dd5976e6327ec9df9`; Windows Security Center device smoke validation is still outstanding. This closes that targeted bypass, not the full command audit in #120.
+2. **Model download:** PR #121 also moved task registration before native consent and added a bounded consent timeout/cancellation path. Device allow/deny/timeout/cancel-during-dialog smoke tests remain outstanding; HTTP cancellation must still be verified against the actual Ollama request on supported devices.
 3. **Cloud execution:** verify that every request has task-scoped approval, recipient/data disclosure, policy evaluation, bounded payloads, cancellation and a receipt before any external request. A UI-only approval is insufficient.
 4. **Filesystem operations:** verify user-selected scope, path canonicalisation, symlink/reparse-point handling, bounded traversal, cancellation, output limits and no OS-wide scan.
 5. **Persistent state:** verify policy gates and receipts for history/cache settings and mutations, document workflows, folder imports, cloud-budget changes and peer-trust changes. Receipts must not contain prompts, document contents, credentials or other secrets.
