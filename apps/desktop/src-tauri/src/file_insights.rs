@@ -1,10 +1,6 @@
 //! Bounded, read-only large-file discovery scoped to a user-selected folder.
 use serde::Serialize;
-use std::{
-    fs,
-    path::Path,
-    time::{Duration, Instant, UNIX_EPOCH},
-};
+use std::{path::Path, time::Duration};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
