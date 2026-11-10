@@ -171,30 +171,6 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
  tx.commit().map_err(|e| e.to_string())
 }
 
-fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String> {
- let mut statement = db.prepare("SELECT id,prompt,output FROM task_history").map_err(|e| format!("Could not inspect existing history: {e}"))?;
- let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))).map_err(|e| e.to_string())?;
- let mut pending = Vec::new();
- for row in rows {
-  let (id, prompt, output) = row.map_err(|e| e.to_string())?;
-  if !prompt.starts_with(ENC_V2) || !output.starts_with(ENC_V2) {
-   let plain_prompt = if prompt.starts_with(ENCRYPTED_PREFIX) {
-    match decrypt_text(key, &prompt, id, "prompt") { Ok(value) => value, Err(_) => continue }
-   } else { prompt };
-   let plain_output = if output.starts_with(ENCRYPTED_PREFIX) {
-    match decrypt_text(key, &output, id, "output") { Ok(value) => value, Err(_) => continue }
-   } else { output };
-   pending.push((id, encrypt_text(key, &plain_prompt, id, "prompt")?, encrypt_text(key, &plain_output, id, "output")?));
-  }
- }
- drop(statement);
- let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
- for (id, prompt, output) in pending {
-  tx.execute("UPDATE task_history SET prompt=?1,output=?2 WHERE id=?3", params![prompt, output, id]).map_err(|e| e.to_string())?;
- }
- tx.commit().map_err(|e| e.to_string())
-}
-
 #[allow(clippy::too_many_arguments)] // Keep persisted history fields explicit at this private DB boundary.
 fn save_secure(
  db: &mut Connection,
