@@ -169,11 +169,11 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
   } else { Some(output.clone()) };
   let migrated_prompt = match plain_prompt {
    Some(value) => encrypt_text(key, &value, id, "prompt", &metadata)?,
-   None => prompt,
+   None => prompt.clone(),
   };
   let migrated_output = match plain_output {
    Some(value) => encrypt_text(key, &value, id, "output", &metadata)?,
-   None => output,
+   None => output.clone(),
   };
   if migrated_prompt != prompt || migrated_output != output {
    pending.push((id, migrated_prompt, migrated_output));
