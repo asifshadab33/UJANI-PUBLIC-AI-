@@ -76,6 +76,7 @@ npm run tauri build
 - The integrated text/PDF workflow can optionally translate the generated summary into the selected language using a second local Ollama step. Translation is off unless the user selects it.
 - Local text translation uses the selected Ollama model in Fortress/Smart modes (16 KiB input limit).
 - A read-only, versioned local model inventory reports OS/architecture, CPU/RAM, installed Ollama models and runtime-reported capabilities/context when available. Automatic chat selection requires reported chat capability plus the advisory RAM-fit heuristic; unknown capabilities are not assumed.
+- Local date/time display uses the device's local timezone without a network request. A read-only duplicate-file preview is available for a native-picker-selected folder: bounded traversal (depth 6, up to 5,000 entries), up to 64 MiB per file and 512 MiB total content hashing, SHA-256 verification, symlink/reparse-point skipping, a 60-second task budget and no delete/move/rename operations. Folder-based duplicate scanning is explicitly unavailable in the Android preview until Android Storage Access Framework support is implemented.
 - Browser translation is offered as a manual link only; users must copy/paste text themselves.
 
 ## Using local Ollama
