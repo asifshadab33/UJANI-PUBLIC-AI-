@@ -229,6 +229,7 @@ export default function App() {
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
   const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
   const selectedInventoryModel = ollamaStatus?.inventory.models.find((model) => model.model_ref === ollamaModel);
+  const inventoryAvailableMemoryMb = ollamaStatus?.inventory.hardware.memory_available_mb;
   const inventoryRuntime = ollamaStatus?.inventory.runtimes.find((runtime) => runtime.runtime_id === "ollama.local");
   const fitModelCandidates = modelRecommendation?.candidates.filter((candidate) => candidate.estimated_to_fit) ?? [];
   const balancedFitModel = fitModelCandidates[Math.floor(fitModelCandidates.length / 2)] ?? null;
@@ -1211,7 +1212,7 @@ export default function App() {
               <b>Local model resource advice (estimate only)</b>
               {modelRecommendation ? <>
                 <p>{modelRecommendation.explanation}</p>
-                <p>Available RAM: {modelRecommendation.available_memory_mb.toLocaleString()} MiB · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
+                <p>Available RAM: {typeof inventoryAvailableMemoryMb === "number" ? `${inventoryAvailableMemoryMb.toLocaleString()} MiB` : "Unknown"} · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
                 {modelRecommendation.recommended_model ? <p>Suggested installed model: <b>{modelRecommendation.recommended_model}</b></p> : <p>No installed model can currently be recommended from the available information.</p>}
                 {modelRecommendation.candidates.slice(0,5).map(candidate => <p key={candidate.name}>{candidate.name}: {candidate.estimated_working_memory_mb===null?"unknown estimate":candidate.estimated_working_memory_mb.toLocaleString()+" MiB estimated"} · {candidate.estimated_to_fit?"within advisory budget":"not recommended"}</p>)}
                 {modelRecommendation.recommended_model && <button className="model-run" onClick={() => { setModelSelectionMode("manual"); setOllamaModel(modelRecommendation.recommended_model!); setOllamaError(""); }}>Choose recommended / fast-fit (smallest model) · {modelRecommendation.recommended_model}</button>}
