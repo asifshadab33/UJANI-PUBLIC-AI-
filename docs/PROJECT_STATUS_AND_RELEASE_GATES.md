@@ -183,7 +183,7 @@ This review inspected the two repository backlogs, current pull-request metadata
 
 ## 2026-11-10 verification delta
 
-- Public PR #176 (Android-only debug-symbol reduction) merged as `e5764c6162d775ed759ceeac3f082d6f8475f988`. Its exact-head CI, CodeQL, dependency audit, native Windows/macOS/Linux tests and Android ARM64 compatibility job passed. The resulting Android debug APK artifact measured 16,718,772 bytes; this is not a signed release or physical-device acceptance result.
+- Public PR #176 (Android-only debug-symbol reduction) merged as `e5764c6162d775ed759ceeac3f082d6f8475f988`. Its exact-head CI, CodeQL, dependency audit, native Windows/macOS/Linux tests and Android ARM64 compatibility job passed. The uploaded Actions artifact archive measured 16,718,772 bytes; this is not the raw APK file size. The workflow did not report the uncompressed APK size, so no percentage package-size reduction is verified. PR #178 adds a raw APK size report; this is not a signed release or physical-device acceptance result.
 - The Public main-branch CI and CodeQL workflows were still running against the post-merge SHA when this status was recorded. Do not mark the post-merge main validation green until those runs finish successfully.
 - Enterprise main SHA `d114556386d21583e28ad2b7d8e77666c7c23fbc` had passing CI, CodeQL and Rust dependency-audit runs. This verifies the policy workspace on hosted runners, not production control-plane or real worker behavior.
 - The repositories had no open pull requests at the time of the check. This means there are no PRs awaiting merge; it does not mean the product backlog or release gates are complete.
