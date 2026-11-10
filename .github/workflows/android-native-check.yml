@@ -80,6 +80,21 @@ jobs:
         working-directory: apps/desktop
         run: npx tauri android build --debug --apk --target aarch64 --ci
 
+      - name: Report raw APK file sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' apks < <(find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' -print0 | sort -z)
+          test "${#apks[@]}" -gt 0
+          {
+            echo "### Android APK file sizes"
+            for apk in "${apks[@]}"; do
+              bytes="$(stat -c '%s' "$apk")"
+              mib="$(awk -v bytes="$bytes" 'BEGIN { printf "%.2f", bytes / 1048576 }')"
+              printf -- '- %s: %s bytes (%s MiB)\n' "$apk" "$bytes" "$mib"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Generate APK SHA-256 checksums
         shell: bash
         run: |
