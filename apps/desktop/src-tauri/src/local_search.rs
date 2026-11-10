@@ -137,6 +137,7 @@ fn cache_payload_without_previews(
 }
 
 /// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn find_local_files(
     app: AppHandle,
@@ -852,4 +853,18 @@ mod tests {
         fs::remove_dir_all(outside).unwrap();
     }
 
+}
+
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn find_local_files(
+    _app: AppHandle,
+    _control: State<'_, super::TaskControlState>,
+    _task_id: String,
+    _query: String,
+    _search_pdf_text: bool,
+    _force_refresh: bool,
+) -> Result<LocalSearchResult, String> {
+    Err("Folder-based local search is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
 }
