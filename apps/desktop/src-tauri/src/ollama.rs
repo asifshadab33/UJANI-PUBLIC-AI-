@@ -587,7 +587,7 @@ mod tests {
                 "tools".into(),
                 "unrecognised".into(),
             ]),
-            vec!["chat", "vision", "tool_use"]
+            vec!["chat".to_string(), "vision".to_string(), "tool_use".to_string()]
         );
         assert_eq!(
             canonical_model_capabilities(&["unrecognised".into()]),
