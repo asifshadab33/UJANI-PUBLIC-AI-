@@ -134,6 +134,22 @@ fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
     })
 }
 
+/// Normalizes OS memory readings once for both model-fit advice and inventory output.
+///
+/// Non-positive totals are unknown. Available RAM above a known positive total is
+/// treated as unknown rather than clamped or used to recommend a model.
+pub(crate) fn normalize_memory_readings(
+    total_memory_mb: Option<u64>,
+    available_memory_mb: Option<u64>,
+) -> (Option<u64>, Option<u64>) {
+    let total_memory_mb = total_memory_mb.filter(|memory| *memory > 0);
+    let available_memory_mb = match (total_memory_mb, available_memory_mb) {
+        (Some(total), Some(available)) if available > total => None,
+        (_, available) => available,
+    };
+    (total_memory_mb, available_memory_mb)
+}
+
 /// Build inventory v1 from already-bounded OS and local-runtime observations.
 /// Unknown accelerator, storage, context and capability values remain unknown;
 /// this function never probes another endpoint or reads user content.
@@ -152,14 +168,8 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         accelerator,
     } = input;
     let observed_at = now_unix_ms();
-    // Enterprise rejects impossible hardware snapshots. Preserve an available-memory
-    // reading only when it does not exceed a known, positive total; otherwise report
-    // the inconsistent value as unknown rather than clamping or inventing a value.
-    let memory_total_mb = memory_total_mb.filter(|memory| *memory > 0);
-    let memory_available_mb = match (memory_total_mb, memory_available_mb) {
-        (Some(total), Some(available)) if available > total => None,
-        (_, available) => available,
-    };
+    let (memory_total_mb, memory_available_mb) =
+        normalize_memory_readings(memory_total_mb, memory_available_mb);
     let gpu_activity_confirmed = accelerator
         .is_some_and(|observation| observation.gpu_vram_allocated_bytes > 0);
 
