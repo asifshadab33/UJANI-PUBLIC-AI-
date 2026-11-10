@@ -219,9 +219,11 @@ fn chat_capable_model_sizes(
     models
         .iter()
         .filter(|model| {
-            metadata
-                .get(&model.name)
-                .is_some_and(|item| item.capabilities.iter().any(|capability| capability == "chat"))
+            metadata.get(&model.name).is_some_and(|item| {
+                item.capabilities
+                    .iter()
+                    .any(|capability| capability == "chat")
+            })
         })
         .map(|model| InstalledModelSize {
             name: model.name.clone(),
