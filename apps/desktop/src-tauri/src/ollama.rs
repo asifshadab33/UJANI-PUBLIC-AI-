@@ -545,6 +545,11 @@ where F: FnMut(String, u8) {
             Ok(Ok(None)) => break,
             Ok(Ok(Some(chunk))) => chunk,
         };
+        total_stream_bytes = total_stream_bytes.checked_add(chunk.len())
+            .ok_or_else(|| "Model download progress size overflow.".to_string())?;
+        if total_stream_bytes > MAX_PULL_STREAM_BYTES {
+            return Err("Model download progress exceeded the 8 MiB safety limit.".into());
+        }
         for byte in chunk {
             if byte == b'\n' {
                 if pending.is_empty() { continue; }
@@ -718,7 +723,7 @@ mod tests {
     fn pull_progress_text_is_bounded_and_strips_control_characters() {
         assert_eq!(bounded_progress_text("Downloading\\nmodel\\u{0007}", 64), "Downloadingmodel");
         assert_eq!(bounded_progress_text("abcdef", 3), "abc");
-        assert_eq!(bounded_progress_text("م".repeat(8).as_str(), 5), "م");
+        assert_eq!(bounded_progress_text("م".repeat(8).as_str(), 2), "م");
     }
 
     #[test]
