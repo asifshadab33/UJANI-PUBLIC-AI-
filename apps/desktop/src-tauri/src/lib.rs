@@ -101,6 +101,18 @@ fn pdf_worker_resource_limits_state() -> CapabilityState {
     CapabilityState::Unknown
 }
 
+fn pdf_worker_filesystem_isolation_state() -> CapabilityState {
+    CapabilityState::Unavailable
+}
+
+fn pdf_worker_network_isolation_state() -> CapabilityState {
+    if cfg!(target_os = "windows") {
+        CapabilityState::Unavailable
+    } else {
+        CapabilityState::Unknown
+    }
+}
+
 /// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
@@ -159,7 +171,19 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             id: "pdf.worker.resource_limits".into(), category: "security".into(),
             state: pdf_worker_resource_limits_state(),
             source: "OS-specific PDF worker launcher; device enforcement not yet probed".into(),
-            detail: "The sidecar launcher configures Unix CPU/address-space/file-descriptor/file-size/core limits; Linux additionally installs no_new_privs and a seccomp filter. macOS launches through sandbox-exec with network and file writes denied. Windows assigns a kill-on-close Job Object with process-memory and CPU limits before sending PDF bytes, but assignment occurs after the launcher process starts. These controls apply only to the PDF worker. This build has not verified their enforcement on the current device, so availability remains Unknown until Windows, Linux and macOS smoke tests pass.".into(),
+            detail: "The sidecar launcher configures Unix CPU/address-space/file-descriptor/file-size/core limits; Linux additionally installs no_new_privs and a seccomp filter. macOS launches through sandbox-exec. Windows assigns a kill-on-close Job Object with process-memory and CPU limits before sending PDF bytes, but assignment occurs after the launcher process starts. These controls apply only to the PDF worker and are not a complete sandbox. This build has not verified their enforcement on the current device, so availability remains Unknown until Windows, Linux and macOS smoke tests pass.".into(),
+        },
+        CapabilityRecord {
+            id: "pdf.worker.filesystem_isolation".into(), category: "security".into(),
+            state: pdf_worker_filesystem_isolation_state(),
+            source: "Current OS-specific sidecar policy".into(),
+            detail: "No deny-by-default filesystem read boundary is configured on Windows, Linux or macOS. The worker retains the current user's filesystem read permissions; a compromised PDF parser may read files accessible to that user. Do not treat resource limits or network denial as filesystem isolation.".into(),
+        },
+        CapabilityRecord {
+            id: "pdf.worker.network_isolation".into(), category: "security".into(),
+            state: pdf_worker_network_isolation_state(),
+            source: "OS-specific sidecar policy; device enforcement not yet probed".into(),
+            detail: "Linux configures seccomp network-syscall denial and macOS configures sandbox-exec network denial, but this build has not verified enforcement on the current device. Windows Job Objects do not restrict network access, so network isolation is unavailable there until a supported OS policy is implemented.".into(),
         },
         CapabilityRecord {
             id: "fortress.os_isolation".into(), category: "security".into(),
@@ -1817,5 +1841,15 @@ mod model_capability_selection_tests {
     #[test]
     fn pdf_worker_isolation_is_not_claimed_available_without_device_verification() {
         assert_eq!(super::pdf_worker_resource_limits_state(), super::CapabilityState::Unknown);
+        assert_eq!(
+            super::pdf_worker_filesystem_isolation_state(),
+            super::CapabilityState::Unavailable
+        );
+        let expected_network_state = if cfg!(target_os = "windows") {
+            super::CapabilityState::Unavailable
+        } else {
+            super::CapabilityState::Unknown
+        };
+        assert_eq!(super::pdf_worker_network_isolation_state(), expected_network_state);
     }
 }
