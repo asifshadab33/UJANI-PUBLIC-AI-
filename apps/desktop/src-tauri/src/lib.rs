@@ -1766,3 +1766,42 @@ mod security_provider_command_tests {
         ]).is_ok());
     }
 }
+
+#[cfg(test)]
+mod model_capability_selection_tests {
+    use super::chat_capable_model_sizes;
+    use crate::ollama::{OllamaModel, OllamaModelMetadata};
+    use std::collections::HashMap;
+
+    #[test]
+    fn automatic_chat_recommendation_excludes_unknown_and_non_chat_models() {
+        let models = vec![
+            OllamaModel { name: "chat-model".into(), size: 1_000, details: None },
+            OllamaModel { name: "vision-model".into(), size: 2_000, details: None },
+            OllamaModel { name: "unknown-model".into(), size: 3_000, details: None },
+        ];
+        let metadata = HashMap::from([
+            ("chat-model".into(), OllamaModelMetadata {
+                context_length_tokens: Some(8_192),
+                capabilities: vec!["chat".into()],
+            }),
+            ("vision-model".into(), OllamaModelMetadata {
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["vision".into()],
+            }),
+        ]);
+
+        let candidates = chat_capable_model_sizes(&models, &metadata);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "chat-model");
+        assert_eq!(candidates[0].size_bytes, 1_000);
+    }
+
+    #[test]
+    fn automatic_chat_recommendation_is_empty_when_capability_evidence_is_unknown() {
+        let models = vec![
+            OllamaModel { name: "legacy-model".into(), size: 1_000, details: None },
+        ];
+        assert!(chat_capable_model_sizes(&models, &HashMap::new()).is_empty());
+    }
+}
