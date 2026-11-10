@@ -157,17 +157,27 @@ fn migrate_plaintext_rows(db: &Connection, key: &[u8; 32]) -> Result<(), String>
   let (id, prompt, output, mode, model, kind, created_at) = row.map_err(|e| e.to_string())?;
   if prompt.starts_with(ENC_V3) && output.starts_with(ENC_V3) { continue; }
   let metadata = HistoryMetadata { mode: &mode, model: &model, kind: &kind, created_at };
+  // Migrate each field independently. If one legacy ciphertext is corrupt,
+  // preserve it for diagnosis but still encrypt any plaintext sibling field.
+  // This avoids leaving recoverable prompt/output text at rest merely because
+  // the other column in the same row cannot be authenticated.
   let plain_prompt = if is_encrypted_history_value(&prompt) {
-   match decrypt_text(key, &prompt, id, "prompt", &metadata) { Ok(value) => value, Err(_) => continue }
-  } else { prompt };
+   decrypt_text(key, &prompt, id, "prompt", &metadata).ok()
+  } else { Some(prompt.clone()) };
   let plain_output = if is_encrypted_history_value(&output) {
-   match decrypt_text(key, &output, id, "output", &metadata) { Ok(value) => value, Err(_) => continue }
-  } else { output };
-  pending.push((
-   id,
-   encrypt_text(key, &plain_prompt, id, "prompt", &metadata)?,
-   encrypt_text(key, &plain_output, id, "output", &metadata)?,
-  ));
+   decrypt_text(key, &output, id, "output", &metadata).ok()
+  } else { Some(output.clone()) };
+  let migrated_prompt = match plain_prompt {
+   Some(value) => encrypt_text(key, &value, id, "prompt", &metadata)?,
+   None => prompt,
+  };
+  let migrated_output = match plain_output {
+   Some(value) => encrypt_text(key, &value, id, "output", &metadata)?,
+   None => output,
+  };
+  if migrated_prompt != prompt || migrated_output != output {
+   pending.push((id, migrated_prompt, migrated_output));
+  }
  }
  drop(statement);
  let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -437,6 +447,23 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   assert_eq!(entries.len(),2);
   assert!(entries.iter().any(|entry|entry.prompt.starts_with("[unreadable entry:")));
   assert!(entries.iter().any(|entry|entry.prompt=="good prompt"));
+ }
+
+ #[test] fn corrupt_ciphertext_does_not_leave_plaintext_sibling_at_rest() {
+  let db=db();
+  db.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('ujani:v1:%%%','still private plaintext','smart','m','chat',7)",
+   [],
+  ).unwrap();
+  let key=test_key();
+  migrate_plaintext_rows(&db,&key).unwrap();
+  let (prompt,output):(String,String)=db.query_row(
+   "SELECT prompt,output FROM task_history WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))
+  ).unwrap();
+  assert_eq!(prompt,"ujani:v1:%%%");
+  assert!(output.starts_with(ENC_V3));
+  let meta=metadata("smart","m","chat",7);
+  assert_eq!(decrypt_text(&key,&output,1,"output",&meta).unwrap(),"still private plaintext");
  }
 
  #[test] fn disabled_by_default(){let mut c=db();assert!(!is_enabled(&c).unwrap());assert!(save(&mut c,"p","o","smart","m","chat",1).is_err());}
