@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(inventory.schema_version, 1);
         assert_eq!(inventory.runtimes[0].availability, "unavailable");
         assert_eq!(inventory.runtimes[0].network_scope, "loopback_only");
-        assert_eq!(inventory.models[0].capabilities, vec!["unknown"]);
+        assert_eq!(inventory.models[0].capabilities, vec!["unknown".to_string()]);
         assert_eq!(inventory.models[0].context_length_tokens, None);
         assert_eq!(inventory.hardware.storage_free_mb, None);
         assert_eq!(inventory.hardware.accelerators[0].evidence.confidence, "unknown");
