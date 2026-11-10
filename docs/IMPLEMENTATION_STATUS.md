@@ -127,3 +127,11 @@ The desktop UI can verify the local receipt hash chain and display up to 10 of t
 ## Audit remediation update — cancellable local tasks
 
 The document/PDF and translation commands now share the native task registry used by local chat and model downloads. Each accepts a bounded task identifier, rejects duplicate active IDs, emits lifecycle events, observes explicit cancellation, and applies a 240-second overall time budget. The desktop UI passes IDs and exposes cancellation buttons. The shared wrapper also acquires the native process-local memory reservation before work begins. Cancellation is cooperative at async boundaries; CI and platform smoke tests are required before claiming verified behaviour.
+
+
+## 2026-11-10 release-readiness update
+
+- The current product remains pre-alpha. The Android ARM64 debug APK CI artifact is 16,718,772 bytes (about 16.7 MB), reduced from the first 196 MB debug build by disabling Rust debug symbols only for the Android CI development profile. PR #176 was merged to `main` as `e5764c6162d775ed759ceeac3f082d6f8475f988`.
+- On the exact PR head, Android ARM64 compatibility, Rust core tests, Rust lint, React TypeScript build, Windows/macOS/Linux Tauri native test jobs, Rust dependency audit, CodeQL and installer-size audit all passed. The installer-size workflow also produced unsigned Windows, macOS and Linux preview artifacts. Post-merge CI and CodeQL for the new main commit were still running at the time of this update.
+- This evidence verifies CI builds and tests only. No physical Android installation, device launch, upgrade/uninstall, real Ollama inference on tester hardware, or minimum-OS compatibility certification is claimed.
+- Remaining release blockers include OS-enforced Fortress isolation, platform-verified PDF worker containment, physical-device smoke tests, signed/provenanced release artifacts and SBOM review, independent security assessment, provider-specific live cloud tests and the outstanding data-lifecycle checks described above.
