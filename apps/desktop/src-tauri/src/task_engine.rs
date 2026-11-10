@@ -91,7 +91,7 @@ fn plan_with_runtime_capabilities(
 /// Re-check runtime availability and confirm that the requested model is installed
 /// immediately before inference. UI state and an earlier planning result are advisory only.
 async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(), String> {
-    let mut system = System::new().unwrap_or_default();
+    let mut system = System::new().map_err(|error| format!("System information unavailable: {error}"))?;
     system.refresh_memory();
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
@@ -129,7 +129,7 @@ impl LocalTaskEngine {
             _ => return Err("Unknown execution mode.".into()),
         };
         ensure_local_model_ready("local.ai.generate", model).await?;
-        let mut system = System::new().unwrap_or_default();
+        let mut system = System::new().map_err(|error| format!("System information unavailable: {error}"))?;
         system.refresh_memory();
         let mut available = BTreeSet::new();
         if std::thread::available_parallelism().is_ok() { available.insert("cpu".to_string()); }
