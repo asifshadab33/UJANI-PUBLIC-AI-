@@ -131,6 +131,10 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
     scan_duplicates_with_budget(folder, token, MAX_TOTAL_HASH_BYTES)
 }
 
+/// Scans a selected folder under a caller-supplied total hashing budget.
+///
+/// Smaller size buckets and path-sorted candidates make the same folder produce
+/// deterministic results when the same budget is applied.
 fn scan_duplicates_with_budget(
     folder: &Path,
     token: &CancellationToken,
