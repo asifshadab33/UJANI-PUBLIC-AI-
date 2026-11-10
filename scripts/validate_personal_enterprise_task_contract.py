@@ -26,7 +26,7 @@ def _consent_binding_sha256(envelope: dict[str, Any]) -> str:
     canonical = json.dumps(
         binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
-    return hashlib.sha256(b"UJANI-CONSENT-BINDING-V1\\0" + canonical).hexdigest()
+    return hashlib.sha256(b"UJANI-CONSENT-BINDING-V1\0" + canonical).hexdigest()
 
 
 def _refresh_consent_binding(envelope: dict[str, Any]) -> None:
@@ -367,7 +367,7 @@ def main() -> None:
     assert destinations["maxItems"] == 8
     assert destinations["items"]["pattern"].startswith("^[a-z0-9]")
     assert destinations["items"]["not"]["pattern"] == (
-        r"^(?:(?:[0-9]+|0[xX][0-9A-Fa-f]+)(?:\\.(?:[0-9]+|0[xX][0-9A-Fa-f]+)){0,3})$"
+        r"^(?:(?:[0-9]+|0[xX][0-9A-Fa-f]+)(?:\.(?:[0-9]+|0[xX][0-9A-Fa-f]+)){0,3})$"
     )
     allowlisted_rule, restricted_rule = envelope["allOf"]
     assert allowlisted_rule["if"]["properties"]["network_access"]["const"] == "allowlisted"
