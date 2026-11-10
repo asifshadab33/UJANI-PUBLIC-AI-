@@ -470,6 +470,23 @@ pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
     chat(model, None, &[Turn { role: "user", content: prompt }]).await
 }
 
+const MAX_PULL_EVENT_BYTES: usize = 16 * 1024;
+const MAX_PULL_STREAM_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PULL_STATUS_BYTES: usize = 256;
+const MAX_PULL_ERROR_BYTES: usize = 512;
+
+/// Bound and neutralise untrusted status text received from the local Ollama HTTP service.
+fn bounded_progress_text(value: &str, max_bytes: usize) -> String {
+    let mut output = String::new();
+    for character in value.chars().filter(|character| !character.is_control()) {
+        if output.len().saturating_add(character.len_utf8()) > max_bytes {
+            break;
+        }
+        output.push(character);
+    }
+    output
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct PullProgress {
     status: String,
@@ -477,14 +494,19 @@ struct PullProgress {
     success: bool,
 }
 
+/// Parse one bounded Ollama NDJSON progress event into a safe progress update.
 fn parse_pull_progress_line(line: &[u8]) -> Result<PullProgress, String> {
     let event: serde_json::Value = serde_json::from_slice(line)
         .map_err(|_| "Ollama returned an invalid model-download progress event.".to_string())?;
     if let Some(error) = event.get("error").and_then(|value| value.as_str()) {
+        let error = bounded_progress_text(error, MAX_PULL_ERROR_BYTES);
         return Err(format!("Ollama could not download this model: {error}"));
     }
-    let status = event.get("status").and_then(|value| value.as_str())
-        .unwrap_or("Downloading model").to_string();
+    let status = bounded_progress_text(
+        event.get("status").and_then(|value| value.as_str())
+            .unwrap_or("Downloading model"),
+        MAX_PULL_STATUS_BYTES,
+    );
     let total = event.get("total").and_then(|value| value.as_u64()).unwrap_or(0);
     let completed = event.get("completed").and_then(|value| value.as_u64()).unwrap_or(0);
     let percent = if total > 0 {
@@ -515,6 +537,7 @@ where F: FnMut(String, u8) {
     let mut pending = Vec::<u8>::new();
     let mut last_percent: i32 = -1;
     let mut last_status = String::new();
+    let mut total_stream_bytes = 0usize;
     let mut completed = false;
     loop {
         let chunk = match tokio::time::timeout(Duration::from_secs(120), response.chunk()).await {
@@ -523,6 +546,11 @@ where F: FnMut(String, u8) {
             Ok(Ok(None)) => break,
             Ok(Ok(Some(chunk))) => chunk,
         };
+        total_stream_bytes = total_stream_bytes.checked_add(chunk.len())
+            .ok_or_else(|| "Model download progress size overflow.".to_string())?;
+        if total_stream_bytes > MAX_PULL_STREAM_BYTES {
+            return Err("Model download progress exceeded the 8 MiB safety limit.".into());
+        }
         for byte in chunk {
             if byte == b'\n' {
                 if pending.is_empty() { continue; }
@@ -536,7 +564,7 @@ where F: FnMut(String, u8) {
                 if progress.success { completed = true; }
             } else {
                 pending.push(byte);
-                if pending.len() > 16 * 1024 {
+                if pending.len() > MAX_PULL_EVENT_BYTES {
                     return Err("Ollama progress event exceeded the 16 KiB safety limit.".into());
                 }
             }
@@ -690,6 +718,25 @@ mod tests {
         let done = parse_pull_progress_line(br#"{"status":"success"}"#).unwrap();
         assert_eq!(done.percent, 0);
         assert!(done.success);
+    }
+
+    #[test]
+    fn pull_progress_text_is_bounded_and_strips_control_characters() {
+        assert_eq!(bounded_progress_text("Downloading\nmodel\u{0007}", 64), "Downloadingmodel");
+        assert_eq!(bounded_progress_text("abcdef", 3), "abc");
+        assert_eq!(bounded_progress_text("م".repeat(8).as_str(), 2), "م");
+    }
+
+    #[test]
+    fn pull_progress_status_and_errors_are_bounded() {
+        let status = parse_pull_progress_line(
+            format!(r#"{{"status":"{}"}} "#, "s".repeat(MAX_PULL_STATUS_BYTES + 20)).as_bytes()
+        ).unwrap();
+        assert_eq!(status.status.len(), MAX_PULL_STATUS_BYTES);
+        let error = parse_pull_progress_line(
+            format!(r#"{{"error":"{}"}} "#, "e".repeat(MAX_PULL_ERROR_BYTES + 20)).as_bytes()
+        ).unwrap_err();
+        assert!(error.len() <= MAX_PULL_ERROR_BYTES + "Ollama could not download this model: ".len());
     }
 
     #[test]
