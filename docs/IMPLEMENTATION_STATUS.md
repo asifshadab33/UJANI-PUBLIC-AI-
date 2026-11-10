@@ -135,3 +135,12 @@ The document/PDF and translation commands now share the native task registry use
 - On the exact PR head, Android ARM64 compatibility, Rust core tests, Rust lint, React TypeScript build, Windows/macOS/Linux Tauri native test jobs, Rust dependency audit, CodeQL and installer-size audit all passed. The installer-size workflow also produced unsigned Windows, macOS and Linux preview artifacts. Post-merge CI and CodeQL for the new main commit were still running at the time of this update.
 - This evidence verifies CI builds and tests only. No physical Android installation, device launch, upgrade/uninstall, real Ollama inference on tester hardware, or minimum-OS compatibility certification is claimed.
 - Remaining release blockers include OS-enforced Fortress isolation, platform-verified PDF worker containment, physical-device smoke tests, signed/provenanced release artifacts and SBOM review, independent security assessment, provider-specific live cloud tests and the outstanding data-lifecycle checks described above.
+
+
+### 2026-11-10 everyday-tools verification
+
+- The native `everyday_tools` module and React `EverydayTools` panel are present and wired through the Tauri invoke handler.
+- Device-local date/time is displayed without a network request.
+- Read-only duplicate-file preview is implemented for a user-selected desktop folder. It groups same-size candidates and verifies content with SHA-256; traversal, file size, total hashed bytes, duplicate-group count and task duration are bounded. Symlinks/reparse points are skipped/rejected by the shared filesystem helpers. The feature never deletes, moves, renames or overwrites files.
+- Android currently returns an explicit unsupported result for folder duplicate scanning because Storage Access Framework integration is not yet implemented. Do not claim duplicate scanning works on Android.
+- This closes the initial Phase 1 slice of issue #44 for desktop only; remaining OS-backed utilities and the wider Everyday Tools roadmap in issue #46 remain open.
