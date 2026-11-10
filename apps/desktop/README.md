@@ -1,6 +1,6 @@
 # UJANI Public AI — Desktop prototype
 
-Status: **pre-alpha scaffold**. This is the first desktop UI and native command bridge, not a complete AI runtime.
+Status: **pre-alpha desktop application / controlled preview**. The Tauri 2 application now includes real local Ollama inference and bounded native workflows; it is not a production-ready AI runtime. The repository's [implementation status](../../docs/IMPLEMENTATION_STATUS.md) is the authoritative feature and limitation record.
 
 ## Prerequisites
 
