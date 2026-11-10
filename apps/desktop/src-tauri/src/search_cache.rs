@@ -18,7 +18,7 @@ const MAX_CACHE_BYTES: i64 = 10 * 1024 * 1024;
 const MAX_CACHE_ROW_BYTES: usize = 4 * 1024 * 1024;
 const NEGATIVE_TTL_SECONDS: i64 = 24 * 60 * 60;
 const CACHE_PROVIDER_VERSION: &str = "bounded-local-search-v1";
-const CACHE_PARSER_VERSION: u32 = 2;
+const CACHE_PARSER_VERSION: u32 = 3;
 const ALLOWED_RETENTION_DAYS: [i64; 4] = [0, 7, 30, 90];
 
 #[derive(Debug, Clone, Serialize)]

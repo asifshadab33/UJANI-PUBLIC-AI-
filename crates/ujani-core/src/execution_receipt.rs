@@ -1,21 +1,33 @@
 //! Auditable execution provenance contracts.
 //!
 //! Receipts are metadata contracts only. They do not execute or verify a model
-//! result by themselves; trusted adapters must compute digests from the exact
-//! bytes sent/received and persist receipts only after successful completion.
+//! result by themselves; trusted adapters compute digests from exact bytes and
+//! record bounded outcomes for approved side effects without storing task content.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Provenance classification for where inference was performed.
+/// Provenance classification for where inference or an approved resource action occurred.
 pub enum ExecutionLocation {
     LocalCpu,
     LocalGpu,
     LocalUnverified,
     ExternalProvider,
+    /// An approved network operation that changes or obtains a local resource, not inference.
+    ExternalResource,
     DeterministicTool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+/// Bounded outcome of an operation recorded by schema v3 receipts.
+pub enum ExecutionOutcome {
+    Completed,
+    Failed,
+    Cancelled,
+    TimedOut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -54,7 +66,7 @@ impl NetworkActivity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// Metadata-only record of an inference operation and exact input/output digests.
+/// Metadata-only record of an inference or approved resource operation and its digests.
 pub struct ExecutionReceipt {
     pub schema_version: u16,
     pub task_id: String,
@@ -72,6 +84,9 @@ pub struct ExecutionReceipt {
     /// Added in schema v2. Missing values in legacy v1 records deserialize as Unknown.
     #[serde(default)]
     pub network_activity: NetworkActivity,
+    /// Added in schema v3. Omitted for legacy v1/v2 records to preserve their stored JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ExecutionOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +99,7 @@ pub enum ReceiptError {
     InvalidTimeRange,
     MissingModelProvenance,
     MissingExternalApproval,
+    MissingOutcome,
     InvalidNetworkActivity,
 }
 
@@ -122,7 +138,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Validate structural provenance before a trusted adapter persists a receipt.
 pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> {
-    if !matches!(receipt.schema_version, 1 | 2) {
+    if !matches!(receipt.schema_version, 1..=3) {
+        return Err(ReceiptError::UnsupportedSchema);
+    }
+    if receipt.schema_version == 3 && receipt.outcome.is_none() {
+        return Err(ReceiptError::MissingOutcome);
+    }
+    if receipt.schema_version < 3 && receipt.outcome.is_some() {
         return Err(ReceiptError::UnsupportedSchema);
     }
     if receipt.task_id.trim().is_empty()
@@ -186,7 +208,7 @@ pub fn validate_receipt(receipt: &ExecutionReceipt) -> Result<(), ReceiptError> 
     {
         return Err(ReceiptError::MissingModelProvenance);
     }
-    if receipt.location == ExecutionLocation::ExternalProvider
+    if matches!(receipt.location, ExecutionLocation::ExternalProvider | ExecutionLocation::ExternalResource)
         && receipt.user_approval_id.as_deref().is_none_or(str::is_empty)
     {
         return Err(ReceiptError::MissingExternalApproval);
@@ -214,6 +236,7 @@ mod tests {
             completed_at_unix_ms: 200,
             user_approval_id: None,
             network_activity: NetworkActivity::unknown(),
+            outcome: None,
         }
     }
 
@@ -226,6 +249,28 @@ mod tests {
     #[test]
     fn accepts_well_formed_local_receipt() {
         assert_eq!(validate_receipt(&receipt()), Ok(()));
+    }
+
+    #[test]
+    fn legacy_receipts_omit_the_v3_outcome_field_when_serialized() {
+        let value = serde_json::to_value(receipt()).unwrap();
+        assert!(value.get("outcome").is_none());
+    }
+
+    #[test]
+    fn schema_v3_resource_receipts_require_outcome_and_native_approval() {
+        let mut r = receipt();
+        r.schema_version = 3;
+        r.location = ExecutionLocation::ExternalResource;
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::MissingOutcome));
+
+        r.outcome = Some(ExecutionOutcome::Completed);
+        assert_eq!(validate_receipt(&r), Err(ReceiptError::MissingExternalApproval));
+
+        r.user_approval_id = Some("approval-1".into());
+        assert_eq!(validate_receipt(&r), Ok(()));
+        r.outcome = Some(ExecutionOutcome::Cancelled);
+        assert_eq!(validate_receipt(&r), Ok(()));
     }
 
     #[test]

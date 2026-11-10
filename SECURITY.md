@@ -14,6 +14,21 @@ Include:
 - proof-of-concept that avoids accessing real user data;
 - suggested mitigation, if known.
 
+## Maintainer response and disclosure process
+
+The project is intended to remain freely usable by ordinary users. Security maintenance is therefore part of the upstream project, not a paid prerequisite for access to the core application.
+
+For each credible report, maintainers should:
+1. Acknowledge receipt when reasonably possible, without promising a fixed response-time SLA.
+2. Reproduce and assess the issue, affected versions/platforms, exploitability and user impact.
+3. Coordinate a fix and disclosure timeline with the reporter; avoid publishing exploit details before users have a reasonable opportunity to update.
+4. Publish a security advisory and patched release when disclosure is appropriate, including affected versions, mitigations and upgrade guidance.
+5. Add a regression test or other durable check where practical, and review whether the issue affects both Public AI and shared/Enterprise components.
+
+The pre-alpha project may not yet have a staffed security-response team or guaranteed support window. Users and downstream distributors should not assume that every historical build receives backports. Companies may independently provide paid maintenance, patched distributions, support or response services, but those services must not be represented as a condition for obtaining the freely distributed upstream core.
+
+Release maintainers should protect signing keys, publish checksums and provenance where available, and never describe an unsigned preview artifact as a verified signed release.
+
 ## Automated security checks
 
 - GitHub Actions CI runs Rust tests, native Tauri checks on Windows/macOS/Linux, and the React TypeScript build.

@@ -2,7 +2,7 @@
 //!
 //! This module centralizes bounded no-follow directory traversal and platform-specific
 //! file opening; callers retain extension, content, size and task-specific error policy.
-use std::{io, path::Path};
+use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
 #[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
 
@@ -116,6 +116,8 @@ pub(crate) struct WalkOptions {
     pub errors: WalkErrorPolicy,
     /// Optional predicate applied before opening regular files.
     pub file_filter: Option<fn(&Path) -> bool>,
+    /// Optional total traversal time budget. Expiry returns a truncated partial result.
+    pub max_duration: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,12 +125,15 @@ pub(crate) struct WalkFile {
     pub path: PathBuf,
     pub name: OsString,
     pub size_bytes: u64,
+    pub modified_unix_ms: Option<u64>,
 }
 
 #[derive(Debug)]
 pub(crate) struct WalkResult {
     pub root: PathBuf,
     pub files: Vec<WalkFile>,
+    /// Number of regular files encountered, including entries later rejected by a filter/open.
+    pub files_examined: usize,
     pub truncated: bool,
 }
 
@@ -147,14 +152,20 @@ pub(crate) fn walk_directory(
     }
     let root = std::fs::canonicalize(selected_root)
         .map_err(|error| format!("Cannot resolve selected folder: {error}"))?;
+    let started = Instant::now();
     let mut stack = vec![(root.clone(), 0usize)];
     let mut files = Vec::new();
+    let mut files_examined = 0usize;
     let mut entries_seen = 0usize;
     let mut truncated = false;
 
     while let Some((directory, depth)) = stack.pop() {
         if cancellation.is_cancelled() {
             return Err("Directory traversal cancelled by user.".into());
+        }
+        if options.max_duration.is_some_and(|limit| started.elapsed() >= limit) {
+            truncated = true;
+            break;
         }
         let directory_metadata = match std::fs::symlink_metadata(&directory) {
             Ok(metadata) => metadata,
@@ -190,6 +201,10 @@ pub(crate) fn walk_directory(
         for entry in iterator {
             if cancellation.is_cancelled() {
                 return Err("Directory traversal cancelled by user.".into());
+            }
+            if options.max_duration.is_some_and(|limit| started.elapsed() >= limit) {
+                truncated = true;
+                break;
             }
             entries_seen = entries_seen.saturating_add(1);
             if entries_seen > options.max_entries {
@@ -238,6 +253,7 @@ pub(crate) fn walk_directory(
             if !metadata.is_file() {
                 continue;
             }
+            files_examined = files_examined.saturating_add(1);
             if options.file_filter.is_some_and(|filter| !filter(&path)) {
                 continue;
             }
@@ -267,18 +283,27 @@ pub(crate) fn walk_directory(
                 }
                 _ => { truncated = true; continue; }
             };
+            let modified_unix_ms = opened_metadata.modified().ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
             files.push(WalkFile {
                 path: canonical_file,
                 name: entry.file_name(),
                 size_bytes: opened_metadata.len(),
+                modified_unix_ms,
             });
         }
-        if entries_seen > options.max_entries {
+        if entries_seen > options.max_entries
+            || options.max_duration.is_some_and(|limit| started.elapsed() >= limit)
+        {
+            if options.max_duration.is_some_and(|limit| started.elapsed() >= limit) {
+                truncated = true;
+            }
             break;
         }
     }
 
-    Ok(WalkResult { root, files, truncated })
+    Ok(WalkResult { root, files, files_examined, truncated })
 }
 
 
@@ -303,6 +328,7 @@ mod walk_tests {
             links,
             errors: WalkErrorPolicy::SkipAndMarkTruncated,
             file_filter: None,
+            max_duration: None,
         }
     }
 
@@ -353,6 +379,19 @@ mod walk_tests {
         let walked = walk_directory(&folder, configured, &CancellationToken::new()).unwrap();
         assert_eq!(walked.files.len(), 1);
         assert_eq!(walked.files[0].name, "keep.txt");
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn shared_walker_marks_expired_time_budget_as_truncated() {
+        let folder = root("time-budget");
+        fs::write(folder.join("file.txt"), "data").unwrap();
+        let mut configured = options(2, 20, LinkPolicy::Skip);
+        configured.max_duration = Some(std::time::Duration::ZERO);
+        let walked = walk_directory(&folder, configured, &CancellationToken::new()).unwrap();
+        assert!(walked.truncated);
+        assert!(walked.files.is_empty());
+        assert_eq!(walked.files_examined, 0);
         fs::remove_dir_all(folder).unwrap();
     }
 

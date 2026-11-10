@@ -185,6 +185,8 @@ pub use reminders::{upcoming_reminders, LocalReminder, ReminderState, ReminderVa
 pub mod file_processor;
 pub mod image_processor;
 pub mod capability;
+pub mod local_first;
+pub use local_first::{plan_local_first, LocalFirstPlan, LocalFirstPolicy, SegmentDecision, SegmentPlacement, TaskSegment};
 pub mod tool_registry;
 pub mod impact;
 
@@ -220,5 +222,5 @@ pub use resource_scheduler::{plan_local_schedule, LocalPlacement, ResourceSnapsh
 
 /// Typed, hash-bound execution provenance receipt contract.
 pub mod execution_receipt;
-pub use execution_receipt::{sha256_hex, validate_receipt, ExecutionLocation as ReceiptExecutionLocation, ExecutionReceipt, NetworkActivity, NetworkObservation, ReceiptError};
+pub use execution_receipt::{sha256_hex, validate_receipt, ExecutionLocation as ReceiptExecutionLocation, ExecutionOutcome, ExecutionReceipt, NetworkActivity, NetworkObservation, ReceiptError};
 pub use execution_receipt::validate_model_identifier;
