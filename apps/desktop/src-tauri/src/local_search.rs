@@ -16,8 +16,8 @@ use tokio_util::sync::CancellationToken;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
 const MAX_MATCHES: usize = 250;
-const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
-const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
 const MAX_PDF_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
@@ -416,7 +416,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             links: crate::safe_fs::LinkPolicy::Skip,
             errors: crate::safe_fs::WalkErrorPolicy::SkipAndMarkTruncated,
             file_filter: None,
-            max_duration: None,
+            max_duration: Some(std::time::Duration::from_secs(30)),
         },
         token,
     ).map_err(|error| {
