@@ -9,7 +9,7 @@
 
 - PR #176 (Android debug-symbol reduction) merged to `main` as `e5764c6162d775ed759ceeac3f082d6f8475f988`.
 - Exact PR-head jobs passed: Rust core tests, Rust lint, React TypeScript build, Tauri native tests on Windows/macOS/Linux, Rust dependency audit, CodeQL and Android ARM64 compatibility.
-- The Android ARM64 debug APK artifact measured **16,718,772 bytes** (about 16.7 MB), compared with the previously recorded 196 MB initial debug APK.
+- The uploaded Android ARM64 Actions artifact archive measured **16,718,772 bytes**. This is the compressed artifact archive, not the raw APK file size. The workflow did not report the uncompressed APK size, so the reduction from the previously recorded 196 MB initial APK is not verified. PR #178 adds a raw APK size measurement to the workflow summary.
 - The installer-size workflow produced unsigned preview artifacts for Windows, macOS and Linux.
 - The post-merge CI and CodeQL workflows for the merge commit were still running at the time of this audit. The documentation commits that follow this report require their own fresh main-branch checks.
 - No open PRs were present at the time of the repository check.
