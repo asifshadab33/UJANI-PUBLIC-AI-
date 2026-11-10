@@ -238,15 +238,20 @@ pub async fn find_local_files(
                 let read_path = candidate.path.clone();
                 match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
                     Ok(Ok(bytes)) => {
-                        text_bytes = text_bytes.saturating_add(bytes.len() as u64);
-                        match String::from_utf8(bytes) {
-                            Ok(content) => {
-                                if let Some(preview) = match_preview_for(&content, &query) {
-                                    matched_in.push("text content".to_string());
-                                    match_preview = Some(preview);
-                                }
-                            },
-                            Err(_) => incomplete = true,
+                        let actual_bytes = bytes.len() as u64;
+                        if text_bytes.saturating_add(actual_bytes) > MAX_TEXT_TOTAL_BYTES {
+                            incomplete = true;
+                        } else {
+                            text_bytes = text_bytes.saturating_add(actual_bytes);
+                            match String::from_utf8(bytes) {
+                                Ok(content) => {
+                                    if let Some(preview) = match_preview_for(&content, &query) {
+                                        matched_in.push("text content".to_string());
+                                        match_preview = Some(preview);
+                                    }
+                                },
+                                Err(_) => incomplete = true,
+                            }
                         }
                     }
                     _ => incomplete = true,
@@ -261,10 +266,15 @@ pub async fn find_local_files(
             }
             if tokio::time::Instant::now() >= deadline { truncated = true; break; }
             pdf_count += 1;
-            pdf_bytes = pdf_bytes.saturating_add(candidate.size);
             let read_path = candidate.path.clone();
             match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
+                    let actual_bytes = bytes.len() as u64;
+                    if pdf_bytes.saturating_add(actual_bytes) > MAX_PDF_TOTAL_BYTES {
+                        incomplete = true;
+                        continue;
+                    }
+                    pdf_bytes = pdf_bytes.saturating_add(actual_bytes);
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                     if remaining.is_zero() {
                         incomplete = true;
