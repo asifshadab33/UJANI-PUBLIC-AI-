@@ -268,8 +268,8 @@ fn chat_capable_model_sizes(
         .collect()
 }
 
-/// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
-fn build_ollama_status(
+/// Inputs for one consistent Ollama inventory and recommendation snapshot.
+struct OllamaStatusInput {
     available: bool,
     models: Vec<ollama::OllamaModel>,
     metadata: HashMap<String, ollama::OllamaModelMetadata>,
@@ -281,7 +281,23 @@ fn build_ollama_status(
     cpu_logical_cores: Option<u32>,
     memory_total_mb: Option<u64>,
     memory_available_mb: Option<u64>,
-) -> OllamaStatus {
+}
+
+/// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
+fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
+    let OllamaStatusInput {
+        available,
+        models,
+        metadata,
+        runtime_version,
+        accelerator,
+        os_name,
+        os_version,
+        architecture,
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+    } = input;
     let (memory_total_mb, memory_available_mb) =
         model_inventory::normalize_memory_readings(memory_total_mb, memory_available_mb);
     let recommendation = recommend_local_model(
@@ -645,19 +661,19 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
     let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
 
-    Ok(build_ollama_status(
+    Ok(build_ollama_status(OllamaStatusInput {
         available,
         models,
         metadata,
         runtime_version,
         accelerator,
-        System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        System::os_version(),
-        std::env::consts::ARCH.to_string(),
+        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os_version: System::os_version(),
+        architecture: std::env::consts::ARCH.to_string(),
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
-    ))
+    }))
 }
 
 
@@ -1104,19 +1120,19 @@ mod model_inventory_recommendation_tests {
             },
         )]);
 
-        let status = build_ollama_status(
-            true,
+        let status = build_ollama_status(OllamaStatusInput {
+            available: true,
             models,
             metadata,
-            Some("test-runtime".into()),
-            None,
-            "Linux".into(),
-            None,
-            "x86_64".into(),
-            Some(8),
-            Some(8_192),
-            Some(16_384),
-        );
+            runtime_version: Some("test-runtime".into()),
+            accelerator: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: Some(8),
+            memory_total_mb: Some(8_192),
+            memory_available_mb: Some(16_384),
+        });
         let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
 
         assert_eq!(inventory["hardware"]["memory_total_mb"], 8_192);
