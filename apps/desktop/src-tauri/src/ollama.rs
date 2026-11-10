@@ -39,7 +39,6 @@ pub struct OllamaModelMetadata {
 
 #[derive(Deserialize)]
 struct ModelList {
-    #[serde(default)]
     models: Vec<OllamaModel>,
 }
 
