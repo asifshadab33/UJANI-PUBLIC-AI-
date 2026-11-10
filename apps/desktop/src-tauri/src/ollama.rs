@@ -494,7 +494,7 @@ struct PullProgress {
     success: bool,
 }
 
-fn parse_pull_progress_line(line: &[u8]) -> Result<PullProgress, String> {
+/// Parse one bounded Ollama NDJSON progress event into a safe progress update.\nfn parse_pull_progress_line(line: &[u8]) -> Result<PullProgress, String> {
     let event: serde_json::Value = serde_json::from_slice(line)
         .map_err(|_| "Ollama returned an invalid model-download progress event.".to_string())?;
     if let Some(error) = event.get("error").and_then(|value| value.as_str()) {
