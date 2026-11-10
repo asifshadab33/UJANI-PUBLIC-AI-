@@ -74,7 +74,7 @@ const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in 
 const MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v1";
 type ModelSelectionMode = "auto" | "manual";
 function readModelSelectionPreference(): { mode: ModelSelectionMode; model: string } {
-  if (typeof window === "undefined") return { mode: "auto", model: "" };
+  if (typeof window === "undefined") return { mode: "manual", model: "" };
   try {
     const value = JSON.parse(window.localStorage.getItem(MODEL_SELECTION_STORAGE_KEY) || "null");
     if (value && (value.mode === "auto" || value.mode === "manual")
@@ -84,7 +84,7 @@ function readModelSelectionPreference(): { mode: ModelSelectionMode; model: stri
   } catch {
     // Storage may be unavailable or contain an older/corrupt value; use safe defaults.
   }
-  return { mode: "auto", model: "" };
+  return { mode: "manual", model: "" };
 }
 
 /// Read a selected file using the browser's native encoder rather than expanding
