@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(inventory.models[0].context_length_tokens, Some(32_768));
         assert_eq!(
             inventory.models[0].capabilities,
-            vec!["chat", "vision", "tool_use"]
+            vec!["chat".to_string(), "vision".to_string(), "tool_use".to_string()]
         );
         assert_eq!(inventory.models[0].evidence.source, "runtime_metadata");
         assert_eq!(inventory.hardware.accelerators[0].evidence.confidence, "reported");
