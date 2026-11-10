@@ -15,6 +15,23 @@ pub struct ModelRuntimeInventory {
     privacy: InventoryPrivacy,
 }
 
+/// Inputs are observations already collected by the bounded OS/runtime adapters.
+/// Keeping them in a named struct avoids positional argument mistakes as the
+/// inventory contract grows.
+pub struct ModelInventoryInput<'a> {
+    pub models: &'a [OllamaModel],
+    pub metadata: &'a HashMap<String, OllamaModelMetadata>,
+    pub runtime_available: bool,
+    pub runtime_version: Option<String>,
+    pub os_name: String,
+    pub os_version: Option<String>,
+    pub architecture: String,
+    pub cpu_logical_cores: Option<u32>,
+    pub memory_total_mb: Option<u64>,
+    pub memory_available_mb: Option<u64>,
+    pub accelerator: Option<&'a AcceleratorObservation>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct InventoryPlatform {
     os: String,
@@ -120,19 +137,20 @@ fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
 /// Build inventory v1 from already-bounded OS and local-runtime observations.
 /// Unknown accelerator, storage, context and capability values remain unknown;
 /// this function never probes another endpoint or reads user content.
-pub fn build_inventory(
-    models: &[OllamaModel],
-    metadata: &HashMap<String, OllamaModelMetadata>,
-    runtime_available: bool,
-    runtime_version: Option<String>,
-    os_name: String,
-    os_version: Option<String>,
-    architecture: String,
-    cpu_logical_cores: Option<u32>,
-    memory_total_mb: Option<u64>,
-    memory_available_mb: Option<u64>,
-    accelerator: Option<&AcceleratorObservation>,
-) -> ModelRuntimeInventory {
+pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory {
+    let ModelInventoryInput {
+        models,
+        metadata,
+        runtime_available,
+        runtime_version,
+        os_name,
+        os_version,
+        architecture,
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+        accelerator,
+    } = input;
     let observed_at = now_unix_ms();
     let gpu_activity_confirmed = accelerator
         .is_some_and(|observation| observation.gpu_vram_allocated_bytes > 0);
@@ -217,7 +235,11 @@ pub fn build_inventory(
             version: bounded_text(runtime_version, 64),
             availability: if runtime_available { "available" } else { "unavailable" },
             network_scope: "loopback_only",
-            evidence: InventoryEvidence::reported("runtime_api", observed_at),
+            evidence: if runtime_available {
+                InventoryEvidence::reported("runtime_api", observed_at)
+            } else {
+                InventoryEvidence::unknown()
+            },
         }],
         models: inventory_models,
         privacy: InventoryPrivacy {
@@ -241,6 +263,7 @@ mod tests {
             details: Some(OllamaModelDetails {
                 format: Some("gguf".into()),
                 family: Some("llama".into()),
+                families: None,
                 parameter_size: Some("3B".into()),
                 quantization_level: Some("Q4_K_M".into()),
             }),
@@ -249,23 +272,26 @@ mod tests {
 
     #[test]
     fn inventory_keeps_unknown_hardware_and_model_capabilities_explicit() {
-        let inventory = build_inventory(
-            &[model("llama3.2:latest", 1_000_000)],
-            &HashMap::new(),
-            false,
-            None,
-            "Linux".into(),
-            None,
-            "x86_64".into(),
-            Some(8),
-            Some(16_384),
-            Some(8_192),
-            None,
-        );
+        let models = [model("llama3.2:latest", 1_000_000)];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: Some(8),
+            memory_total_mb: Some(16_384),
+            memory_available_mb: Some(8_192),
+            accelerator: None,
+        });
 
         assert_eq!(inventory.schema_version, 1);
         assert_eq!(inventory.runtimes[0].availability, "unavailable");
         assert_eq!(inventory.runtimes[0].network_scope, "loopback_only");
+        assert_eq!(inventory.runtimes[0].evidence.confidence, "unknown");
         assert_eq!(inventory.models[0].capabilities, vec!["unknown".to_string()]);
         assert_eq!(inventory.models[0].context_length_tokens, None);
         assert_eq!(inventory.hardware.storage_free_mb, None);
@@ -280,19 +306,21 @@ mod tests {
 
     #[test]
     fn inventory_serializes_the_v1_required_sections_and_privacy_flags() {
-        let inventory = build_inventory(
-            &[],
-            &HashMap::new(),
-            false,
-            None,
-            "Linux".into(),
-            None,
-            "x86_64".into(),
-            None,
-            None,
-            None,
-            None,
-        );
+        let models = [];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        });
         let value = serde_json::to_value(inventory).expect("inventory serializes");
         assert_eq!(value["schema_version"], 1);
         assert!(value["generated_at_unix_ms"].as_u64().unwrap_or(0) > 0);
@@ -313,6 +341,7 @@ mod tests {
     #[test]
     fn inventory_preserves_only_runtime_reported_capabilities_and_context() {
         let model = model("qwen2.5:3b", 2_000_000);
+        let models = [model.clone()];
         let metadata = HashMap::from([(
             model.name.clone(),
             OllamaModelMetadata {
@@ -320,23 +349,24 @@ mod tests {
                 capabilities: vec!["chat".into(), "vision".into(), "tool_use".into()],
             },
         )]);
-        let inventory = build_inventory(
-            &[model],
-            &metadata,
-            true,
-            Some("0.5.12".into()),
-            "Windows 11".into(),
-            Some("10.0".into()),
-            "x86_64".into(),
-            Some(12),
-            Some(32_768),
-            Some(20_000),
-            Some(&AcceleratorObservation {
-                gpu_vram_allocated_bytes: 4 * 1024 * 1024 * 1024,
-                running_models: 1,
-                evidence: "Ollama reports active model VRAM allocation".into(),
-            }),
-        );
+        let accelerator = AcceleratorObservation {
+            gpu_vram_allocated_bytes: 4 * 1024 * 1024 * 1024,
+            running_models: 1,
+            evidence: "Ollama reports active model VRAM allocation".into(),
+        };
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: Some("0.5.12".into()),
+            os_name: "Windows 11".into(),
+            os_version: Some("10.0".into()),
+            architecture: "x86_64".into(),
+            cpu_logical_cores: Some(12),
+            memory_total_mb: Some(32_768),
+            memory_available_mb: Some(20_000),
+            accelerator: Some(&accelerator),
+        });
 
         assert_eq!(inventory.runtimes[0].version.as_deref(), Some("0.5.12"));
         assert_eq!(inventory.models[0].context_length_tokens, Some(32_768));
