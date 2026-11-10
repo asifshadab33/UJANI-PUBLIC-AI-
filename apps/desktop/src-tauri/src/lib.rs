@@ -268,12 +268,61 @@ fn chat_capable_model_sizes(
         .collect()
 }
 
+/// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
+fn build_ollama_status(
+    available: bool,
+    models: Vec<ollama::OllamaModel>,
+    metadata: HashMap<String, ollama::OllamaModelMetadata>,
+    runtime_version: Option<String>,
+    accelerator: Option<ollama::AcceleratorObservation>,
+    os_name: String,
+    os_version: Option<String>,
+    architecture: String,
+    cpu_logical_cores: Option<u32>,
+    memory_total_mb: Option<u64>,
+    memory_available_mb: Option<u64>,
+) -> OllamaStatus {
+    let (memory_total_mb, memory_available_mb) =
+        model_inventory::normalize_memory_readings(memory_total_mb, memory_available_mb);
+    let recommendation = recommend_local_model(
+        &chat_capable_model_sizes(&models, &metadata),
+        memory_available_mb.unwrap_or(0),
+    );
+    let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
+        models: &models,
+        metadata: &metadata,
+        runtime_available: available,
+        runtime_version,
+        os_name,
+        os_version,
+        architecture,
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+        accelerator: accelerator.as_ref(),
+    });
+
+    OllamaStatus {
+        available,
+        models,
+        inventory,
+        recommendation,
+    }
+}
+
 /// Advisory fit estimate over installed models whose local runtime explicitly reports chat support.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
     let mut system = System::new();
     system.refresh_memory();
-    let available_memory_mb = system.available_memory() / (1024 * 1024);
+    let total_memory_bytes = system.total_memory();
+    let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
+    let reported_available_memory_mb =
+        memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
+    let (_, available_memory_mb) = model_inventory::normalize_memory_readings(
+        memory_total_mb,
+        reported_available_memory_mb,
+    );
     let models = if ollama::is_available().await {
         let installed = ollama::list_models().await?;
         let metadata = ollama::inspect_models(&installed).await;
@@ -281,7 +330,7 @@ async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
     } else {
         Vec::new()
     };
-    Ok(recommend_local_model(&models, available_memory_mb))
+    Ok(recommend_local_model(&models, available_memory_mb.unwrap_or(0)))
 }
 
 #[derive(Serialize)]
@@ -595,31 +644,20 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let total_memory_bytes = system.total_memory();
     let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
     let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
-    let available_memory_mb = memory_available_mb.unwrap_or(0);
-    let recommendation = recommend_local_model(
-        &chat_capable_model_sizes(&models, &metadata),
-        available_memory_mb,
-    );
-    let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
-        models: &models,
-        metadata: &metadata,
-        runtime_available: available,
+
+    Ok(build_ollama_status(
+        available,
+        models,
+        metadata,
         runtime_version,
-        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        os_version: System::os_version(),
-        architecture: std::env::consts::ARCH.to_string(),
+        accelerator,
+        System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        System::os_version(),
+        std::env::consts::ARCH.to_string(),
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
-        accelerator: accelerator.as_ref(),
-    });
-
-    Ok(OllamaStatus {
-        available,
-        models,
-        inventory,
-        recommendation,
-    })
+    ))
 }
 
 
@@ -1045,6 +1083,47 @@ where
     }
     if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
+}
+
+#[cfg(test)]
+mod model_inventory_recommendation_tests {
+    use super::*;
+
+    #[test]
+    fn displayed_recommendation_uses_the_same_normalized_ram_as_inventory() {
+        let models = vec![ollama::OllamaModel {
+            name: "small-chat".into(),
+            size: 512 * 1024 * 1024,
+            details: None,
+        }];
+        let metadata = HashMap::from([(
+            "small-chat".to_string(),
+            ollama::OllamaModelMetadata {
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["chat".into()],
+            },
+        )]);
+
+        let status = build_ollama_status(
+            true,
+            models,
+            metadata,
+            Some("test-runtime".into()),
+            None,
+            "Linux".into(),
+            None,
+            "x86_64".into(),
+            Some(8),
+            Some(8_192),
+            Some(16_384),
+        );
+        let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
+
+        assert_eq!(inventory["hardware"]["memory_total_mb"], 8_192);
+        assert!(inventory["hardware"]["memory_available_mb"].is_null());
+        assert_eq!(status.recommendation.available_memory_mb, 0);
+        assert!(status.recommendation.recommended_model.is_none());
+    }
 }
 
 #[cfg(test)]
