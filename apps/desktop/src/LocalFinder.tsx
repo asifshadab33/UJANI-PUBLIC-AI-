@@ -123,7 +123,7 @@ export default function LocalFinder() {
       <button className="model-run" type="submit" disabled={!query.trim() || busy || cacheBusy}>{busy ? "Searching selected folder…" : "Choose folder and search"} <Search size={15}/></button>
     </form>
     <div className="local-cache-controls">
-      <div className="section-heading"><div><h3>Recent search cache</h3><p>Encrypted metadata only; document contents are never cached.</p></div></div>
+      <div className="section-heading"><div><h3>Recent search cache</h3><p>Encrypted metadata only; document contents are never cached. Match excerpts appear only after a fresh scan.</p></div></div>
       <label className="consent-row"><input type="checkbox" checked={cacheSettings.enabled} disabled={!cacheSettingsAvailable || cacheBusy || busy} onChange={(event) => void updateCacheSettings(event.target.checked, cacheSettings.retention_days)}/> Remember validated search results and recent search phrases, including no-match searches (opt-in)</label>
       <label className="model-select">Delete cached results after
         <select value={String(cacheSettings.retention_days)} disabled={!cacheSettingsAvailable || cacheBusy || busy || !cacheSettings.enabled} onChange={(event) => void updateCacheSettings(cacheSettings.enabled, Number(event.target.value))}>
