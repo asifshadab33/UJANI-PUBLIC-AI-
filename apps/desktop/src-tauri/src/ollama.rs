@@ -1,6 +1,8 @@
 //! Strictly local Ollama adapter. It contacts only the loopback address and never a cloud endpoint.
 use serde::{Deserialize, Serialize};
-use std::{sync::OnceLock, time::Duration};
+use serde_json::Value;
+use std::{collections::HashMap, sync::OnceLock, time::Duration};
+use tokio::task::JoinSet;
 
 const BASE_URL: &str = "http://127.0.0.1:11434";
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
@@ -11,9 +13,58 @@ const MAX_ATTEMPTS: u8 = 3;
 pub struct OllamaModel {
     pub name: String,
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<OllamaModelDetails>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct OllamaModelDetails {
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub family: Option<String>,
+    #[serde(default)]
+    pub families: Option<Vec<String>>,
+    #[serde(default)]
+    pub parameter_size: Option<String>,
+    #[serde(default)]
+    pub quantization_level: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaModelMetadata {
+    pub context_length_tokens: Option<u64>,
+    pub capabilities: Vec<String>,
+}
+
 #[derive(Deserialize)]
-struct ModelList { models: Vec<OllamaModel> }
+struct ModelList {
+    #[serde(default)]
+    models: Vec<OllamaModel>,
+}
+
+#[derive(Deserialize)]
+struct VersionResponse {
+    version: String,
+}
+
+#[derive(Serialize)]
+struct ShowModelRequest<'a> {
+    model: &'a str,
+    verbose: bool,
+}
+
+#[derive(Deserialize, Default)]
+struct ShowModelResponse {
+    #[serde(default)]
+    capabilities: Vec<String>,
+    #[serde(default)]
+    model_info: HashMap<String, Value>,
+}
+
+const MAX_INSTALLED_MODELS: usize = 512;
+const MAX_MODEL_METADATA_INSPECTIONS: usize = 32;
+const MAX_MODEL_METADATA_CONCURRENCY: usize = 4;
 
 const NUM_CTX: u32 = 8192;
 #[derive(Serialize)] struct ChatMsg<'a> { role: &'a str, content: &'a str }
@@ -120,7 +171,119 @@ pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
         .await
         .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
     let list: ModelList = parse_limited(response).await?;
+    if list.models.len() > MAX_INSTALLED_MODELS {
+        return Err(format!("Local Ollama reports more than the {MAX_INSTALLED_MODELS}-model inventory limit."));
+    }
+    if list.models.iter().any(|model| !valid_model(&model.name)) {
+        return Err("Local Ollama returned a model identifier outside the supported safe format.".into());
+    }
     Ok(list.models)
+}
+
+pub async fn runtime_version() -> Result<String, String> {
+    let response = client()?
+        .get(format!("{BASE_URL}/api/version"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .map_err(|error| format!("Could not read local Ollama version: {error}"))?;
+    let version: VersionResponse = parse_limited(response).await?;
+    let version = version.version.trim();
+    if version.is_empty() || version.len() > 64 || !version.chars().all(|c| c.is_ascii_alphanumeric() || ".-_+".contains(c)) {
+        return Err("Local Ollama returned an invalid version identifier.".into());
+    }
+    Ok(version.to_string())
+}
+
+fn context_length_tokens(model_info: &HashMap<String, Value>) -> Option<u64> {
+    model_info
+        .iter()
+        .filter(|(key, _)| key.ends_with(".context_length"))
+        .filter_map(|(_, value)| value.as_u64())
+        .find(|value| *value > 0 && *value <= 1_000_000)
+}
+
+fn canonical_model_capabilities(reported: &[String]) -> Vec<String> {
+    let mut capabilities = Vec::new();
+    if reported.iter().any(|value| value == "completion") {
+        capabilities.push("chat".to_string());
+    }
+    if reported.iter().any(|value| value == "vision") {
+        capabilities.push("vision".to_string());
+    }
+    if reported.iter().any(|value| value == "tools") {
+        capabilities.push("tool_use".to_string());
+    }
+    if reported.iter().any(|value| value == "embedding" || value == "embeddings") {
+        capabilities.push("embeddings".to_string());
+    }
+    if capabilities.is_empty() {
+        capabilities.push("unknown".to_string());
+    }
+    capabilities
+}
+
+/// Read model capabilities and context only from Ollama's bounded local metadata API.
+/// Unsupported/older runtime responses are treated as unknown, never guessed from names.
+pub async fn inspect_model_metadata(model: &str) -> Result<OllamaModelMetadata, String> {
+    if !valid_model(model) {
+        return Err("Invalid local model identifier.".into());
+    }
+    let response = client()?
+        .post(format!("{BASE_URL}/api/show"))
+        .json(&ShowModelRequest { model, verbose: false })
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .map_err(|error| format!("Could not inspect local Ollama model metadata: {error}"))?;
+    let details: ShowModelResponse = parse_limited(response).await?;
+    Ok(OllamaModelMetadata {
+        context_length_tokens: context_length_tokens(&details.model_info),
+        capabilities: canonical_model_capabilities(&details.capabilities),
+    })
+}
+
+/// Inspect at most 32 installed models, with four concurrent loopback requests and
+/// an eight-second aggregate deadline. Failed, unsupported or uninspected models
+/// are intentionally absent from this map so callers can report unknown metadata.
+pub async fn inspect_models(models: &[OllamaModel]) -> HashMap<String, OllamaModelMetadata> {
+    let mut pending = models
+        .iter()
+        .take(MAX_MODEL_METADATA_INSPECTIONS)
+        .filter(|model| valid_model(&model.name))
+        .map(|model| model.name.clone());
+    let mut tasks = JoinSet::new();
+    let mut inspected = HashMap::new();
+
+    for _ in 0..MAX_MODEL_METADATA_CONCURRENCY {
+        if let Some(name) = pending.next() {
+            tasks.spawn(async move {
+                let result = inspect_model_metadata(&name).await;
+                (name, result)
+            });
+        }
+    }
+
+    let timed_out = tokio::time::timeout(Duration::from_secs(8), async {
+        while let Some(joined) = tasks.join_next().await {
+            if let Ok((name, Ok(metadata))) = joined {
+                inspected.insert(name, metadata);
+            }
+            if let Some(name) = pending.next() {
+                tasks.spawn(async move {
+                    let result = inspect_model_metadata(&name).await;
+                    (name, result)
+                });
+            }
+        }
+    })
+    .await
+    .is_err();
+
+    if timed_out {
+        tasks.abort_all();
+    }
+    inspected
 }
 
 fn build_chat_body<'a>(
@@ -403,6 +566,49 @@ mod tests {
     fn rejects_stream_errors_and_malformed_events() {
         assert!(parse_chat_stream_line(br#"{"error":"model unavailable"}"#).unwrap_err().contains("model unavailable"));
         assert!(parse_chat_stream_line(b"not-json").is_err());
+    }
+
+
+    #[test]
+    fn model_capability_mapping_is_allowlisted_and_unknown_is_preserved() {
+        assert_eq!(
+            canonical_model_capabilities(&[
+                "completion".into(),
+                "vision".into(),
+                "tools".into(),
+                "unrecognised".into(),
+            ]),
+            vec!["chat", "vision", "tool_use"]
+        );
+        assert_eq!(
+            canonical_model_capabilities(&["unrecognised".into()]),
+            vec!["unknown"]
+        );
+        assert_eq!(canonical_model_capabilities(&[]), vec!["unknown"]);
+    }
+
+    #[test]
+    fn context_length_requires_a_bounded_positive_integer() {
+        let valid = HashMap::from([(
+            "llama.context_length".into(),
+            Value::from(32_768_u64),
+        )]);
+        assert_eq!(context_length_tokens(&valid), Some(32_768));
+
+        let zero = HashMap::from([("llama.context_length".into(), Value::from(0_u64))]);
+        assert_eq!(context_length_tokens(&zero), None);
+
+        let oversized = HashMap::from([(
+            "llama.context_length".into(),
+            Value::from(2_000_000_u64),
+        )]);
+        assert_eq!(context_length_tokens(&oversized), None);
+
+        let untrusted_string = HashMap::from([(
+            "llama.context_length".into(),
+            Value::from("32768"),
+        )]);
+        assert_eq!(context_length_tokens(&untrusted_string), None);
     }
 
     #[test]
