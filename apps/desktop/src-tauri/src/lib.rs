@@ -1758,6 +1758,9 @@ fn get_device_info() -> DeviceInfo {
 /// Returns only models registered by the application. No model files are scanned.
 #[tauri::command]
 fn list_local_models() -> Vec<ModelInfo> {
+    if !cfg!(debug_assertions) {
+        return Vec::new();
+    }
     let mut system = System::new();
     system.refresh_cpu();
     discover_models(!system.cpus().is_empty())
@@ -1766,6 +1769,9 @@ fn list_local_models() -> Vec<ModelInfo> {
 /// Runs an explicitly selected local adapter. No network or cloud fallback exists.
 #[tauri::command]
 fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
+    if !cfg!(debug_assertions) {
+        return Err("The deterministic mock model adapter is disabled in release builds.".into());
+    }
     let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
     let mut system = System::new();
     system.refresh_cpu();
