@@ -152,6 +152,14 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         accelerator,
     } = input;
     let observed_at = now_unix_ms();
+    // Enterprise rejects impossible hardware snapshots. Preserve an available-memory
+    // reading only when it does not exceed a known, positive total; otherwise report
+    // the inconsistent value as unknown rather than clamping or inventing a value.
+    let memory_total_mb = memory_total_mb.filter(|memory| *memory > 0);
+    let memory_available_mb = match (memory_total_mb, memory_available_mb) {
+        (Some(total), Some(available)) if available > total => None,
+        (_, available) => available,
+    };
     let gpu_activity_confirmed = accelerator
         .is_some_and(|observation| observation.gpu_vram_allocated_bytes > 0);
 
@@ -223,7 +231,7 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         },
         hardware: InventoryHardware {
             cpu_logical_cores: cpu_logical_cores.filter(|cores| *cores > 0 && *cores <= 65_535),
-            memory_total_mb: memory_total_mb.filter(|memory| *memory > 0),
+            memory_total_mb,
             memory_available_mb,
             // No portable, unambiguous aggregate free-space value is collected yet.
             storage_free_mb: None,
@@ -302,6 +310,50 @@ mod tests {
         assert!(!inventory.privacy.contains_user_files);
         assert!(!inventory.privacy.contains_local_paths);
         assert!(!inventory.privacy.contains_credentials);
+    }
+
+    #[test]
+    fn inconsistent_available_memory_is_reported_as_unknown() {
+        let models = [];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: Some(8),
+            memory_total_mb: Some(8_192),
+            memory_available_mb: Some(16_384),
+            accelerator: None,
+        });
+
+        assert_eq!(inventory.hardware.memory_total_mb, Some(8_192));
+        assert_eq!(inventory.hardware.memory_available_mb, None);
+    }
+
+    #[test]
+    fn available_memory_is_preserved_when_total_memory_is_unknown() {
+        let models = [];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: Some(2_048),
+            accelerator: None,
+        });
+
+        assert_eq!(inventory.hardware.memory_total_mb, None);
+        assert_eq!(inventory.hardware.memory_available_mb, Some(2_048));
     }
 
     #[test]
