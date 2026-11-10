@@ -1,0 +1,59 @@
+name: UJANI Android native compatibility check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/desktop/src-tauri/**"
+      - "crates/ujani-core/**"
+      - ".github/workflows/android-native-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ujani-android-native-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-aarch64-check:
+    name: Android arm64 Rust compile check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install Android SDK platform and NDK 28
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Configure Android Rust target and NDK linker
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android
+          TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$TOOLCHAIN/aarch64-linux-android24-clang"
+          {
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/aarch64-linux-android24-clang"
+            echo "CC_aarch64_linux_android=$TOOLCHAIN/aarch64-linux-android24-clang"
+            echo "AR_aarch64_linux_android=$TOOLCHAIN/llvm-ar"
+          } >> "$GITHUB_ENV"
+
+      - name: Compile the Tauri native application for Android arm64
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --target aarch64-linux-android --locked
