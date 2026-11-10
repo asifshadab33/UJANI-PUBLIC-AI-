@@ -128,6 +128,18 @@ pub async fn find_duplicate_files(
 ///
 /// The operation is read-only and observes cancellation between directory entries.
 fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<DuplicateScanResult, String> {
+    scan_duplicates_with_budget(folder, token, MAX_TOTAL_HASH_BYTES)
+}
+
+/// Scans a selected folder under a caller-supplied total hashing budget.
+///
+/// Smaller size buckets and path-sorted candidates make the same folder produce
+/// deterministic results when the same budget is applied.
+fn scan_duplicates_with_budget(
+    folder: &Path,
+    token: &CancellationToken,
+    total_hash_budget: u64,
+) -> Result<DuplicateScanResult, String> {
     let walked = crate::safe_fs::walk_directory(
         folder,
         crate::safe_fs::WalkOptions {
@@ -158,8 +170,8 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
             return Err("Duplicate scan cancelled by user.".into());
         }
         scanned_files += 1;
-        if entry.size_bytes == 0 || entry.size_bytes > MAX_FILE_BYTES {
-            if entry.size_bytes > MAX_FILE_BYTES { truncated = true; }
+        if entry.size_bytes > MAX_FILE_BYTES {
+            truncated = true;
             continue;
         }
         let file = match crate::safe_fs::open_regular_file(&entry.path) {
@@ -170,7 +182,7 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
             Ok(metadata) if metadata.is_file() => metadata,
             _ => { truncated = true; continue; }
         };
-        if metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
+        if metadata.len() > MAX_FILE_BYTES {
             truncated = true;
             continue;
         }
@@ -184,19 +196,29 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
     let mut total_hash_bytes = 0u64;
     let mut hashed_files = 0usize;
     let mut by_digest: HashMap<(u64, String), Vec<DuplicateFile>> = HashMap::new();
-    'sizes: for (size, candidates) in by_size {
+    let mut sized_buckets: Vec<(u64, Vec<Candidate>)> = by_size.into_iter().collect();
+    // The shared byte budget must produce the same result for the same folder.
+    // Hash smaller files first and sort each bucket by path before consuming it.
+    sized_buckets.sort_by_key(|(size, _)| *size);
+    for (size, mut candidates) in sized_buckets {
         if candidates.len() < 2 { continue; }
+        candidates.sort_by(|left, right| left.path.cmp(&right.path));
         for candidate in candidates {
             if token.is_cancelled() { return Err("Duplicate scan cancelled by user.".into()); }
-            if total_hash_bytes.saturating_add(size) > MAX_TOTAL_HASH_BYTES {
+            let remaining_budget = total_hash_budget.saturating_sub(total_hash_bytes);
+            if size > remaining_budget {
                 truncated = true;
-                break 'sizes;
+                continue;
             }
-            let digest = match hash_file(&candidate.path, MAX_FILE_BYTES) {
-                Ok(digest) => digest,
-                Err(_) => { truncated = true; continue; }
+            let (digest, bytes_read) = match hash_file(&candidate.path, candidate.size_bytes, remaining_budget) {
+                Ok(result) => result,
+                Err((_, bytes_read)) => {
+                    total_hash_bytes = total_hash_bytes.saturating_add(bytes_read);
+                    truncated = true;
+                    continue;
+                }
             };
-            total_hash_bytes = total_hash_bytes.saturating_add(size);
+            total_hash_bytes = total_hash_bytes.saturating_add(bytes_read);
             hashed_files += 1;
             by_digest.entry((size, digest.clone())).or_default().push(DuplicateFile {
                 file_name: candidate.file_name,
@@ -230,16 +252,28 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
 }
 
 /// Computes a bounded content hash for a regular file without following a final-component link.
-fn hash_file(path: &Path, limit: u64) -> Result<String, String> {
-    let mut file = crate::safe_fs::open_regular_file(path).map_err(|error| error.to_string())?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > limit {
-        return Err("File is not eligible for bounded hashing.".into());
+fn hash_file(path: &Path, expected_size: u64, limit: u64) -> Result<(String, u64), (String, u64)> {
+    let mut file = crate::safe_fs::open_regular_file(path)
+        .map_err(|error| (error.to_string(), 0))?;
+    let metadata = file.metadata().map_err(|error| (error.to_string(), 0))?;
+    if !metadata.is_file() || metadata.len() != expected_size || expected_size > limit {
+        return Err(("File changed or is not eligible for bounded hashing.".into(), 0));
     }
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    file.by_ref().take(limit.saturating_add(1)).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > limit { return Err("File grew beyond the hashing limit.".into()); }
-    Ok(super::sha256_hex(&bytes))
+
+    let capacity = usize::try_from(expected_size).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(capacity);
+    if let Err(error) = file.by_ref().take(expected_size).read_to_end(&mut bytes) {
+        return Err((error.to_string(), bytes.len() as u64));
+    }
+    let bytes_read = bytes.len() as u64;
+    if bytes_read != expected_size {
+        return Err(("File changed while it was being hashed.".into(), bytes_read));
+    }
+    let final_metadata = file.metadata().map_err(|error| (error.to_string(), bytes_read))?;
+    if final_metadata.len() != expected_size {
+        return Err(("File changed while it was being hashed.".into(), bytes_read));
+    }
+    Ok((super::sha256_hex(&bytes), bytes_read))
 }
 
 
@@ -252,6 +286,58 @@ mod tests {
     fn temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("ujani-{label}-{unique}"))
+    }
+
+    #[test]
+    fn detects_empty_files_as_duplicates() {
+        let root = temp_dir("empty-duplicates");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("empty-a.txt"), b"").unwrap();
+        fs::write(root.join("empty-b.txt"), b"").unwrap();
+        let result = scan_duplicates(&root, &CancellationToken::new()).unwrap();
+        assert_eq!(result.duplicate_groups.len(), 1);
+        assert_eq!(result.duplicate_groups[0].size_bytes, 0);
+        assert_eq!(result.duplicate_groups[0].files.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_hash_budget_processes_size_buckets_deterministically() {
+        let root = temp_dir("duplicate-budget-order");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("small-a.txt"), b"aa").unwrap();
+        fs::write(root.join("small-b.txt"), b"aa").unwrap();
+        fs::write(root.join("large-a.txt"), b"bbbb").unwrap();
+        fs::write(root.join("large-b.txt"), b"bbbb").unwrap();
+
+        let first = scan_duplicates_with_budget(&root, &CancellationToken::new(), 4).unwrap();
+        let second = scan_duplicates_with_budget(&root, &CancellationToken::new(), 4).unwrap();
+
+        assert_eq!(first.hashed_files, 2);
+        assert!(first.truncated);
+        assert_eq!(first.duplicate_groups.len(), 1);
+        assert_eq!(first.duplicate_groups[0].size_bytes, 2);
+        assert_eq!(first.duplicate_groups[0].files[0].path, second.duplicate_groups[0].files[0].path);
+        assert_eq!(first.duplicate_groups[0].sha256, second.duplicate_groups[0].sha256);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exhausted_hash_budget_does_not_hide_empty_file_duplicates() {
+        let root = temp_dir("empty-duplicates-budget");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("empty-a.txt"), b"").unwrap();
+        fs::write(root.join("empty-b.txt"), b"").unwrap();
+        fs::write(root.join("nonempty-a.txt"), b"data").unwrap();
+        fs::write(root.join("nonempty-b.txt"), b"data").unwrap();
+
+        let result = scan_duplicates_with_budget(&root, &CancellationToken::new(), 0).unwrap();
+
+        assert!(result.truncated);
+        assert_eq!(result.hashed_files, 2);
+        assert_eq!(result.duplicate_groups.len(), 1);
+        assert_eq!(result.duplicate_groups[0].size_bytes, 0);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
