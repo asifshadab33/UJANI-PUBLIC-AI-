@@ -10,6 +10,7 @@ mod local_search;
 mod search_cache;
 mod history;
 mod model_runtime;
+mod model_inventory;
 mod ollama;
 mod resource_runtime;
 mod security_providers;
@@ -207,15 +208,42 @@ async fn plan_task_workflow(nodes: Vec<TaskNode>, mode: String) -> Result<TaskGr
 struct OllamaStatus {
     available: bool,
     models: Vec<ollama::OllamaModel>,
+    inventory: model_inventory::ModelRuntimeInventory,
+    recommendation: ModelRecommendation,
 }
 
-/// Advisory model-fit estimates; no model is automatically selected or loaded.
+fn chat_capable_model_sizes(
+    models: &[ollama::OllamaModel],
+    metadata: &HashMap<String, ollama::OllamaModelMetadata>,
+) -> Vec<InstalledModelSize> {
+    models
+        .iter()
+        .filter(|model| {
+            metadata
+                .get(&model.name)
+                .is_some_and(|item| item.capabilities.iter().any(|capability| capability == "chat"))
+        })
+        .map(|model| InstalledModelSize {
+            name: model.name.clone(),
+            size_bytes: model.size,
+        })
+        .collect()
+}
+
+/// Advisory fit estimate over installed models whose local runtime explicitly reports chat support.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
- let mut system=System::new(); system.refresh_memory();
- let available_memory_mb=system.available_memory()/(1024*1024);
- let models=if ollama::is_available().await {ollama::list_models().await?.into_iter().map(|m|InstalledModelSize{name:m.name,size_bytes:m.size}).collect::<Vec<_>>()}else{Vec::new()};
- Ok(recommend_local_model(&models,available_memory_mb))
+    let mut system = System::new();
+    system.refresh_memory();
+    let available_memory_mb = system.available_memory() / (1024 * 1024);
+    let models = if ollama::is_available().await {
+        let installed = ollama::list_models().await?;
+        let metadata = ollama::inspect_models(&installed).await;
+        chat_capable_model_sizes(&installed, &metadata)
+    } else {
+        Vec::new()
+    };
+    Ok(recommend_local_model(&models, available_memory_mb))
 }
 
 #[derive(Serialize)]
@@ -447,12 +475,64 @@ async fn pull_ollama_model(
     result
 }
 
-/// Checks only the local Ollama service at 127.0.0.1:11434.
+/// Read-only model and device discovery. All runtime requests are fixed to loopback Ollama.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let available = ollama::is_available().await;
     let models = if available { ollama::list_models().await? } else { Vec::new() };
-    Ok(OllamaStatus { available, models })
+    let metadata = if available {
+        ollama::inspect_models(&models).await
+    } else {
+        HashMap::new()
+    };
+    let (runtime_version, accelerator) = if available {
+        let (version, observation) = tokio::join!(
+            ollama::runtime_version(),
+            ollama::accelerator_observation()
+        );
+        (version.ok(), observation.ok())
+    } else {
+        (None, None)
+    };
+
+    let mut system = System::new();
+    system.refresh_cpu();
+    system.refresh_memory();
+    let cpu_logical_cores = std::thread::available_parallelism()
+        .ok()
+        .map(|count| count.get().min(65_535) as u32)
+        .or_else(|| {
+            let count = system.cpus().len();
+            (count > 0).then_some(count.min(65_535) as u32)
+        });
+    let total_memory_bytes = system.total_memory();
+    let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
+    let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
+    let available_memory_mb = memory_available_mb.unwrap_or(0);
+    let recommendation = recommend_local_model(
+        &chat_capable_model_sizes(&models, &metadata),
+        available_memory_mb,
+    );
+    let inventory = model_inventory::build_inventory(
+        &models,
+        &metadata,
+        available,
+        runtime_version,
+        System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        System::os_version(),
+        std::env::consts::ARCH.to_string(),
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+        accelerator.as_ref(),
+    );
+
+    Ok(OllamaStatus {
+        available,
+        models,
+        inventory,
+        recommendation,
+    })
 }
 
 
