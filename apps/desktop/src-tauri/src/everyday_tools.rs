@@ -136,7 +136,8 @@ fn scan_duplicates(folder: &Path, token: &CancellationToken) -> Result<Duplicate
             links: crate::safe_fs::LinkPolicy::Skip,
             errors: crate::safe_fs::WalkErrorPolicy::SkipAndMarkTruncated,
             file_filter: None,
-        },
+        max_duration: None,
+},
         token,
     ).map_err(|error| {
         if error.contains("cancelled") {
