@@ -1,7 +1,7 @@
 //! Strictly local Ollama adapter. It contacts only the loopback address and never a cloud endpoint.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, sync::OnceLock, time::Duration};
+use std::{collections::{HashMap, HashSet}, sync::OnceLock, time::Duration};
 use tokio::task::JoinSet;
 
 const BASE_URL: &str = "http://127.0.0.1:11434";
@@ -163,6 +163,23 @@ pub async fn is_available() -> bool {
         Err(_) => false,
     }
 }
+fn validate_model_list(models: &[OllamaModel]) -> Result<(), String> {
+    if models.len() > MAX_INSTALLED_MODELS {
+        return Err(format!(
+            "Local Ollama reports more than the {MAX_INSTALLED_MODELS}-model inventory limit."
+        ));
+    }
+    let mut seen = HashSet::with_capacity(models.len());
+    for model in models {
+        if !valid_model(&model.name) || !seen.insert(model.name.as_str()) {
+            return Err(
+                "Local Ollama returned an invalid or duplicate model identifier.".into(),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
     let response = client()?
         .get(format!("{BASE_URL}/api/tags"))
@@ -171,16 +188,7 @@ pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
         .await
         .map_err(|e| format!("Cannot connect to Ollama at 127.0.0.1:11434 within 6 seconds: {e}"))?;
     let list: ModelList = parse_limited(response).await?;
-    if list.models.len() > MAX_INSTALLED_MODELS {
-        return Err(format!(
-            "Local Ollama reports more than the {MAX_INSTALLED_MODELS}-model inventory limit."
-        ));
-    }
-    if list.models.iter().any(|model| !valid_model(&model.name)) {
-        return Err(
-            "Local Ollama returned a model identifier outside the supported safe format.".into(),
-        );
-    }
+    validate_model_list(&list.models)?;
     Ok(list.models)
 }
 
@@ -577,6 +585,26 @@ mod tests {
         assert!(parse_chat_stream_line(b"not-json").is_err());
     }
 
+
+    #[test]
+    fn model_list_validation_rejects_duplicate_and_unsafe_identifiers() {
+        let duplicate = vec![
+            OllamaModel { name: "llama3.2:latest".into(), size: 10, details: None },
+            OllamaModel { name: "llama3.2:latest".into(), size: 20, details: None },
+        ];
+        assert!(validate_model_list(&duplicate).is_err());
+
+        let unsafe_name = vec![
+            OllamaModel { name: "../outside".into(), size: 10, details: None },
+        ];
+        assert!(validate_model_list(&unsafe_name).is_err());
+
+        let valid = vec![
+            OllamaModel { name: "llama3.2:latest".into(), size: 10, details: None },
+            OllamaModel { name: "qwen2.5:3b".into(), size: 20, details: None },
+        ];
+        assert!(validate_model_list(&valid).is_ok());
+    }
 
     #[test]
     fn model_capability_mapping_is_allowlisted_and_unknown_is_preserved() {
