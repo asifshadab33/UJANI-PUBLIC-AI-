@@ -218,6 +218,9 @@ export default function App() {
   const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
   const selectedInventoryModel = ollamaStatus?.inventory.models.find((model) => model.model_ref === ollamaModel);
   const inventoryRuntime = ollamaStatus?.inventory.runtimes.find((runtime) => runtime.runtime_id === "ollama.local");
+  const fitModelCandidates = modelRecommendation?.candidates.filter((candidate) => candidate.estimated_to_fit) ?? [];
+  const balancedFitModel = fitModelCandidates[Math.floor(fitModelCandidates.length / 2)] ?? null;
+  const largestFitModel = fitModelCandidates[fitModelCandidates.length - 1] ?? null;
 
   // Persist only the user's model-selection preference; never store prompts, files or credentials.
   useEffect(() => {
@@ -1188,7 +1191,10 @@ export default function App() {
                 <p>Available RAM: {modelRecommendation.available_memory_mb.toLocaleString()} MiB · Advisory budget: {modelRecommendation.usable_memory_budget_mb.toLocaleString()} MiB</p>
                 {modelRecommendation.recommended_model ? <p>Suggested installed model: <b>{modelRecommendation.recommended_model}</b></p> : <p>No installed model can currently be recommended from the available information.</p>}
                 {modelRecommendation.candidates.slice(0,5).map(candidate => <p key={candidate.name}>{candidate.name}: {candidate.estimated_working_memory_mb===null?"unknown estimate":candidate.estimated_working_memory_mb.toLocaleString()+" MiB estimated"} · {candidate.estimated_to_fit?"within advisory budget":"not recommended"}</p>)}
-                {modelRecommendation.recommended_model && <button className="model-run" onClick={() => { setModelSelectionMode("manual"); setOllamaModel(modelRecommendation.recommended_model!); }}>Choose suggested model</button>}
+                {modelRecommendation.recommended_model && <button className="model-run" onClick={() => { setModelSelectionMode("manual"); setOllamaModel(modelRecommendation.recommended_model!); setOllamaError(""); }}>Choose recommended / smaller-fit model · {modelRecommendation.recommended_model}</button>}
+                {balancedFitModel && balancedFitModel.name !== modelRecommendation.recommended_model && <button className="model-run" onClick={() => { setModelSelectionMode("manual"); setOllamaModel(balancedFitModel.name); setOllamaError(""); }}>Choose balanced-fit model · {balancedFitModel.name}</button>}
+                {largestFitModel && largestFitModel.name !== modelRecommendation.recommended_model && largestFitModel.name !== balancedFitModel?.name && <button className="model-run" onClick={() => { setModelSelectionMode("manual"); setOllamaModel(largestFitModel.name); setOllamaError(""); }}>Choose largest-fit model (quality-oriented proxy) · {largestFitModel.name}</button>}
+                {fitModelCandidates.length > 0 && <small className="muted">Fast/smaller-fit, balanced and largest-fit choices are derived only from model size and RAM estimates. The largest model is not guaranteed to be higher quality, and none of these options is a speed or quality benchmark.</small>}
               </> : <p>{recommendationBusy ? "Checking installed models and available memory…" : "No model-fit estimate is available yet. You can retry the check."}</p>}
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
