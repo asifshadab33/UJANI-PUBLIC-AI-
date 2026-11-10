@@ -94,7 +94,14 @@ struct CapabilitySnapshot {
     available_memory_mb: u64,
 }
 
-/// Read-only capability inventory. Unknown GPU/NPU capability is never treated as available.
+/// Resource limits are configured in the sidecar launcher, but this build has no
+/// non-destructive device-level enforcement probe. Do not report them as available
+/// until supported-platform smoke tests verify the actual process controls.
+fn pdf_worker_resource_limits_state() -> CapabilityState {
+    CapabilityState::Unknown
+}
+
+/// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     let mut system = System::new();
@@ -103,7 +110,6 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
     let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
-    let pdf_worker_limits_available = !cfg!(target_os = "macos") || std::path::Path::new("/usr/bin/sandbox-exec").is_file();
     let capabilities = vec![
         CapabilityRecord {
             id: "cpu".into(), category: "compute".into(),
@@ -151,8 +157,9 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         },
         CapabilityRecord {
             id: "pdf.worker.resource_limits".into(), category: "security".into(),
-            state: if pdf_worker_limits_available { CapabilityState::Available } else { CapabilityState::Unavailable }, source: "OS process limits and platform worker sandbox".into(),
-            detail: "Unix: 768 MiB address-space, 45-second CPU, 16-file-descriptor, zero file-growth and zero core-dump limits; Linux also enables no_new_privs and seccomp network-syscall denial. macOS additionally launches through sandbox-exec with file writes and network denied. Windows uses 768 MiB process-memory and 45-second CPU Job Object limits with kill-on-close. These constrain the PDF worker, not the complete application.".into(),
+            state: pdf_worker_resource_limits_state(),
+            source: "OS-specific PDF worker launcher; device enforcement not yet probed".into(),
+            detail: "The sidecar launcher configures Unix CPU/address-space/file-descriptor/file-size/core limits; Linux additionally installs no_new_privs and a seccomp filter. macOS launches through sandbox-exec with network and file writes denied. Windows assigns a kill-on-close Job Object with process-memory and CPU limits before sending PDF bytes, but assignment occurs after the launcher process starts. These controls apply only to the PDF worker. This build has not verified their enforcement on the current device, so availability remains Unknown until Windows, Linux and macOS smoke tests pass.".into(),
         },
         CapabilityRecord {
             id: "fortress.os_isolation".into(), category: "security".into(),
@@ -1805,5 +1812,10 @@ mod model_capability_selection_tests {
             OllamaModel { name: "legacy-model".into(), size: 1_000, details: None },
         ];
         assert!(chat_capable_model_sizes(&models, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn pdf_worker_isolation_is_not_claimed_available_without_device_verification() {
+        assert_eq!(super::pdf_worker_resource_limits_state(), super::CapabilityState::Unknown);
     }
 }
