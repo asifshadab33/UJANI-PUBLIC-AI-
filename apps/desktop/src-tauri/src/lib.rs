@@ -35,7 +35,7 @@ use ujani_core::capability::{plan_local_task, registered_operations, CapabilityR
 use ujani_core::task_graph::{plan_task_graph, TaskGraph, TaskGraphPlan, TaskNode};
 use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize, ModelRecommendation};
 use ujani_core::tool_registry::{builtin_tool_manifests, ToolManifest};
-use ujani_core::{sha256_hex, validate_model_identifier, NetworkActivity, ReceiptExecutionLocation, ExecutionReceipt};
+use ujani_core::{sha256_hex, validate_model_identifier, ExecutionOutcome, NetworkActivity, ReceiptExecutionLocation, ExecutionReceipt};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
@@ -422,6 +422,7 @@ async fn execute_cloud_ai_task(
    completed_at_unix_ms,
    user_approval_id: Some(approval_id),
    network_activity: network_activity.clone(),
+   outcome: None,
   };
   receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  }
@@ -463,47 +464,95 @@ async fn pull_ollama_model(
     if !ollama::valid_pull_model(&model) {
         return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2.".into());
     }
-    if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
-        return Err("Invalid task identifier.".into());
-    }
+
+    // Bind the receipt to the selected model and execution mode without storing content.
+    let receipt_context = local_receipt_context("model.download", &model, &[mode.as_bytes()])?;
 
     // Register before showing the native prompt so cancellation works while consent is pending.
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let registration = register_active_task(&control, &task_id)?;
     let approved = native_consent::confirm_native(
         &app,
         "Approve model download",
         format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry. This download may use network bandwidth and local disk space. No download starts unless you approve."),
-        token.clone(),
+        registration.token.clone(),
         Duration::from_secs(120),
     ).await;
     if !approved {
         return Err("Model download consent was declined, cancelled or timed out. No download was started.".into());
     }
+    ensure_task_not_cancelled(&registration.token)?;
+
+    // Reserve durable receipt capacity before asking Ollama to mutate its local model store.
+    flush_pending_receipts(&app).await;
+    let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
+    }
+
+    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
+        .as_millis().min(u64::MAX as u128) as u64;
+    let approval_id = sha256_hex(
+        format!("UJANI-MODEL-DOWNLOAD-APPROVAL-V1:{task_id}:{model}:{mode}:{started_at_unix_ms}").as_bytes()
+    );
+
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
     let download = ollama::pull_model(&model, move |message, percent| {
         emit_task_progress(&progress_app, &progress_task, "model_downloading", &message, percent);
     });
-    let result = tokio::select! {
-        _ = token.cancelled() => Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
-        outcome = tokio::time::timeout(std::time::Duration::from_secs(20 * 60), download) => {
-            match outcome {
-                Ok(value) => value,
-                Err(_) => Err("Model download exceeded the 20-minute task time budget.".into()),
+    let (result, outcome) = tokio::select! {
+        biased;
+        _ = registration.token.cancelled() => (
+            Err("Model download cancelled by user. Ollama may need a moment to release the connection.".to_string()),
+            ExecutionOutcome::Cancelled,
+        ),
+        completed = tokio::time::timeout(Duration::from_secs(20 * 60), download) => {
+            match completed {
+                Ok(Ok(())) => (Ok(()), ExecutionOutcome::Completed),
+                Ok(Err(error)) => (Err(error), ExecutionOutcome::Failed),
+                Err(_) => (
+                    Err("Model download exceeded the 20-minute task time budget.".into()),
+                    ExecutionOutcome::TimedOut,
+                ),
             }
-        },
+        }
     };
+    drop(registration);
+
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local model installed successfully.", 100),
-        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", error, 0),
+        Err(error) if outcome == ExecutionOutcome::Cancelled => emit_task_progress(&app, &task_id, "cancelled", error, 0),
+        Err(error) if outcome == ExecutionOutcome::TimedOut => emit_task_progress(&app, &task_id, "timed_out", error, 0),
         Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+    }
+
+    // Ollama performs registry traffic inside its own daemon. UJANI cannot verify the
+    // downstream host, byte counts or final artifact digest, so those fields stay unknown.
+    let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+        .unwrap_or_default().as_millis().max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let outcome_digest = sha256_hex(format!("UJANI-MODEL-DOWNLOAD-OUTCOME-V1:{outcome:?}").as_bytes());
+    let receipt = ExecutionReceipt {
+        schema_version: 3,
+        task_id: task_id.clone(),
+        operation_id: receipt_context.operation_id.into(),
+        location: ReceiptExecutionLocation::ExternalResource,
+        adapter_id: "ollama.model-pull".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: Some(receipt_context.model_id),
+        model_version: Some("unknown".into()),
+        input_sha256: receipt_context.input_sha256,
+        output_sha256: outcome_digest,
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        user_approval_id: Some(approval_id),
+        network_activity: NetworkActivity::unknown(),
+        outcome: Some(outcome),
+    };
+    if let Some(warning) = persist_receipt_or_warn("Model download", receipt_slot, receipt) {
+        emit_task_progress(&app, &task_id, "receipt_warning", &warning, 100);
     }
     result
 }
@@ -979,6 +1028,7 @@ where
             completed_at_unix_ms,
             user_approval_id: None,
             network_activity,
+            outcome: None,
         };
         receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
     }
@@ -1185,6 +1235,7 @@ async fn execute_local_ai_task(
             completed_at_unix_ms,
             user_approval_id: None,
             network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+            outcome: None,
         };
         receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
     }
