@@ -27,7 +27,7 @@ Use this matrix before promoting a preview build beyond supervised testing. Host
 ## B. PDF upload, sidecar and cancellation
 
 Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empty file, a malformed file, and an encrypted file. Record actual file sizes; do not use real personal documents.
-**Build prerequisite:** these cases exercise the combined PDF sidecar and cancellation work in PR #117. Until that PR is merged into the tested build, mark the new cases **BLOCKED**. CI unit tests are not a substitute for installed-package tests.
+**Build prerequisite:** the PDF sidecar and cancellation implementation from PR #117 is merged into `main` and included in the current 0.1.0 preview installers. The cases below are now available to test, but remain **NOT RUN** until a human tester completes them on an installed package. CI unit tests are not a substitute for installed-package tests.
 
 | ID | Scenario | Procedure | Expected result |
 |---|---|---|---|
