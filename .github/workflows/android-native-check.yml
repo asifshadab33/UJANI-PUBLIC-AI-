@@ -27,6 +27,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Generate Tauri platform icons
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
+
       - name: Install Android SDK platform and NDK 28
         shell: bash
         run: |
