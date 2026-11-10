@@ -1225,7 +1225,7 @@ export default function App() {
               {modelSelectionMode === "auto"
                 ? (ollamaModel
                   ? `Automatic choice: ${ollamaModel}. Ollama reported chat support and the model fits an advisory RAM estimate; this is not a quality benchmark or runtime guarantee.`
-                  : "No installed model currently has runtime-reported chat support plus an advisory RAM fit. Choose manually if you trust the model; unreported capabilities are not assumed.")
+                  : "No inspected model currently has runtime-reported chat support plus an advisory RAM fit. Some installed models may remain uninspected; choose manually if you trust the model.")
                 : `Manual choice: ${ollamaModel}. This preference is saved on this device.`}
             </small>
             {ollamaStatus?.inventory && <div className="install-guide">
@@ -1235,7 +1235,7 @@ export default function App() {
               <p>Runtime: {inventoryRuntime ? `${inventoryRuntime.provider} ${inventoryRuntime.version || "(version unknown)"} · ${inventoryRuntime.availability} · ${inventoryRuntime.network_scope}` : "Ollama not detected"}</p>
               <p>Storage free: {ollamaStatus.inventory.hardware.storage_free_mb === null ? "Unknown (not measured)" : `${ollamaStatus.inventory.hardware.storage_free_mb.toLocaleString()} MiB`}</p>
               {ollamaStatus.inventory.hardware.accelerators.map((accelerator) => <p key={accelerator.kind}>{accelerator.kind.toUpperCase()}: {accelerator.evidence.confidence === "reported" ? "Ollama reported active GPU model use; total device VRAM is not known" : "Unknown — no supported evidence confirms availability"}</p>)}
-              {selectedInventoryModel ? <p>Selected model: {selectedInventoryModel.display_name} · Family {selectedInventoryModel.family || "unknown"} · Context {selectedInventoryModel.context_length_tokens?.toLocaleString() || "unknown"} tokens · Reported capabilities: {selectedInventoryModel.capabilities.join(", ")} · Evidence: {selectedInventoryModel.evidence.source}/{selectedInventoryModel.evidence.confidence}</p> : <p>Selected model metadata: not available until a model is selected and inspected.</p>}
+              {selectedInventoryModel ? <p>Selected model: {selectedInventoryModel.display_name} · Family {selectedInventoryModel.family || "unknown"} · Context {selectedInventoryModel.context_length_tokens?.toLocaleString() || "unknown"} tokens · Reported capabilities: {selectedInventoryModel.capabilities.join(", ")} · Evidence: {selectedInventoryModel.evidence.source}/{selectedInventoryModel.evidence.confidence}</p> : <p>Selected model metadata: unknown or not inspected within the bounded discovery window.</p>}
               <p>Runtime metadata inspected for {ollamaStatus.inventory.models.filter((model) => model.evidence.source === "runtime_metadata").length} of {ollamaStatus.inventory.models.length} installed models. Reasoning, coding and language quality are not inferred from model names; unknown remains unknown. Inventory contains no prompts, user files, local paths or credentials.</p>
             </div>}
             <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
