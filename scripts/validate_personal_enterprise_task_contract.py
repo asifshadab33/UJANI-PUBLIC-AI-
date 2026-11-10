@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,24 @@ SAFE_INTEGER_MAXIMUM = 9_007_199_254_740_991
 ZERO_SHA256 = "0" * 64
 TEST_SIGNATURE = "A" * 86
 TEST_NONCE = "A" * 43
+
+
+def _consent_binding_sha256(envelope: dict[str, Any]) -> str:
+    """Compute the v1 consent binding digest using the contract's restricted JCS profile."""
+    binding = copy.deepcopy(envelope)
+    binding.pop("signature")
+    binding["consent"]["user"].pop("binding_sha256")
+    # The v1 envelope has ASCII property names/values and safe integers only, so this
+    # compact sorted-key UTF-8 serialization is byte-equivalent to RFC 8785 JCS here.
+    canonical = json.dumps(
+        binding, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return hashlib.sha256(b"UJANI-CONSENT-BINDING-V1\\0" + canonical).hexdigest()
+
+
+def _refresh_consent_binding(envelope: dict[str, Any]) -> None:
+    """Refresh the digest after a test fixture changes a bound envelope field."""
+    envelope["consent"]["user"]["binding_sha256"] = _consent_binding_sha256(envelope)
 
 
 def _sample_messages() -> dict[str, dict[str, Any]]:
@@ -60,6 +79,8 @@ def _sample_messages() -> dict[str, dict[str, Any]]:
         "signature": {"algorithm": "ed25519", "key_id": "sender-key-1", "value": TEST_SIGNATURE},
         "network_destinations": [],
     }
+    _refresh_consent_binding(envelope)
+
     status = {
         "message_type": "task_status",
         "schema_version": 1,
@@ -117,6 +138,8 @@ def _semantic_errors(instance: dict[str, Any]) -> list[str]:
             errors.append("user consent must be granted no later than task issue")
         if consent_expires <= granted or consent_expires < expires:
             errors.append("user consent must cover the task expiry")
+        if consent["binding_sha256"] != _consent_binding_sha256(instance):
+            errors.append("user consent binding digest does not match the task envelope")
     elif message_type == "execution_receipt":
         if instance["completed_at_unix_ms"] < instance["started_at_unix_ms"]:
             errors.append("receipt completion must not precede start")
@@ -157,12 +180,20 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     allowlisted_envelope = copy.deepcopy(samples["task_envelope"])
     allowlisted_envelope["network_access"] = "allowlisted"
     allowlisted_envelope["network_destinations"] = ["models.example.com"]
+    _refresh_consent_binding(allowlisted_envelope)
     valid_fixtures.append(("allowlisted DNS destination", allowlisted_envelope))
 
     single_label_envelope = copy.deepcopy(samples["task_envelope"])
     single_label_envelope["network_access"] = "allowlisted"
     single_label_envelope["network_destinations"] = ["models"]
+    _refresh_consent_binding(single_label_envelope)
     valid_fixtures.append(("single-label DNS destination", single_label_envelope))
+
+    digit_leading_hostname = copy.deepcopy(samples["task_envelope"])
+    digit_leading_hostname["network_access"] = "allowlisted"
+    digit_leading_hostname["network_destinations"] = ["3com"]
+    _refresh_consent_binding(digit_leading_hostname)
+    valid_fixtures.append(("digit-leading DNS hostname", digit_leading_hostname))
 
     receipt_with_output = copy.deepcopy(samples["execution_receipt"])
     receipt_with_output["output_sha256"] = ZERO_SHA256
@@ -253,21 +284,29 @@ def _validate_instance_fixtures(schema: dict[str, Any]) -> None:
     semantic_invalid = []
     expiry_order = copy.deepcopy(samples["task_envelope"])
     expiry_order["expires_at_unix_ms"] = expiry_order["issued_at_unix_ms"]
+    _refresh_consent_binding(expiry_order)
     semantic_invalid.append(("expiry not after issue", expiry_order))
 
     excessive_lifetime = copy.deepcopy(samples["task_envelope"])
     excessive_lifetime["expires_at_unix_ms"] += 1
+    _refresh_consent_binding(excessive_lifetime)
     semantic_invalid.append(("task lifetime above 300 seconds", excessive_lifetime))
 
     consent_expires_early = copy.deepcopy(samples["task_envelope"])
     consent_expires_early["consent"]["user"]["expires_at_unix_ms"] -= 1
+    _refresh_consent_binding(consent_expires_early)
     semantic_invalid.append(("consent expires before task", consent_expires_early))
 
     future_consent = copy.deepcopy(samples["task_envelope"])
     future_consent["consent"]["user"]["granted_at_unix_ms"] = (
         future_consent["issued_at_unix_ms"] + 1
     )
+    _refresh_consent_binding(future_consent)
     semantic_invalid.append(("consent granted after task issue", future_consent))
+
+    stale_consent_binding = copy.deepcopy(samples["task_envelope"])
+    stale_consent_binding["payload"]["sha256"] = "1" * 64
+    semantic_invalid.append(("payload changed without refreshing consent binding", stale_consent_binding))
 
     reversed_receipt_times = copy.deepcopy(samples["execution_receipt"])
     reversed_receipt_times["completed_at_unix_ms"] = (
