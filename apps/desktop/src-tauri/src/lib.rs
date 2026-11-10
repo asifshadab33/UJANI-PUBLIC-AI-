@@ -546,19 +546,19 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         &chat_capable_model_sizes(&models, &metadata),
         available_memory_mb,
     );
-    let inventory = model_inventory::build_inventory(
-        &models,
-        &metadata,
-        available,
+    let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
+        models: &models,
+        metadata: &metadata,
+        runtime_available: available,
         runtime_version,
-        System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        System::os_version(),
-        std::env::consts::ARCH.to_string(),
+        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os_version: System::os_version(),
+        architecture: std::env::consts::ARCH.to_string(),
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
-        accelerator.as_ref(),
-    );
+        accelerator: accelerator.as_ref(),
+    });
 
     Ok(OllamaStatus {
         available,
