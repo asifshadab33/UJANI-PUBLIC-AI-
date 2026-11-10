@@ -34,7 +34,7 @@
 | P1 | BYOK provider compatibility and billing/usage semantics vary. | Add provider-specific contract tests and verify reported usage, token-field behavior, endpoint/DNS protections and consent snapshots against real test tenants. |
 | P1 | Local receipts and history have lifecycle limitations. | Complete key rotation/recovery, encrypted backup/restore, concurrent initialization and externally anchored provenance; clearly warn that JSON exports are plaintext and outside in-app deletion. |
 | P1 | GPU/NPU and storage capabilities are not universally known. | Keep unknown values unknown until supported OS/runtime evidence is available; test real hardware and drivers before scheduling on accelerators. |
-| P1 | The current feature set does not include the complete previously discussed personal-intelligence/connectors and media-search roadmap. | Track implementation separately from designs: consent-based calendar/mail/notes/reminder connectors, video indexing/search, OCR/vision, richer duplicate detection and automatic multi-provider task decomposition remain gated until implemented and tested. |
+| P1 | The full personal-intelligence/connectors and media-search roadmap is not complete. | The desktop local clock and read-only SHA-256 duplicate-file preview are implemented (issue #44 Phase 1); folder duplicate scanning is not available in the Android preview. Consent-based calendar/mail/notes/reminder connectors, video indexing/search, OCR/vision, richer organisation tools and automatic multi-provider task decomposition remain gated until implemented and tested. |
 | P2 | Support matrix is a proposed baseline, not compatibility certification. | Test the documented minimum OS versions and supported architectures before advertising support. |
 
 ## Privacy, legal and operational liabilities
@@ -57,3 +57,8 @@
 - [Exact-head CI workflow](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/42820535473)
 - [Exact-head CodeQL workflow](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/42820535608)
 - [Unsigned installer-size workflow](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/42820535574)
+
+
+### Additional everyday-tools check
+
+The local date/time panel and selected-folder read-only duplicate preview are implemented and registered in the desktop Tauri IPC handler. The duplicate scanner is bounded (depth 6, 5,000 entries, 64 MiB/file, 512 MiB total hash input, 60 seconds) and hashes same-size candidates with SHA-256. It does not mutate files. Android explicitly reports this folder scan as unavailable pending Storage Access Framework support.
