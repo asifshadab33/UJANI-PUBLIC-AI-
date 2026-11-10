@@ -69,3 +69,28 @@ jobs:
 
       - name: Compile the Tauri native application for Android arm64
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --target aarch64-linux-android --locked
+
+      - name: Initialize the Android project
+        working-directory: apps/desktop
+        run: npx tauri android init --ci --skip-targets-install
+
+      - name: Build unsigned Android arm64 debug APK
+        working-directory: apps/desktop
+        run: npx tauri android build --debug --apk --target aarch64 --ci
+
+      - name: Generate APK SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find apps/desktop/src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' -print0 | sort -z | xargs -0 sha256sum > android-apk.sha256
+          test -s android-apk.sha256
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        name: Upload Android arm64 debug APK
+        with:
+          name: ujani-android-arm64-debug-apk
+          path: |
+            apps/desktop/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            android-apk.sha256
+          if-no-files-found: error
+          retention-days: 14
