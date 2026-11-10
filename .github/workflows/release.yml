@@ -111,7 +111,7 @@ jobs:
           APP_VERSION=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
           TAG_VERSION="${RELEASE_TAG#v}"
           test "$TAG_VERSION" = "$APP_VERSION" || { echo "::error::Release tag $RELEASE_TAG does not match app version $APP_VERSION"; exit 1; }
-          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
+          node -e "const fs=require('fs'); const p='apps/desktop/src-tauri/tauri.conf.json'; const c=JSON.parse(fs.readFileSync(p,'utf8')); c.plugins.updater.pubkey=process.env.TAURI_UPDATER_PUBLIC_KEY; c.bundle.createUpdaterArtifacts=true; fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n');"
       - name: Require OS publisher-signing credentials
         shell: bash
         env:
