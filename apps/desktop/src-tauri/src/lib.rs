@@ -1764,8 +1764,10 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(TaskControlState::default())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_process::init());
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(feature = "peer-preview")]
     let builder = builder.invoke_handler(ujani_invoke_handler!(
