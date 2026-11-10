@@ -116,7 +116,7 @@ fn pdf_worker_network_isolation_state() -> CapabilityState {
 /// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_cpu();
     system.refresh_memory();
     let cpu_available = std::thread::available_parallelism().is_ok();
@@ -266,7 +266,7 @@ fn chat_capable_model_sizes(
 /// Advisory fit estimate over installed models whose local runtime explicitly reports chat support.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_memory();
     let available_memory_mb = system.available_memory() / (1024 * 1024);
     let models = if ollama::is_available().await {
@@ -577,7 +577,7 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         (None, None)
     };
 
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_cpu();
     system.refresh_memory();
     let cpu_logical_cores = std::thread::available_parallelism()
@@ -600,8 +600,8 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         metadata: &metadata,
         runtime_available: available,
         runtime_version,
-        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        os_version: System::os_version(),
+        os_name: System::name().ok().flatten().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os_version: System::os_version().ok().flatten(),
         architecture: std::env::consts::ARCH.to_string(),
         cpu_logical_cores,
         memory_total_mb,
@@ -1642,11 +1642,11 @@ struct RunResult {
 
 #[tauri::command]
 fn get_device_info() -> DeviceInfo {
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_cpu();
     system.refresh_memory();
     DeviceInfo {
-        os: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os: System::name().ok().flatten().unwrap_or_else(|| std::env::consts::OS.to_string()),
         architecture: std::env::consts::ARCH.to_string(),
         logical_cpus: system.cpus().len(),
         total_memory_mb: system.total_memory() / (1024 * 1024),
@@ -1658,7 +1658,7 @@ fn get_device_info() -> DeviceInfo {
 /// Returns only models registered by the application. No model files are scanned.
 #[tauri::command]
 fn list_local_models() -> Vec<ModelInfo> {
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_cpu();
     discover_models(!system.cpus().is_empty())
 }
@@ -1667,7 +1667,7 @@ fn list_local_models() -> Vec<ModelInfo> {
 #[tauri::command]
 fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
     let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_cpu();
     run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
 }
