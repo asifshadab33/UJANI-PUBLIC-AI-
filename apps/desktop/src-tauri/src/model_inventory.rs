@@ -279,6 +279,38 @@ mod tests {
     }
 
     #[test]
+    fn inventory_serializes_the_v1_required_sections_and_privacy_flags() {
+        let inventory = build_inventory(
+            &[],
+            &HashMap::new(),
+            false,
+            None,
+            "Linux".into(),
+            None,
+            "x86_64".into(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let value = serde_json::to_value(inventory).expect("inventory serializes");
+        assert_eq!(value["schema_version"], 1);
+        assert!(value["generated_at_unix_ms"].as_u64().unwrap_or(0) > 0);
+        assert!(value["platform"]["os"].is_string());
+        assert!(value["platform"]["architecture"].is_string());
+        assert!(value["hardware"].get("cpu_logical_cores").is_some());
+        assert!(value["hardware"].get("memory_total_mb").is_some());
+        assert!(value["hardware"].get("memory_available_mb").is_some());
+        assert!(value["hardware"]["accelerators"].is_array());
+        assert!(value["runtimes"].is_array());
+        assert!(value["models"].is_array());
+        assert_eq!(value["privacy"]["contains_prompts"], false);
+        assert_eq!(value["privacy"]["contains_user_files"], false);
+        assert_eq!(value["privacy"]["contains_local_paths"], false);
+        assert_eq!(value["privacy"]["contains_credentials"], false);
+    }
+
+    #[test]
     fn inventory_preserves_only_runtime_reported_capabilities_and_context() {
         let model = model("qwen2.5:3b", 2_000_000);
         let metadata = HashMap::from([(
