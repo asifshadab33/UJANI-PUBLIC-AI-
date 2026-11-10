@@ -65,6 +65,16 @@ cargo test --workspace
 
 Read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
+## Free core and open ecosystem commitment
+
+UJANI Public AI is intended to remain freely obtainable and usable by ordinary individuals as a core application. The project does not require users to purchase a UJANI subscription, pay for a UJANI-hosted inference service, or depend on UJANI-operated AI data centres to use the locally supported core features.
+
+The project welcomes independent developers, communities and companies building on the platform. They may offer their own modified editions, integrations, distribution, maintenance, security response, certification, deployment, support or other services and may charge for those offerings. Such offerings must respect the applicable licence and users' rights in the GPL-licensed code. A third party may charge for its own work or distribution; that does not make a paid third-party offering the only route to the freely available upstream core.
+
+The project's maintainers should continue to publish the core source and available upstream builds without a user subscription, document security reporting and release practices, and make reasonable efforts to address serious vulnerabilities. This is a project commitment, not a promise of uninterrupted support or a substitute for independent security review. Contributions and redistribution must preserve the applicable GPL-3.0 notices and obligations; see [LICENSE](LICENSE).
+
+No one should interpret this commitment as permission for silent background compute, undisclosed data transfer, or weakening local-first defaults. Ordinary users retain control over whether external assistance is used and what information leaves their device.
+
 ## Licensing
 
 This repository currently includes the GNU General Public License v3.0. Contributions are expected to comply with that license; see [LICENSE](LICENSE).
