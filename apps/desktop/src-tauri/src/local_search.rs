@@ -536,16 +536,6 @@ mod tests {
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
 
     #[test]
-    fn text_search_limits_match_the_documented_large_corpus_budget() {
-        assert_eq!(MAX_TEXT_FILE_BYTES, 2 * 1024 * 1024);
-        assert_eq!(MAX_TEXT_TOTAL_BYTES, 256 * 1024 * 1024);
-        assert!(text_candidate_within_limits(MAX_TEXT_FILE_BYTES, 0));
-        assert!(!text_candidate_within_limits(MAX_TEXT_FILE_BYTES + 1, 0));
-        assert!(text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES - 1));
-        assert!(!text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES));
-    }
-
-    #[test]
     fn match_preview_returns_a_bounded_excerpt_for_rare_exact_terms() {
         let content = format!("{} ACME-HOLDINGS-XYZ {}",
             "background ".repeat(30), "closing ".repeat(30));
@@ -584,9 +574,13 @@ mod tests {
     }
 
     #[test]
-    fn large_corpus_text_limits_preserve_main_branch_resource_bounds() {
-        assert_eq!(MAX_TEXT_FILE_BYTES, 256 * 1024);
-        assert_eq!(MAX_TEXT_TOTAL_BYTES, 10 * 1024 * 1024);
+    fn large_corpus_text_limits_match_documented_budget() {
+        assert_eq!(MAX_TEXT_FILE_BYTES, 2 * 1024 * 1024);
+        assert_eq!(MAX_TEXT_TOTAL_BYTES, 256 * 1024 * 1024);
+        assert!(text_candidate_within_limits(MAX_TEXT_FILE_BYTES, 0));
+        assert!(!text_candidate_within_limits(MAX_TEXT_FILE_BYTES + 1, 0));
+        assert!(text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES - 1));
+        assert!(!text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES));
     }
 
     #[test]
