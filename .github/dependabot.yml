@@ -1,4 +1,5 @@
 version: 2
+# Apply only labels verified to exist in this repository.
 updates:
   - package-ecosystem: cargo
     directory: /
