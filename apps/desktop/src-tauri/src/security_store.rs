@@ -996,6 +996,7 @@ mod tests {
             output_sha256: sha256_hex(b"output"), started_at_unix_ms: 1_000,
             completed_at_unix_ms: 2_000, user_approval_id: None,
             network_activity: ujani_core::NetworkActivity::unknown(),
+            outcome: None,
         }
     }
 

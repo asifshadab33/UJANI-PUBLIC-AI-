@@ -5,7 +5,7 @@ UJANI Public AI execution receipts are local metadata records. They are hash-cha
 ## Schema compatibility
 
 - Schema v1 receipts remain readable and are interpreted as having unknown network activity.
-- New receipts use schema v2.
+- New inference receipts use schema v2. Schema v3 adds bounded outcomes and an external_resource classification for approved resource-management operations; see EXECUTION-RECEIPT-SCHEMA-V3.md.
 - The receipt ledger verifies the original stored JSON bytes in its hash chain; reading a legacy receipt does not rewrite or re-hash it.
 
 ## Network activity evidence
@@ -25,7 +25,7 @@ A null byte count means **not measured / unknown**, not zero. UJANI currently re
 - Interactive local chat and the fixed local document workflow use the managed task lifecycle and create receipts on successful completion.
 - Selected text/PDF processing, local translation and selected-folder import use the same managed task wrapper. Folder import records unknown network activity because local Ollama use is conditional on the user's selected options and runtime availability.
 - Approved BYOK cloud chat records the configured provider hostname as inferred. The exact provider transfer byte count is not measured.
-- Model downloads are user-approved and task-progress tracked, but are not currently represented as inference receipts.
-- Failed, timed-out and cancelled operations do not create success receipts. Receipt-slot reservations are released by RAII when the command exits or is dropped.
+- Approved model downloads now create schema v3 operation receipts with completed, failed, cancelled or timed-out outcomes. The receipt does not claim a model-artifact digest or identify the daemon's downstream registry host; network activity remains unknown.
+- Other failed, timed-out and cancelled operations still do not create outcome receipts. Receipt-slot reservations are released by RAII when the command exits or is dropped.
 
 Receipts contain digests and execution metadata, never prompt or output content. They do not independently attest model identity or hardware execution. A local administrator with access to the application database can replace the ledger and its hash chain.
