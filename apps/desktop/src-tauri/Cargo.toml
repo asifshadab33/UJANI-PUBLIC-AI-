@@ -27,7 +27,6 @@ base64 = "0.23"
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -47,6 +46,10 @@ ed25519-dalek = "3"
 ujani-core = { path = "../../../crates/ujani-core" }
 
 # Keep the Tauri application in its own workspace; the shared core crate is a path dependency.
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+# The Tauri updater is desktop-only; Android distribution has a separate lifecycle.
+tauri-plugin-updater = "2"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

@@ -27,6 +27,12 @@ pub struct HistoryEntry { pub id:i64, pub prompt:String, pub output:String, pub 
 pub struct HistorySettings { pub enabled:bool, pub retention_days:i64, pub max_entries:i64 }
 
 
+#[cfg(target_os = "android")]
+fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
+    Err("Encrypted task history is disabled on Android until Android Keystore integration is validated.".into())
+}
+
+#[cfg(not(target_os = "android"))]
 fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
  let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
   .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;

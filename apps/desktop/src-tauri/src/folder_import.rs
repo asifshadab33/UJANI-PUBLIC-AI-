@@ -53,6 +53,7 @@ pub struct FolderImportResult {
 
 /// Opens a native OS folder picker and processes only its immediate text-file children.
 /// The command deliberately accepts no filesystem path from the webview.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn process_selected_folder(
     app: tauri::AppHandle,
@@ -344,4 +345,17 @@ mod tests {
         assert!(collect_selected_folder(&folder.0).unwrap_err().contains("symbolic link"));
         let _ = fs::remove_file(outside);
     }
+}
+
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn process_selected_folder(
+    _app: tauri::AppHandle,
+    _control: tauri::State<'_, crate::TaskControlState>,
+    _task_id: String,
+    _mode: String,
+    _model: String,
+) -> Result<FolderImportResult, String> {
+    Err("Folder import is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
 }

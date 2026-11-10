@@ -31,6 +31,7 @@ pub struct LargeFileScanResult {
 
 /// Finds large files in a folder selected through the native OS picker.
 /// The command reads filesystem metadata only; it never opens file contents or mutates files.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn find_large_files(
     app: AppHandle,
@@ -194,4 +195,16 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(outside).unwrap();
     }
+}
+
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn find_large_files(
+    _app: AppHandle,
+    _control: State<'_, super::TaskControlState>,
+    _task_id: String,
+    _min_size_bytes: u64,
+) -> Result<LargeFileScanResult, String> {
+    Err("Folder-based large-file scanning is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
 }

@@ -58,6 +58,7 @@ pub fn get_local_clock() -> Result<u64, String> {
 }
 
 /// Opens a native folder picker and previews duplicate files; it never deletes or changes files.
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn find_duplicate_files(
     app: AppHandle,
@@ -315,4 +316,15 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn find_duplicate_files(
+    _app: AppHandle,
+    _control: State<'_, super::TaskControlState>,
+    _task_id: String,
+) -> Result<DuplicateScanResult, String> {
+    Err("Folder-based duplicate scanning is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
 }
