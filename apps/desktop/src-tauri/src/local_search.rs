@@ -16,30 +16,69 @@ use tokio_util::sync::CancellationToken;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 5_000;
 const MAX_MATCHES: usize = 250;
-const MAX_TEXT_FILE_BYTES: u64 = 256 * 1024;
-const MAX_TEXT_TOTAL_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_TEXT_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_PDF_FILES: usize = 20;
+const MAX_PDF_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Records a PDF text-search outcome without treating an extraction error as a negative match.
 fn record_pdf_search_result(
     extraction: Result<String, String>,
     query: &str,
     matched_in: &mut Vec<String>,
+    match_preview: &mut Option<String>,
     incomplete: &mut bool,
 ) {
     match extraction {
-        Ok(text) if text.to_lowercase().contains(query) => {
-            matched_in.push("PDF text (isolated worker)".to_string());
+        Ok(text) => {
+            if let Some(preview) = match_preview_for(&text, query) {
+                matched_in.push("PDF text (isolated worker)".to_string());
+                *match_preview = Some(preview);
+            }
         }
-        Ok(_) => {}
         Err(_) => *incomplete = true,
     }
+}
+
+/// Returns a bounded, lowercase excerpt around the first exact phrase match.
+/// Lowercasing both values keeps matching consistent with the search operation.
+fn match_preview_for(content: &str, query: &str) -> Option<String> {
+    let normalized = content.to_lowercase();
+    let query = query.to_lowercase();
+    let start = normalized.find(&query)?;
+    // Convert the normalized byte offset to a character offset, then slice the
+    // original text by characters so the evidence keeps its original casing.
+    let start_char = normalized[..start].chars().count();
+    let query_chars = query.chars().count();
+    let total_chars = content.chars().count();
+    let excerpt_start = start_char.saturating_sub(100);
+    let excerpt_end = start_char.saturating_add(query_chars).saturating_add(180).min(total_chars);
+    let prefix = if excerpt_start > 0 { "…" } else { "" };
+    let suffix = if excerpt_end < total_chars { "…" } else { "" };
+    let excerpt: String = content.chars()
+        .skip(excerpt_start)
+        .take(excerpt_end.saturating_sub(excerpt_start))
+        .collect();
+    Some(format!("{prefix}{}{suffix}", excerpt.trim()))
 }
 
 /// Partial or truncated scans must never be persisted as complete search results.
 fn search_result_is_cacheable(truncated: bool, incomplete: bool) -> bool {
     !truncated && !incomplete
+}
+
+/// Keeps large-corpus PDF inspection bounded by per-file, count, and aggregate input limits.
+/// Keeps text inspection bounded by per-file and aggregate bytes before opening a candidate.
+fn text_candidate_within_limits(size: u64, total_bytes: u64) -> bool {
+    size <= MAX_TEXT_FILE_BYTES
+        && total_bytes.saturating_add(size) <= MAX_TEXT_TOTAL_BYTES
+}
+
+fn pdf_candidate_within_limits(size: u64, count: usize, total_bytes: u64) -> bool {
+    size <= MAX_PDF_BYTES
+        && count < MAX_PDF_FILES
+        && total_bytes.saturating_add(size) <= MAX_PDF_TOTAL_BYTES
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -50,6 +89,8 @@ pub struct LocalSearchMatch {
     size_bytes: u64,
     modified_unix_ms: Option<u64>,
     matched_in: Vec<String>,
+    #[serde(default)]
+    match_preview: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -78,6 +119,21 @@ struct Candidate {
 struct CachedSearchPayload {
     result: LocalSearchResult,
     file_identities: Vec<Option<String>>,
+}
+
+/// Persist only validated metadata; bounded excerpts from document contents are display-only.
+fn cache_payload_without_previews(
+    result: &LocalSearchResult,
+    file_identities: Vec<Option<String>>,
+) -> CachedSearchPayload {
+    let mut cached_result = result.clone();
+    for matched in &mut cached_result.matches {
+        matched.match_preview = None;
+    }
+    CachedSearchPayload {
+        result: cached_result,
+        file_identities,
+    }
 }
 
 /// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
@@ -167,14 +223,28 @@ pub async fn find_local_files(
     let mut cached_file_identities = Vec::new();
     let mut text_bytes = 0u64;
     let mut pdf_count = 0usize;
+    let mut pdf_bytes = 0u64;
     let mut incomplete = false;
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
 
-    for candidate in candidates {
+    let candidate_total = candidates.len().max(1);
+    for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         if token.is_cancelled() { return Err("File search cancelled by user.".into()); }
+        if candidate_index % 25 == 0 {
+            let completed = candidate_index + 1;
+            let progress = 10 + (completed.saturating_mul(85) / candidate_total).min(85) as u8;
+            super::emit_task_progress(
+                &app,
+                &task_id,
+                "searching",
+                &format!("Searching local files ({completed}/{candidate_total})."),
+                progress,
+            );
+        }
         if tokio::time::Instant::now() >= deadline { truncated = true; break; }
         if matches.len() >= MAX_MATCHES { truncated = true; break; }
         let mut matched_in = Vec::new();
+        let mut match_preview = None;
         if candidate.name.to_lowercase().contains(&query) {
             matched_in.push("filename".to_string());
         }
@@ -182,18 +252,26 @@ pub async fn find_local_files(
         let is_text = matches!(candidate.extension.as_str(),
             "txt" | "md" | "csv" | "log" | "json" | "xml" | "html" | "htm" | "rtf");
         if matched_in.is_empty() && is_text {
-            if candidate.size > MAX_TEXT_FILE_BYTES
-                || text_bytes.saturating_add(candidate.size) > MAX_TEXT_TOTAL_BYTES {
+            if !text_candidate_within_limits(candidate.size, text_bytes) {
                 incomplete = true;
             } else {
                 let read_path = candidate.path.clone();
                 match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
                     Ok(Ok(bytes)) => {
-                        text_bytes = text_bytes.saturating_add(bytes.len() as u64);
-                        match String::from_utf8(bytes) {
-                            Ok(content) if content.to_lowercase().contains(&query) => matched_in.push("text content".to_string()),
-                            Ok(_) => {},
-                            Err(_) => incomplete = true,
+                        let actual_bytes = bytes.len() as u64;
+                        if text_bytes.saturating_add(actual_bytes) > MAX_TEXT_TOTAL_BYTES {
+                            incomplete = true;
+                        } else {
+                            text_bytes = text_bytes.saturating_add(actual_bytes);
+                            match String::from_utf8(bytes) {
+                                Ok(content) => {
+                                    if let Some(preview) = match_preview_for(&content, &query) {
+                                        matched_in.push("text content".to_string());
+                                        match_preview = Some(preview);
+                                    }
+                                },
+                                Err(_) => incomplete = true,
+                            }
                         }
                     }
                     _ => incomplete = true,
@@ -202,7 +280,7 @@ pub async fn find_local_files(
         }
 
         if matched_in.is_empty() && candidate.extension == "pdf" && search_pdf_text {
-            if candidate.size > MAX_PDF_BYTES || pdf_count >= MAX_PDF_FILES {
+            if !pdf_candidate_within_limits(candidate.size, pdf_count, pdf_bytes) {
                 incomplete = true;
                 continue;
             }
@@ -211,6 +289,12 @@ pub async fn find_local_files(
             let read_path = candidate.path.clone();
             match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
+                    let actual_bytes = bytes.len() as u64;
+                    if pdf_bytes.saturating_add(actual_bytes) > MAX_PDF_TOTAL_BYTES {
+                        incomplete = true;
+                        continue;
+                    }
+                    pdf_bytes = pdf_bytes.saturating_add(actual_bytes);
                     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                     if remaining.is_zero() {
                         incomplete = true;
@@ -224,7 +308,7 @@ pub async fn find_local_files(
                             result = extraction => result,
                         };
                         match extraction_result {
-                            Ok(result) => record_pdf_search_result(result, &query, &mut matched_in, &mut incomplete),
+                            Ok(result) => record_pdf_search_result(result, &query, &mut matched_in, &mut match_preview, &mut incomplete),
                             Err(_) => incomplete = true,
                         }
                     }
@@ -241,6 +325,7 @@ pub async fn find_local_files(
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in,
+                match_preview,
             });
             cached_file_identities.push(candidate.identity.clone());
         }
@@ -256,7 +341,7 @@ pub async fn find_local_files(
         cache_hit: false,
         note: {
             let base = if search_pdf_text {
-                "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs and 180 seconds."
+                "Read-only search. Text files are limited to 2 MiB each and 256 MiB total; directory traversal is limited to 5,000 entries and depth 6. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. PDF inspection is limited to 20 files, 128 MiB aggregate input (10 MiB per PDF), and a 10-minute search deadline."
             } else {
                 "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included."
             };
@@ -268,7 +353,7 @@ pub async fn find_local_files(
         },
     };
     if search_result_is_cacheable(result.truncated, incomplete) {
-        let cached_payload = CachedSearchPayload { result: result.clone(), file_identities: cached_file_identities };
+        let cached_payload = cache_payload_without_previews(&result, cached_file_identities);
         if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&cached_payload)) {
             let store_app = app.clone();
             let store_root = root.clone();
@@ -373,8 +458,8 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             links: crate::safe_fs::LinkPolicy::Skip,
             errors: crate::safe_fs::WalkErrorPolicy::SkipAndMarkTruncated,
             file_filter: None,
-        max_duration: None,
-},
+            max_duration: Some(std::time::Duration::from_secs(30)),
+        },
         token,
     ).map_err(|error| {
         if error.contains("cancelled") {
@@ -451,13 +536,74 @@ mod tests {
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
 
     #[test]
+    fn match_preview_returns_a_bounded_excerpt_for_rare_exact_terms() {
+        let content = format!("{} ACME-HOLDINGS-XYZ {}",
+            "background ".repeat(30), "closing ".repeat(30));
+        let preview = match_preview_for(&content, "acme-holdings-xyz").unwrap();
+        assert!(preview.to_lowercase().contains("acme-holdings-xyz"));
+        assert!(preview.starts_with("…"));
+        assert!(preview.ends_with("…"));
+        assert!(preview.len() < 400);
+        assert!(match_preview_for("nothing relevant here", "acme-holdings-xyz").is_none());
+    }
+
+    #[test]
+    fn cached_search_payload_never_persists_document_match_excerpts() {
+        let result = LocalSearchResult {
+            cancelled: false,
+            root_name: Some("selected-folder".into()),
+            scanned_files: 1,
+            matches: vec![LocalSearchMatch {
+                path: "/private/contracts/invoice.txt".into(),
+                file_name: "invoice.txt".into(),
+                extension: "txt".into(),
+                size_bytes: 64,
+                modified_unix_ms: Some(1),
+                matched_in: vec!["text content".into()],
+                match_preview: Some("CONFIDENTIAL-CUSTOMER-EXCERPT".into()),
+            }],
+            truncated: false,
+            note: "complete".into(),
+            cache_hit: false,
+        };
+        let cached = cache_payload_without_previews(&result, vec![Some("file-id".into())]);
+        assert!(cached.result.matches[0].match_preview.is_none());
+        let serialized = serde_json::to_string(&cached).unwrap();
+        assert!(!serialized.contains("CONFIDENTIAL-CUSTOMER-EXCERPT"));
+        assert!(serialized.contains("invoice.txt"));
+    }
+
+    #[test]
+    fn large_corpus_text_limits_match_documented_budget() {
+        assert_eq!(MAX_TEXT_FILE_BYTES, 2 * 1024 * 1024);
+        assert_eq!(MAX_TEXT_TOTAL_BYTES, 256 * 1024 * 1024);
+        assert!(text_candidate_within_limits(MAX_TEXT_FILE_BYTES, 0));
+        assert!(!text_candidate_within_limits(MAX_TEXT_FILE_BYTES + 1, 0));
+        assert!(text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES - 1));
+        assert!(!text_candidate_within_limits(1, MAX_TEXT_TOTAL_BYTES));
+    }
+
+    #[test]
+    fn large_corpus_pdf_limits_allow_only_twenty_bounded_documents() {
+        assert!(pdf_candidate_within_limits(MAX_PDF_BYTES, 0, 0));
+        assert!(pdf_candidate_within_limits(1, MAX_PDF_FILES - 1, 0));
+        assert!(!pdf_candidate_within_limits(1, MAX_PDF_FILES, 0));
+        assert!(!pdf_candidate_within_limits(MAX_PDF_BYTES + 1, 0, 0));
+        assert!(!pdf_candidate_within_limits(1, 0, MAX_PDF_TOTAL_BYTES));
+        assert_eq!(MAX_PDF_FILES, 20);
+        assert_eq!(MAX_PDF_TOTAL_BYTES, 128 * 1024 * 1024);
+    }
+
+    #[test]
     fn truncated_pdf_extraction_is_incomplete_and_never_cacheable() {
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
         record_pdf_search_result(
             Err("PDF text extraction exceeded the 1 MiB worker output limit.".into()),
             "needle",
             &mut matches,
+            &mut preview,
             &mut incomplete,
         );
         assert!(matches.is_empty());
@@ -474,8 +620,9 @@ mod tests {
             Err(error) => Err(error),
         };
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
-        record_pdf_search_result(extraction, "needle", &mut matches, &mut incomplete);
+        record_pdf_search_result(extraction, "needle", &mut matches, &mut preview, &mut incomplete);
         assert!(matches.is_empty());
         assert!(incomplete);
         assert!(!search_result_is_cacheable(false, incomplete));
@@ -484,8 +631,9 @@ mod tests {
     #[test]
     fn complete_pdf_non_match_remains_a_cacheable_negative_result() {
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
-        record_pdf_search_result(Ok("complete text without target".into()), "needle", &mut matches, &mut incomplete);
+        record_pdf_search_result(Ok("complete text without target".into()), "needle", &mut matches, &mut preview, &mut incomplete);
         assert!(matches.is_empty());
         assert!(!incomplete);
         assert!(search_result_is_cacheable(false, incomplete));
@@ -494,10 +642,42 @@ mod tests {
     #[test]
     fn complete_pdf_match_is_recorded_without_marking_search_incomplete() {
         let mut matches = Vec::new();
+        let mut preview = None;
         let mut incomplete = false;
-        record_pdf_search_result(Ok("prefix needle suffix".into()), "needle", &mut matches, &mut incomplete);
+        record_pdf_search_result(Ok("prefix needle suffix".into()), "needle", &mut matches, &mut preview, &mut incomplete);
         assert_eq!(matches, vec!["PDF text (isolated worker)"]);
         assert!(!incomplete);
+    }
+
+    #[test]
+    fn finds_a_unique_company_name_in_the_last_of_one_thousand_documents() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-search-thousand-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        for index in 0..999 {
+            fs::write(root.join(format!("document-{index:04}.txt")), format!("Ordinary agreement number {index}")).unwrap();
+        }
+        fs::write(root.join("document-0999.txt"), "A supplier contract with ACME-RARE-ENTITY-9917 mentioned once.").unwrap();
+
+        let (_, candidates, scanned, truncated) =
+            collect_candidates(&root, &CancellationToken::new()).unwrap();
+        assert_eq!(scanned, 1_000);
+        assert_eq!(candidates.len(), 1_000);
+        assert!(!truncated);
+
+        let mut found = Vec::new();
+        for candidate in candidates {
+            if candidate.extension != "txt" { continue; }
+            let bytes = read_bounded(&candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let content = String::from_utf8(bytes).unwrap();
+            if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
+                found.push((candidate.name, preview));
+            }
+        }
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "document-0999.txt");
+        assert!(found[0].1.to_lowercase().contains("acme-rare-entity-9917"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -619,6 +799,7 @@ mod tests {
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in: vec!["text content".into()],
+                match_preview: None,
             }],
             truncated: false,
             note: "cached".into(),
@@ -656,6 +837,7 @@ mod tests {
                 size_bytes: candidate.size,
                 modified_unix_ms: candidate.modified_unix_ms,
                 matched_in: vec!["filename".into()],
+                match_preview: None,
             }],
             truncated: false,
             note: "cached".into(),

@@ -225,6 +225,7 @@ export default function App() {
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
+  const [localCapacityFallbackNotice, setLocalCapacityFallbackNotice] = useState("");
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
   const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
   const selectedInventoryModel = ollamaStatus?.inventory.models.find((model) => model.model_ref === ollamaModel);
@@ -686,7 +687,7 @@ export default function App() {
     setActiveTaskId(taskId);
     setLocalStreamingText("");
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
-    setAiBusy(true); setOllamaError(""); setAiResult(null);
+    setAiBusy(true); setOllamaError(""); setAiResult(null); setLocalCapacityFallbackNotice("");
     try {
       const result = await invoke<AiTaskResult>("execute_local_ai_task", { taskId, prompt: chatPrompt, mode: executionMode, model: ollamaModel });
       setAiResult(result);
@@ -694,7 +695,18 @@ export default function App() {
       setLocalChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: result.output }]);
       await saveToPersistentHistory(userMessage, result.output, "chat", result.model);
       setRequest("");
-    } catch (error) { setOllamaError(String(error)); }
+    } catch (error) {
+      const message = String(error);
+      setOllamaError(message);
+      const capacityFailure = /available RAM|local task queue is full|another local inference task is using|device capacity/i.test(message);
+      if (capacityFailure) {
+        setLocalCapacityFallbackNotice(
+          executionMode === "fortress"
+            ? "Local capacity is currently insufficient. Fortress mode is local-only, so UJANI will not offer or send this task to an external provider."
+            : "Local capacity is currently insufficient or occupied. No data has been sent externally. If you want online assistance, review the exact conversation, provider, model, data-retention terms and cost below, then explicitly approve this task."
+        );
+      }
+    }
     finally { setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
   }
 
@@ -1356,6 +1368,7 @@ export default function App() {
             <label className="model-select">Token parameter<select value={cloudTokenParameter} onChange={(event) => { setCloudTokenParameter(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }}><option value="auto">Automatic (recognised model families)</option><option value="max_tokens">max_tokens (standard models)</option><option value="max_completion_tokens">max_completion_tokens (reasoning / compatible deployments)</option></select></label>
             <small className="muted">Automatic mode uses a larger token budget for recognised reasoning models, including on custom endpoints. For provider-specific deployment aliases, choose the compatible field explicitly. Provider support varies.</small>
             <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
+            {localCapacityFallbackNotice && <p className="notice" role="status">{localCapacityFallbackNotice}</p>}
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation and current message to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>
             <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot || !cloudApiKey.trim() || cloudBusy || executionMode !== "smart"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
