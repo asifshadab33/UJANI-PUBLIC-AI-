@@ -268,7 +268,7 @@ fn chat_capable_model_sizes(
         .collect()
 }
 
-/// Inputs for one consistent Ollama inventory and recommendation snapshot.
+/// Keep one normalized OS-resource sample for inventory and fit advice; do not re-read it in each path.
 struct OllamaStatusInput {
     available: bool,
     models: Vec<ollama::OllamaModel>,
