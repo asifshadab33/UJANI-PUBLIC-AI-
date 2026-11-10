@@ -299,7 +299,7 @@ pub async fn find_local_files(
         cache_hit: false,
         note: {
             let base = if search_pdf_text {
-                "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 1,000 PDFs, 512 MiB of PDF input, and 10 minutes."
+                "Read-only search. Text PDFs are inspected in the existing resource-limited worker; scanned-image OCR is not included. Search is bounded to 20 PDFs, 128 MiB of aggregate PDF input (10 MiB per PDF), and 10 minutes."
             } else {
                 "Read-only search. PDF contents were not inspected; enable PDF text search to look inside text-based PDFs. Scanned-image OCR is not included."
             };
@@ -506,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn large_corpus_pdf_limits_allow_one_thousand_bounded_documents() {
+    fn large_corpus_pdf_limits_allow_only_twenty_bounded_documents() {
         assert!(pdf_candidate_within_limits(MAX_PDF_BYTES, 0, 0));
         assert!(pdf_candidate_within_limits(1, MAX_PDF_FILES - 1, 0));
         assert!(!pdf_candidate_within_limits(1, MAX_PDF_FILES, 0));
