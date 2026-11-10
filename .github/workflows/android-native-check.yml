@@ -91,7 +91,7 @@ jobs:
             for apk in "${apks[@]}"; do
               bytes="$(stat -c '%s' "$apk")"
               mib="$(awk -v bytes="$bytes" 'BEGIN { printf "%.2f", bytes / 1048576 }')"
-              printf -- '- `%s`: %s bytes (%s MiB)\n' "$apk" "$bytes" "$mib"
+              printf -- '- %s: %s bytes (%s MiB)\n' "$apk" "$bytes" "$mib"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
