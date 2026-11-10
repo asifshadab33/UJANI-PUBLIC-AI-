@@ -74,7 +74,7 @@ These commands must remain unavailable in normal builds unless the opt-in featur
 
 ## High-priority findings to close
 
-1. **Security provider status:** on `main`, `get_security_provider_status` calls the OS provider reader directly. A React checkbox is not a native authorization boundary. PR #121 adds a fresh native, scope-specific confirmation inside the command and fail-closed handling. Keep that PR draft until its latest-head CI, review and Windows device smoke test pass.
+1. **Security provider status:** main now validates the requested Windows provider IDs and requires a fresh, native, scope-specific confirmation inside the command before querying the OS API. PR #121 is merged; real Windows Security Center smoke testing remains outstanding, so the native confirmation and provider API still need device-level validation.
 2. **Model download:** the current main branch registers the task before its bounded native consent prompt, so cancellation can be requested while the prompt is pending. This change adds schema v3 receipts for every approved attempt that reaches the download phase (completed, failed, cancelled or timed out). The downstream registry host, transferred bytes and final model artifact digest remain unverified because Ollama performs the registry traffic inside its own daemon.
 3. **Cloud execution:** verify that every request has task-scoped approval, recipient/data disclosure, policy evaluation, bounded payloads, cancellation and a receipt before any external request. A UI-only approval is insufficient.
 4. **Filesystem operations:** verify user-selected scope, path canonicalisation, symlink/reparse-point handling, bounded traversal, cancellation, output limits and no OS-wide scan.

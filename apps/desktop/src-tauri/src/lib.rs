@@ -1122,6 +1122,7 @@ async fn execute_local_ai_task(
             completed_at_unix_ms,
             user_approval_id: None,
             network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+            outcome: None,
         };
         receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
     }
