@@ -26,6 +26,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12"
+      - name: Install pinned JSON Schema validation dependencies
+        run: python -m pip install --disable-pip-version-check --no-input --requirement scripts/requirements-schema.txt
       - name: Check documentation claims against protocol version
         run: bash scripts/check-doc-claims.sh
       - name: Check native IPC command inventory parity
