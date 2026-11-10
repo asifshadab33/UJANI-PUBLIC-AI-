@@ -47,6 +47,7 @@ ujani-core = { path = "../../../crates/ujani-core" }
 
 # Keep the Tauri application in its own workspace; the shared core crate is a path dependency.
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+# The Tauri updater is desktop-only; Android distribution has a separate lifecycle.
 tauri-plugin-updater = "2"
 
 [target.'cfg(unix)'.dependencies]
