@@ -74,17 +74,13 @@ These commands must remain unavailable in normal builds unless the opt-in featur
 
 ## High-priority findings to close
 
-1. **Security provider status:** main now validates the requested Windows provider IDs and requires a fresh, native, scope-specific confirmation inside the command before querying the OS API. PR #121 is merged; real Windows Security Center smoke testing remains outstanding, so the native confirmation and provider API still need device-level validation.
-2. **Model download:** the current main branch registers the task before its bounded native consent prompt, so cancellation can be requested while the prompt is pending. This change adds schema v3 receipts for every approved attempt that reaches the download phase (completed, failed, cancelled or timed out). The downstream registry host, transferred bytes and final model artifact digest remain unverified because Ollama performs the registry traffic inside its own daemon.
+1. **Security provider status:** on `main`, `get_security_provider_status` calls the OS provider reader directly. A React checkbox is not a native authorization boundary. PR #121 adds a fresh native, scope-specific confirmation inside the command and fail-closed handling. Keep that PR draft until its latest-head CI, review and Windows device smoke test pass.
+2. **Model download:** on `main`, the consent callback can wait indefinitely and the task is registered after consent, preventing cancellation while the prompt is pending. PR #121 moves registration before the prompt and adds a bounded native-consent timeout and cancellation handling.
 3. **Cloud execution:** verify that every request has task-scoped approval, recipient/data disclosure, policy evaluation, bounded payloads, cancellation and a receipt before any external request. A UI-only approval is insufficient.
 4. **Filesystem operations:** verify user-selected scope, path canonicalisation, symlink/reparse-point handling, bounded traversal, cancellation, output limits and no OS-wide scan.
-5. **Persistent state:** verify policy gates and receipts for history/cache settings and mutations, document workflows, folder imports, model downloads, cloud-budget changes and peer-trust changes. Model-download v3 receipts now record an outcome and approval reference without storing model bytes, prompts, document contents, credentials or other secrets; other persistent-state receipt gaps still require review.
+5. **Persistent state:** verify policy gates and receipts for history/cache settings and mutations, document workflows, folder imports, cloud-budget changes and peer-trust changes. Receipts must not contain prompts, document contents, credentials or other secrets.
 6. **Peer preview:** verify feature gating at compile time and runtime; no default-build registration, implicit peer trust, or remote execution.
 7. **Release guard:** add CI that detects newly registered sensitive commands and requires an explicit inventory/policy mapping plus negative tests.
-
-## Implemented receipt increment on this branch
-
-pull_ollama_model now reserves receipt capacity before dispatch and writes a schema v3 model.download receipt after each approved attempt, including failed, cancelled and timed-out outcomes. The approval reference is bound to the task ID, model, mode and start timestamp. The receipt deliberately records unknown network activity: the native app talks to loopback Ollama, while the daemon performs the downstream registry request and does not expose a verified destination or byte count to UJANI. A declined native prompt does not create a receipt because no download was dispatched. This increment does not close the broader per-command audit or prove that Ollama removes partial artifacts after cancellation.
 
 ## Required per-command audit fields
 
