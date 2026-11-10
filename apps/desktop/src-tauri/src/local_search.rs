@@ -115,6 +115,21 @@ struct CachedSearchPayload {
     file_identities: Vec<Option<String>>,
 }
 
+/// Persist only validated metadata; bounded excerpts from document contents are display-only.
+fn cache_payload_without_previews(
+    result: &LocalSearchResult,
+    file_identities: Vec<Option<String>>,
+) -> CachedSearchPayload {
+    let mut cached_result = result.clone();
+    for matched in &mut cached_result.matches {
+        matched.match_preview = None;
+    }
+    CachedSearchPayload {
+        result: cached_result,
+        file_identities,
+    }
+}
+
 /// Searches a folder chosen by the user; never accepts a filesystem path from the webview.
 #[tauri::command]
 pub async fn find_local_files(
@@ -333,7 +348,7 @@ pub async fn find_local_files(
         },
     };
     if search_result_is_cacheable(result.truncated, incomplete) {
-        let cached_payload = CachedSearchPayload { result: result.clone(), file_identities: cached_file_identities };
+        let cached_payload = cache_payload_without_previews(&result, cached_file_identities);
         if let (Some(inventory_json), Ok(payload)) = (inventory_json.as_deref(), serde_json::to_string(&cached_payload)) {
             let store_app = app.clone();
             let store_root = root.clone();
@@ -525,6 +540,32 @@ mod tests {
         assert!(preview.ends_with("…"));
         assert!(preview.len() < 400);
         assert!(match_preview_for("nothing relevant here", "acme-holdings-xyz").is_none());
+    }
+
+    #[test]
+    fn cached_search_payload_never_persists_document_match_excerpts() {
+        let result = LocalSearchResult {
+            cancelled: false,
+            root_name: Some("selected-folder".into()),
+            scanned_files: 1,
+            matches: vec![LocalSearchMatch {
+                path: "/private/contracts/invoice.txt".into(),
+                file_name: "invoice.txt".into(),
+                extension: "txt".into(),
+                size_bytes: 64,
+                modified_unix_ms: Some(1),
+                matched_in: vec!["text content".into()],
+                match_preview: Some("CONFIDENTIAL-CUSTOMER-EXCERPT".into()),
+            }],
+            truncated: false,
+            note: "complete".into(),
+            cache_hit: false,
+        };
+        let cached = cache_payload_without_previews(&result, vec![Some("file-id".into())]);
+        assert!(cached.result.matches[0].match_preview.is_none());
+        let serialized = serde_json::to_string(&cached).unwrap();
+        assert!(!serialized.contains("CONFIDENTIAL-CUSTOMER-EXCERPT"));
+        assert!(serialized.contains("invoice.txt"));
     }
 
     #[test]
