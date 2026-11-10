@@ -130,6 +130,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Require version-bound updater signatures
         run: grep -Eq '"requireSignedVersion"[[:space:]]*:[[:space:]]*true' apps/desktop/src-tauri/tauri.conf.json
+      - name: Reject updater artifacts until a non-empty signing public key is configured
+        run: |
+          node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if (c.bundle.createUpdaterArtifacts && !c.plugins?.updater?.pubkey?.trim()) { console.error('Updater artifacts require a configured signing public key.'); process.exit(1); }"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.25.0"
