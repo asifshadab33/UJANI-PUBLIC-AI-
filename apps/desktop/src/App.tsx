@@ -914,6 +914,10 @@ export default function App() {
   }
 
   async function runModel() {
+    if (!import.meta.env.DEV) {
+      setModelError("The deterministic mock adapter is disabled in release builds.");
+      return;
+    }
     const text = request.trim();
     if (!text || modelBusy) return;
     setModelBusy(true);
@@ -1327,7 +1331,7 @@ export default function App() {
             {fileError && <p className="error" role="alert">{fileError}</p>}
             <small className="muted">Image inspection reads basic headers only. It does not attach screenshots to chat, perform OCR, or send images to an AI model.</small>
           </div>
-          <div className="model-box">
+          {import.meta.env.DEV && <div className="model-box">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Translation workspace</h2><p>Choose local AI or a browser translation service.</p></div><span className="muted">USER CONTROL</span></div>
             <label className="file-picker">Text to translate
               <textarea rows={4} value={translationText} onChange={(event) => setTranslationText(event.target.value)} placeholder="Paste text here. For local translation, text stays with the local Ollama service."/>
@@ -1346,7 +1350,7 @@ export default function App() {
               <a href="https://translate.google.com/" target="_blank" rel="noreferrer">Open Google Translate ↗</a>
               <p>Browser-based translation requires internet access and the provider may process the text. Review its privacy terms before pasting sensitive information.</p>
             </div>
-          </div>
+          </div>}
           <div className="model-box" id="online-ai-workspace">
             <div className="section-heading"><div><h2><BrainCircuit size={18}/> Online AI chat — no local model required</h2><p>Bring your own provider, endpoint, model, and API key.</p></div><span className="muted">OPT-IN ONLY</span></div>
             <p className="muted">This sends your prompt to an AI model hosted by your chosen provider over the internet. You do not need to install or run a local model. Choose a preset or enter your own OpenAI-compatible HTTPS endpoint, model ID and API key. Some providers may offer free tiers or promotional credits; availability, limits, billing and data retention are controlled by that provider. UJANI never supplies keys or promises free usage. Each request requires fresh approval. Smart mode only; Fortress is local-only.</p>
