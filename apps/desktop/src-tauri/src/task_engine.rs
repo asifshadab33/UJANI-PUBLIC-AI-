@@ -371,6 +371,12 @@ fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
 }
 
 /// Extracts PDF text in a resource-limited sidecar and rejects truncated output.
+#[cfg(target_os = "android")]
+pub(crate) async fn extract_pdf_isolated(_data: Vec<u8>) -> Result<String, String> {
+    Err("PDF extraction is not available in the Android preview; the desktop worker is not bundled on Android.".into())
+}
+
+#[cfg(not(target_os = "android"))]
 pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
