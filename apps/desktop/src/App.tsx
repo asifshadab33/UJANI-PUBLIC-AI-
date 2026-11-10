@@ -1210,13 +1210,16 @@ export default function App() {
                     setModelSelectionMode("auto");
                     setOllamaModel("");
                     setAutoSelectionInitialized(false);
+                    setOllamaError("");
                   } else {
                     setModelSelectionMode("manual");
                     setOllamaModel(event.target.value);
+                    setOllamaError("");
                   }
                 }}
                 disabled={!ollamaStatus?.models.length}
               >
+                {modelSelectionMode === "manual" && !ollamaModel && <option value="" disabled>Choose an installed model</option>}
                 <option value="__automatic__">Automatic — reported chat capability + RAM fit</option>
                 {ollamaStatus?.models.map((model) => <option key={model.name} value={model.name}>{model.name}</option>)}
               </select>
@@ -1225,8 +1228,12 @@ export default function App() {
               {modelSelectionMode === "auto"
                 ? (ollamaModel
                   ? `Automatic choice: ${ollamaModel}. Ollama reported chat support and the model fits an advisory RAM estimate; this is not a quality benchmark or runtime guarantee.`
-                  : "No inspected model currently has runtime-reported chat support plus an advisory RAM fit. Some installed models may remain uninspected; choose manually if you trust the model.")
-                : `Manual choice: ${ollamaModel}. This preference is saved on this device.`}
+                  : modelRecommendation?.recommended_model
+                    ? `A new suggestion is available: ${modelRecommendation.recommended_model}. UJANI will not switch automatically; review and choose it explicitly.`
+                    : "No inspected model currently has runtime-reported chat support plus an advisory RAM fit. Some installed models may remain uninspected; choose manually if you trust the model.")
+                : (ollamaModel
+                  ? `Manual choice: ${ollamaModel}. This preference is saved on this device.`
+                  : "No model is selected. Choose an installed model or select Automatic explicitly.")}
             </small>
             {ollamaStatus?.inventory && <div className="install-guide">
               <b>Device and local model evidence</b>
