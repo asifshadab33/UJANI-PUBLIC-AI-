@@ -330,6 +330,14 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   format!("{ENC_V2}{}",B64.encode(payload))
  }
 
+ fn encrypt_legacy_v1(key:&[u8;32],value:&str)->String{
+  let cipher=Aes256Gcm::new_from_slice(key).unwrap();
+  let nonce=Aes256Gcm::generate_nonce(&mut OsRng);
+  let encrypted=cipher.encrypt(&nonce,value.as_bytes()).unwrap();
+  let mut payload=nonce.to_vec();payload.extend_from_slice(&encrypted);
+  format!("{ENCRYPTED_PREFIX}{}",B64.encode(payload))
+ }
+
  #[test] fn encrypted_history_round_trips_and_detects_tampering() {
   let key=test_key();let meta=metadata("smart","model-a","chat",1);
   let encrypted=encrypt_text(&key,"private prompt",1,"prompt",&meta).unwrap();
@@ -393,6 +401,21 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
   assert!(p.starts_with(ENC_V3));assert!(o.starts_with(ENC_V3));
   assert_eq!(decrypt_text(&key,&p,1,"prompt",&meta).unwrap(),"legacy prompt");
   assert_eq!(decrypt_text(&key,&o,1,"output",&meta).unwrap(),"legacy output");
+ }
+
+ #[test] fn legacy_v1_rows_migrate_without_losing_existing_ciphertext() {
+  let db=db();let key=test_key();let meta=metadata("smart","m","chat",43);
+  let prompt=encrypt_legacy_v1(&key,"legacy v1 prompt");
+  let output=encrypt_legacy_v1(&key,"legacy v1 output");
+  db.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,?2,'smart','m','chat',43)",
+   params![prompt,output]
+  ).unwrap();
+  migrate_plaintext_rows(&db,&key).unwrap();
+  let (p,o):(String,String)=db.query_row("SELECT prompt,output FROM task_history WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+  assert!(p.starts_with(ENC_V3));assert!(o.starts_with(ENC_V3));
+  assert_eq!(decrypt_text(&key,&p,1,"prompt",&meta).unwrap(),"legacy v1 prompt");
+  assert_eq!(decrypt_text(&key,&o,1,"output",&meta).unwrap(),"legacy v1 output");
  }
 
  #[test] fn corrupt_v1_row_does_not_block_good_history_migration() {
