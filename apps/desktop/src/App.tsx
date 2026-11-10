@@ -71,20 +71,31 @@ const CLOUD_PROVIDER_PRESETS = [
   { id: "custom", label: "Custom OpenAI-compatible API", endpoint: "", model: "" }
 ] as const;
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v1";
+const MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v2";
+const LEGACY_MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v1";
 type ModelSelectionMode = "auto" | "manual";
 function readModelSelectionPreference(): { mode: ModelSelectionMode; model: string } {
-  if (typeof window === "undefined") return { mode: "manual", model: "" };
+  const isValid = (value: unknown): value is { mode: ModelSelectionMode; model: string } =>
+    Boolean(value && typeof value === "object"
+      && ((value as { mode?: unknown }).mode === "auto" || (value as { mode?: unknown }).mode === "manual")
+      && typeof (value as { model?: unknown }).model === "string"
+      && (value as { model: string }).model.length <= 128);
+  if (typeof window === "undefined") return { mode: "auto", model: "" };
   try {
-    const value = JSON.parse(window.localStorage.getItem(MODEL_SELECTION_STORAGE_KEY) || "null");
-    if (value && (value.mode === "auto" || value.mode === "manual")
-      && typeof value.model === "string" && value.model.length <= 128) {
-      return { mode: value.mode, model: value.model };
+    const current = JSON.parse(window.localStorage.getItem(MODEL_SELECTION_STORAGE_KEY) || "null");
+    if (isValid(current)) return current;
+
+    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_MODEL_SELECTION_STORAGE_KEY) || "null");
+    if (isValid(legacy)) {
+      // v1 used manual/empty as its fresh-install default. Preserve real manual
+      // choices, but migrate that old implicit default to the approved auto policy.
+      if (legacy.mode === "manual" && legacy.model === "") return { mode: "auto", model: "" };
+      return legacy;
     }
   } catch {
     // Storage may be unavailable or contain an older/corrupt value; use safe defaults.
   }
-  return { mode: "manual", model: "" };
+  return { mode: "auto", model: "" };
 }
 
 /// Read a selected file using the browser's native encoder rather than expanding
