@@ -143,8 +143,13 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         },
         CapabilityRecord {
             id: "pdf.text_extraction".into(), category: "document".into(),
-            state: CapabilityState::Available, source: "Bundled PDF text parser".into(),
-            detail: "Text-based PDFs only; scanned-page OCR is not implemented".into(),
+            state: if cfg!(target_os = "android") { CapabilityState::Unavailable } else { CapabilityState::Available },
+            source: if cfg!(target_os = "android") { "Android preview capability gate".into() } else { "Bundled PDF text parser".into() },
+            detail: if cfg!(target_os = "android") {
+                "PDF extraction is not available in the Android preview; the desktop sidecar is not bundled".into()
+            } else {
+                "Text-based PDFs only; scanned-page OCR is not implemented".into()
+            },
         },
         CapabilityRecord {
             id: "image.header_inspection".into(), category: "image".into(),
