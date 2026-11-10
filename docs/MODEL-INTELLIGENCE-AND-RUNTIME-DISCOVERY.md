@@ -23,6 +23,15 @@ UJANI Public AI should first make useful, privacy-preserving use of models and c
 
 schemas/model-runtime-inventory-v1.schema.json is shared with UJANI Enterprise AI. Public AI may use a null device_ref; Enterprise may populate it with an enrolled, pseudonymous device reference after consent and policy checks. Keep the schema additive only through a new version; v1 rejects unknown fields to avoid silently accepting unreviewed semantics.
 
-## Implementation status
+## Current implementation status (2026-11-10)
 
-This is the v1 contract and product boundary. Runtime discovery, model capability verification, hardware profiling, task-aware recommendations and user-selection UI must be delivered as separately tested implementation steps. A schema file does not mean those features are already implemented.
+The first Public AI implementation slice now serializes this v1 contract from the existing read-only Ollama adapter and the OS-reported device profile:
+
+- `get_ollama_status` continues to discover only the fixed loopback Ollama service. It reports installed models from `/api/tags`, runtime version from `/api/version`, active-model GPU-use evidence from `/api/ps`, and model metadata from `/api/show`.
+- Metadata inspection is bounded to 32 installed models, at most four concurrent requests, an eight-second aggregate deadline, three seconds per metadata request, and the existing 2 MiB response ceiling. The installed-model list is capped at 512. Unsupported, failed, uninspected or absent metadata stays unknown.
+- CPU logical cores and total/available RAM come from OS APIs. GPU is reported only when Ollama reports positive active-model VRAM allocation; this is not total physical VRAM. NPU and free storage remain unknown because no supported, unambiguous cross-platform evidence is currently collected.
+- Ollama-reported capabilities are allow-listed: completion maps to chat, vision to vision, tools to tool use, and embedding to embeddings. Context length is accepted only as a bounded positive integer in model metadata. Reasoning, coding and language quality are not inferred from model names.
+- Automatic chat recommendation now requires runtime-reported chat capability as well as the existing advisory RAM-fit heuristic. It does not benchmark speed or quality. A user may still choose a model manually when metadata is unknown.
+- The inventory contains no prompts, file contents, local paths, credentials or conversation history. Discovery does not start runtimes, download models, change the user's selection or expose an endpoint.
+
+This is an initial Ollama adapter, not a runtime-independent multi-provider catalogue. llama.cpp/other runtimes, trustworthy reasoning/coding/language claims, total GPU/VRAM and storage inventory, per-task matching beyond verified chat capability, performance benchmarking and hardware-specific fit remain unfinished. A schema or passing unit test is not proof of cross-platform hardware accuracy; Windows, Linux and macOS device verification is still required.
