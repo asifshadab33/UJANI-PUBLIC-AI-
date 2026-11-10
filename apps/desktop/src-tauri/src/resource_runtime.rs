@@ -36,7 +36,7 @@ fn validate_available_memory(task_id: &str, available_mb: u64) -> Result<(), Str
 }
 
 fn current_available_memory_mb() -> u64 {
-    let mut system = System::new();
+    let mut system = System::new().unwrap_or_default();
     system.refresh_memory();
     system.available_memory() / (1024 * 1024)
 }
