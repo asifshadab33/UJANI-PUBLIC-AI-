@@ -134,6 +134,22 @@ fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
     })
 }
 
+/// Normalizes OS memory readings once for both model-fit advice and inventory output.
+///
+/// Non-positive totals are unknown. Available RAM above a known positive total is
+/// treated as unknown rather than clamped or used to recommend a model.
+pub(crate) fn normalize_memory_readings(
+    total_memory_mb: Option<u64>,
+    available_memory_mb: Option<u64>,
+) -> (Option<u64>, Option<u64>) {
+    let total_memory_mb = total_memory_mb.filter(|memory| *memory > 0);
+    let available_memory_mb = match (total_memory_mb, available_memory_mb) {
+        (Some(total), Some(available)) if available > total => None,
+        (_, available) => available,
+    };
+    (total_memory_mb, available_memory_mb)
+}
+
 /// Build inventory v1 from already-bounded OS and local-runtime observations.
 /// Unknown accelerator, storage, context and capability values remain unknown;
 /// this function never probes another endpoint or reads user content.
@@ -152,6 +168,8 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         accelerator,
     } = input;
     let observed_at = now_unix_ms();
+    let (memory_total_mb, memory_available_mb) =
+        normalize_memory_readings(memory_total_mb, memory_available_mb);
     let gpu_activity_confirmed = accelerator
         .is_some_and(|observation| observation.gpu_vram_allocated_bytes > 0);
 
@@ -223,7 +241,7 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         },
         hardware: InventoryHardware {
             cpu_logical_cores: cpu_logical_cores.filter(|cores| *cores > 0 && *cores <= 65_535),
-            memory_total_mb: memory_total_mb.filter(|memory| *memory > 0),
+            memory_total_mb,
             memory_available_mb,
             // No portable, unambiguous aggregate free-space value is collected yet.
             storage_free_mb: None,
@@ -302,6 +320,50 @@ mod tests {
         assert!(!inventory.privacy.contains_user_files);
         assert!(!inventory.privacy.contains_local_paths);
         assert!(!inventory.privacy.contains_credentials);
+    }
+
+    #[test]
+    fn inconsistent_available_memory_is_reported_as_unknown() {
+        let models = [];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: Some(8),
+            memory_total_mb: Some(8_192),
+            memory_available_mb: Some(16_384),
+            accelerator: None,
+        });
+
+        assert_eq!(inventory.hardware.memory_total_mb, Some(8_192));
+        assert_eq!(inventory.hardware.memory_available_mb, None);
+    }
+
+    #[test]
+    fn available_memory_is_preserved_when_total_memory_is_unknown() {
+        let models = [];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: Some(2_048),
+            accelerator: None,
+        });
+
+        assert_eq!(inventory.hardware.memory_total_mb, None);
+        assert_eq!(inventory.hardware.memory_available_mb, Some(2_048));
     }
 
     #[test]
