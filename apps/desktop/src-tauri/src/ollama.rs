@@ -620,7 +620,7 @@ mod tests {
             canonical_model_capabilities(&["unrecognised".into()]),
             vec!["unknown".to_string()]
         );
-        assert_eq!(canonical_model_capabilities(&[]), vec!["unknown"]);
+        assert_eq!(canonical_model_capabilities(&[]), vec!["unknown".to_string()]);
     }
 
     #[test]
