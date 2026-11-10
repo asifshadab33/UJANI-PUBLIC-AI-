@@ -162,6 +162,7 @@ export default function App() {
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [modelSelectionMode, setModelSelectionMode] = useState<ModelSelectionMode>(() => readModelSelectionPreference().mode);
   const [ollamaModel, setOllamaModel] = useState(() => readModelSelectionPreference().model);
+  const [autoSelectionInitialized, setAutoSelectionInitialized] = useState(() => Boolean(readModelSelectionPreference().model));
   const [modelPullName, setModelPullName] = useState("llama3.2");
   const [modelPullBusy, setModelPullBusy] = useState(false);
   const [activeModelPullTaskId, setActiveModelPullTaskId] = useState<string | null>(null);
@@ -234,15 +235,13 @@ export default function App() {
   // chat capability and fit the conservative RAM estimate. Unknown capabilities are not
   // silently treated as chat-capable; the user can still make an explicit manual choice.
   useEffect(() => {
-    if (modelSelectionMode !== "auto" || !isTauri() || !ollamaStatus?.available) return;
-    const recommendation = ollamaStatus.recommendation;
-    setModelRecommendation(recommendation);
-    setRecommendationError("");
-    const recommended = recommendation.recommended_model;
-    setOllamaModel(recommended && ollamaStatus.models.some((model) => model.name === recommended)
-      ? recommended
-      : "");
-  }, [modelSelectionMode, ollamaStatus]);
+    if (modelSelectionMode !== "auto" || !isTauri() || !ollamaStatus?.available || autoSelectionInitialized) return;
+    const recommended = ollamaStatus.recommendation.recommended_model;
+    if (recommended && ollamaStatus.models.some((model) => model.name === recommended)) {
+      setOllamaModel(recommended);
+      setAutoSelectionInitialized(true);
+    }
+  }, [modelSelectionMode, ollamaStatus, autoSelectionInitialized]);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [activeCloudTaskId, setActiveCloudTaskId] = useState<string | null>(null);
   const [cloudResult, setCloudResult] = useState("");
@@ -569,13 +568,12 @@ export default function App() {
       const selectedModelStillInstalled = status.available
         && status.models.some((model) => model.name === ollamaModel);
       if (modelSelectionMode === "manual" && ollamaModel && !selectedModelStillInstalled) {
-        // A removed model invalidates the manual preference; return to automatic selection.
-        setModelSelectionMode("auto");
+        // Preserve the user's manual-selection intent; never silently replace a removed model.
         setOllamaModel("");
+        setOllamaError("Your manually selected model is no longer installed. Choose another model or select Automatic explicitly.");
       } else if (modelSelectionMode === "auto" && ollamaModel && !selectedModelStillInstalled) {
-        // Never leave a stale automatic choice selected after runtime/model discovery changes.
+        // Clear a stale choice, but require an explicit confirmation before selecting its replacement.
         setOllamaModel("");
-        setModelRecommendation(null);
       }
       if (!status.available) {
         setOllamaError("Ollama is not responding at 127.0.0.1:11434. Start the local Ollama application and retry.");
@@ -1210,6 +1208,8 @@ export default function App() {
                 onChange={(event) => {
                   if (event.target.value === "__automatic__") {
                     setModelSelectionMode("auto");
+                    setOllamaModel("");
+                    setAutoSelectionInitialized(false);
                   } else {
                     setModelSelectionMode("manual");
                     setOllamaModel(event.target.value);
