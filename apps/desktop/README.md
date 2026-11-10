@@ -75,7 +75,7 @@ npm run tauri build
 - User-selected PDFs (up to 10 MiB) are parsed in memory on a blocking worker, then analysed and summarised locally when extracted text is at most 256 KiB. Scanned PDFs still require OCR, which is not implemented.
 - The integrated text/PDF workflow can optionally translate the generated summary into the selected language using a second local Ollama step. Translation is off unless the user selects it.
 - Local text translation uses the selected Ollama model in Fortress/Smart modes (16 KiB input limit).
-- A read-only capability panel reports CPU threads, RAM availability, OS and system locale.
+- A read-only, versioned local model inventory reports OS/architecture, CPU/RAM, installed Ollama models and runtime-reported capabilities/context when available. Automatic chat selection requires reported chat capability plus the advisory RAM-fit heuristic; unknown capabilities are not assumed.
 - Browser translation is offered as a manual link only; users must copy/paste text themselves.
 
 ## Using local Ollama
@@ -89,7 +89,7 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 
 ## Not implemented yet
 
-- GPU-use evidence: when Ollama is available, UJANI reads its local `/api/ps` runtime telemetry. It reports GPU compute as Available only when a running model has positive `size_vram`; otherwise it remains Unknown. This is not a full GPU/driver compatibility inventory. NPU remains Unknown until a supported OS/runtime API is implemented.
+- GPU-use evidence: when Ollama is available, UJANI reads its local `/api/ps` runtime telemetry. It reports active GPU model use only when a running model has positive `size_vram`; this is allocated VRAM, not total device VRAM or a full GPU/driver compatibility inventory. NPU and free storage remain Unknown until supported OS/runtime APIs provide reliable evidence. The inventory inspects metadata for at most 32 models per refresh (four concurrent requests, eight-second aggregate deadline); remaining/unsupported model capabilities remain Unknown.
 - UJANI now offers an explicit, cancellable Ollama model pull from the local loopback service, with bounded progress parsing and a 30-minute task limit. Ollama model removal, updates and automatic runtime installation are not included.
 - Task decomposition and model-based planning.
 - OCR for scanned PDFs and images (image-only PDFs return a clear unsupported message).

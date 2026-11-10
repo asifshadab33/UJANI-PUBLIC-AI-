@@ -10,6 +10,7 @@ mod local_search;
 mod search_cache;
 mod history;
 mod model_runtime;
+mod model_inventory;
 mod ollama;
 mod resource_runtime;
 mod security_providers;
@@ -93,7 +94,26 @@ struct CapabilitySnapshot {
     available_memory_mb: u64,
 }
 
-/// Read-only capability inventory. Unknown GPU/NPU capability is never treated as available.
+/// Resource limits are configured in the sidecar launcher, but this build has no
+/// non-destructive device-level enforcement probe. Do not report them as available
+/// until supported-platform smoke tests verify the actual process controls.
+fn pdf_worker_resource_limits_state() -> CapabilityState {
+    CapabilityState::Unknown
+}
+
+fn pdf_worker_filesystem_isolation_state() -> CapabilityState {
+    CapabilityState::Unavailable
+}
+
+fn pdf_worker_network_isolation_state() -> CapabilityState {
+    if cfg!(target_os = "windows") {
+        CapabilityState::Unavailable
+    } else {
+        CapabilityState::Unknown
+    }
+}
+
+/// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     let mut system = System::new();
@@ -102,7 +122,6 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
     let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
-    let pdf_worker_limits_available = !cfg!(target_os = "macos") || std::path::Path::new("/usr/bin/sandbox-exec").is_file();
     let capabilities = vec![
         CapabilityRecord {
             id: "cpu".into(), category: "compute".into(),
@@ -150,8 +169,21 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         },
         CapabilityRecord {
             id: "pdf.worker.resource_limits".into(), category: "security".into(),
-            state: if pdf_worker_limits_available { CapabilityState::Available } else { CapabilityState::Unavailable }, source: "OS process limits and platform worker sandbox".into(),
-            detail: "Unix: 768 MiB address-space, 45-second CPU, 16-file-descriptor, zero file-growth and zero core-dump limits; Linux also enables no_new_privs and seccomp network-syscall denial. macOS additionally launches through sandbox-exec with file writes and network denied. Windows uses 768 MiB process-memory and 45-second CPU Job Object limits with kill-on-close. These constrain the PDF worker, not the complete application.".into(),
+            state: pdf_worker_resource_limits_state(),
+            source: "OS-specific PDF worker launcher; device enforcement not yet probed".into(),
+            detail: "The sidecar launcher configures Unix CPU/address-space/file-descriptor/file-size/core limits; Linux additionally installs no_new_privs and a seccomp filter. macOS launches through sandbox-exec. Windows assigns a kill-on-close Job Object with process-memory and CPU limits before sending PDF bytes, but assignment occurs after the launcher process starts. These controls apply only to the PDF worker and are not a complete sandbox. This build has not verified their enforcement on the current device, so availability remains Unknown until Windows, Linux and macOS smoke tests pass.".into(),
+        },
+        CapabilityRecord {
+            id: "pdf.worker.filesystem_isolation".into(), category: "security".into(),
+            state: pdf_worker_filesystem_isolation_state(),
+            source: "Current OS-specific sidecar policy".into(),
+            detail: "No deny-by-default filesystem read boundary is configured on Windows, Linux or macOS. The worker retains the current user's filesystem read permissions; a compromised PDF parser may read files accessible to that user. Do not treat resource limits or network denial as filesystem isolation.".into(),
+        },
+        CapabilityRecord {
+            id: "pdf.worker.network_isolation".into(), category: "security".into(),
+            state: pdf_worker_network_isolation_state(),
+            source: "OS-specific sidecar policy; device enforcement not yet probed".into(),
+            detail: "Linux configures seccomp network-syscall denial and macOS configures sandbox-exec network denial, but this build has not verified enforcement on the current device. Windows Job Objects do not restrict network access, so network isolation is unavailable there until a supported OS policy is implemented.".into(),
         },
         CapabilityRecord {
             id: "fortress.os_isolation".into(), category: "security".into(),
@@ -207,15 +239,44 @@ async fn plan_task_workflow(nodes: Vec<TaskNode>, mode: String) -> Result<TaskGr
 struct OllamaStatus {
     available: bool,
     models: Vec<ollama::OllamaModel>,
+    inventory: model_inventory::ModelRuntimeInventory,
+    recommendation: ModelRecommendation,
 }
 
-/// Advisory model-fit estimates; no model is automatically selected or loaded.
+fn chat_capable_model_sizes(
+    models: &[ollama::OllamaModel],
+    metadata: &HashMap<String, ollama::OllamaModelMetadata>,
+) -> Vec<InstalledModelSize> {
+    models
+        .iter()
+        .filter(|model| {
+            metadata.get(&model.name).is_some_and(|item| {
+                item.capabilities
+                    .iter()
+                    .any(|capability| capability == "chat")
+            })
+        })
+        .map(|model| InstalledModelSize {
+            name: model.name.clone(),
+            size_bytes: model.size,
+        })
+        .collect()
+}
+
+/// Advisory fit estimate over installed models whose local runtime explicitly reports chat support.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
- let mut system=System::new(); system.refresh_memory();
- let available_memory_mb=system.available_memory()/(1024*1024);
- let models=if ollama::is_available().await {ollama::list_models().await?.into_iter().map(|m|InstalledModelSize{name:m.name,size_bytes:m.size}).collect::<Vec<_>>()}else{Vec::new()};
- Ok(recommend_local_model(&models,available_memory_mb))
+    let mut system = System::new();
+    system.refresh_memory();
+    let available_memory_mb = system.available_memory() / (1024 * 1024);
+    let models = if ollama::is_available().await {
+        let installed = ollama::list_models().await?;
+        let metadata = ollama::inspect_models(&installed).await;
+        chat_capable_model_sizes(&installed, &metadata)
+    } else {
+        Vec::new()
+    };
+    Ok(recommend_local_model(&models, available_memory_mb))
 }
 
 #[derive(Serialize)]
@@ -447,12 +508,64 @@ async fn pull_ollama_model(
     result
 }
 
-/// Checks only the local Ollama service at 127.0.0.1:11434.
+/// Read-only model and device discovery. All runtime requests are fixed to loopback Ollama.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let available = ollama::is_available().await;
     let models = if available { ollama::list_models().await? } else { Vec::new() };
-    Ok(OllamaStatus { available, models })
+    let metadata = if available {
+        ollama::inspect_models(&models).await
+    } else {
+        HashMap::new()
+    };
+    let (runtime_version, accelerator) = if available {
+        let (version, observation) = tokio::join!(
+            ollama::runtime_version(),
+            ollama::accelerator_observation()
+        );
+        (version.ok(), observation.ok())
+    } else {
+        (None, None)
+    };
+
+    let mut system = System::new();
+    system.refresh_cpu();
+    system.refresh_memory();
+    let cpu_logical_cores = std::thread::available_parallelism()
+        .ok()
+        .map(|count| count.get().min(65_535) as u32)
+        .or_else(|| {
+            let count = system.cpus().len();
+            (count > 0).then_some(count.min(65_535) as u32)
+        });
+    let total_memory_bytes = system.total_memory();
+    let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
+    let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
+    let available_memory_mb = memory_available_mb.unwrap_or(0);
+    let recommendation = recommend_local_model(
+        &chat_capable_model_sizes(&models, &metadata),
+        available_memory_mb,
+    );
+    let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
+        models: &models,
+        metadata: &metadata,
+        runtime_available: available,
+        runtime_version,
+        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        os_version: System::os_version(),
+        architecture: std::env::consts::ARCH.to_string(),
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+        accelerator: accelerator.as_ref(),
+    });
+
+    Ok(OllamaStatus {
+        available,
+        models,
+        inventory,
+        recommendation,
+    })
 }
 
 
@@ -1684,5 +1797,59 @@ mod security_provider_command_tests {
             "windows.antivirus".into(),
             "windows.firewall".into(),
         ]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod model_capability_selection_tests {
+    use super::chat_capable_model_sizes;
+    use crate::ollama::{OllamaModel, OllamaModelMetadata};
+    use std::collections::HashMap;
+
+    #[test]
+    fn automatic_chat_recommendation_excludes_unknown_and_non_chat_models() {
+        let models = vec![
+            OllamaModel { name: "chat-model".into(), size: 1_000, details: None },
+            OllamaModel { name: "vision-model".into(), size: 2_000, details: None },
+            OllamaModel { name: "unknown-model".into(), size: 3_000, details: None },
+        ];
+        let metadata = HashMap::from([
+            ("chat-model".into(), OllamaModelMetadata {
+                context_length_tokens: Some(8_192),
+                capabilities: vec!["chat".into()],
+            }),
+            ("vision-model".into(), OllamaModelMetadata {
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["vision".into()],
+            }),
+        ]);
+
+        let candidates = chat_capable_model_sizes(&models, &metadata);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "chat-model");
+        assert_eq!(candidates[0].size_bytes, 1_000);
+    }
+
+    #[test]
+    fn automatic_chat_recommendation_is_empty_when_capability_evidence_is_unknown() {
+        let models = vec![
+            OllamaModel { name: "legacy-model".into(), size: 1_000, details: None },
+        ];
+        assert!(chat_capable_model_sizes(&models, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn pdf_worker_isolation_is_not_claimed_available_without_device_verification() {
+        assert_eq!(super::pdf_worker_resource_limits_state(), super::CapabilityState::Unknown);
+        assert_eq!(
+            super::pdf_worker_filesystem_isolation_state(),
+            super::CapabilityState::Unavailable
+        );
+        let expected_network_state = if cfg!(target_os = "windows") {
+            super::CapabilityState::Unavailable
+        } else {
+            super::CapabilityState::Unknown
+        };
+        assert_eq!(super::pdf_worker_network_isolation_state(), expected_network_state);
     }
 }
