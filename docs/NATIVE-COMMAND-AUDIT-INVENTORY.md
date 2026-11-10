@@ -74,13 +74,13 @@ These commands must remain unavailable in normal builds unless the opt-in featur
 
 ## High-priority findings to close
 
-1. **Security provider status:** on `main`, `get_security_provider_status` calls the OS provider reader directly. A React checkbox is not a native authorization boundary. PR #121 adds a fresh native, scope-specific confirmation inside the command and fail-closed handling. Keep that PR draft until its latest-head CI, review and Windows device smoke test pass.
-2. **Model download:** on `main`, the consent callback can wait indefinitely and the task is registered after consent, preventing cancellation while the prompt is pending. PR #121 moves registration before the prompt and adds a bounded native-consent timeout and cancellation handling.
+1. **Security provider status — code merged, device verification pending:** PR #121 merged on 2026-11-09. `get_security_provider_status` now validates the provider IDs and obtains a fresh, scope-specific native confirmation before calling the read-only OS adapter; denial, cancellation, timeout and channel closure fail closed. The Windows Security Center adapter still needs a real Windows device smoke test. This closes that command's native-consent gap, not the full command audit.
+2. **Model download — code merged, receipt coverage pending:** PR #121 merged on 2026-11-09. `pull_ollama_model` validates Smart-only mode, the local Ollama model identifier and task ID; registers cancellation before the native prompt; and fails closed on timeout, cancellation or denial. Model downloads are still not covered by the metadata-only execution receipt ledger, so receipt coverage remains an audit item.
 3. **Cloud execution:** verify that every request has task-scoped approval, recipient/data disclosure, policy evaluation, bounded payloads, cancellation and a receipt before any external request. A UI-only approval is insufficient.
 4. **Filesystem operations:** verify user-selected scope, path canonicalisation, symlink/reparse-point handling, bounded traversal, cancellation, output limits and no OS-wide scan.
 5. **Persistent state:** verify policy gates and receipts for history/cache settings and mutations, document workflows, folder imports, cloud-budget changes and peer-trust changes. Receipts must not contain prompts, document contents, credentials or other secrets.
 6. **Peer preview:** verify feature gating at compile time and runtime; no default-build registration, implicit peer trust, or remote execution.
-7. **Release guard:** add CI that detects newly registered sensitive commands and requires an explicit inventory/policy mapping plus negative tests.
+7. **Release guard — partial:** `scripts/check_native_command_inventory.py` is wired into `.github/workflows/ci.yml` and currently verifies parity between the handler and this inventory (42 default commands plus 7 peer-preview commands). This catches an unlisted command but does not require a capability/policy mapping, receipt mapping or denial-before-side-effect test. Extend the guard to require those fields for sensitive commands; keep issue #120 open.
 
 ## Required per-command audit fields
 
