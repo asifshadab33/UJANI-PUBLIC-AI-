@@ -16,9 +16,10 @@ This checklist is for the controlled alpha review of issue #184. The directory c
 - [ ] Confirm all six links are ordinary anchors and open only after explicit activation.
 - [ ] Confirm each anchor has `target="_blank"` and `rel="noopener noreferrer"`.
 - [ ] Confirm no link is opened automatically on first render.
-- [ ] Confirm the disclosure says accounts are not connected and external providers have independent terms and privacy policies.
+- [ ] Confirm the disclosure says accounts are not connected, free-tier limits may change and external providers have independent terms and privacy policies.
+- [ ] Confirm the eight categories each contain four entries and no category is empty.
 - [ ] Verify the directory remains readable at 320 px, 768 px and desktop widths without horizontal overflow.
-- [ ] Verify all links point to the intended official provider domains before release.
+- [ ] Verify all links point to the intended official provider domains before release; re-check that each provider still offers the described free tier, open-source project or public resource.
 
 ## Failure and privacy checks
 - [ ] Browser preview remains usable without native runtime services.
