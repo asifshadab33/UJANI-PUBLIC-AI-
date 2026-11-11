@@ -20,7 +20,7 @@ fn valid_display_file_name(file_name: &str) -> bool {
         && file_name != "."
         && file_name != ".."
         && !file_name.chars().any(|character| {
-            character.is_control() || character == '/' || character == char::from(92)
+            character.is_control() || character == '/' || (cfg!(windows) && character == char::from(92))
         })
 }
 
