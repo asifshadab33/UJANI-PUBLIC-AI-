@@ -136,6 +136,7 @@ def main() -> None:
         "lib.rs": (
             "managed_task_outcomes_are_classified_for_receipts",
             "failed_receipt_digest_does_not_include_error_text",
+            "schema_three_failure_and_cancellation_receipts_validate",
             "summary_and_translation_fail_closed_without_local_ollama",
             "pdf_pipeline_requires_parser_and_local_model_capabilities",
             "worker_and_partner_are_not_scheduled_by_the_local_policy",
