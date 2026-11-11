@@ -24,7 +24,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::{atomic::{AtomicU64, Ordering}, Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap}, sync::{atomic::{AtomicUsize, Ordering}, Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 
 use tokio_util::sync::CancellationToken;
@@ -996,7 +996,7 @@ mod receipt_outcome_tests {
     }
 }
 
-static LOCAL_STATE_RECEIPT_COUNTER: AtomicU64 = AtomicU64::new(1);
+static LOCAL_STATE_RECEIPT_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
 /// Execute one local persistent-state mutation only after reserving its audit slot.
 /// The callback must use a transaction and return metadata bytes, never source content.
@@ -1024,7 +1024,7 @@ where
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos(),
-        sequence
+        sequence as u64
     );
     let receipt_slot = security_store::reserve_execution_receipt_slot(app, &task_id)?;
     let (value, output_metadata) = execute()?;
