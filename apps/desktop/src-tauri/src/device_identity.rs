@@ -103,7 +103,7 @@ fn hex_to_public_bytes(value: &str) -> Result<[u8; 32], String> {
         return Err("Stored device identity public key has an invalid length.".into());
     }
     let mut output = [0u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().chunks(2).enumerate() {
         let digit = |byte: u8| match byte {
             b'0'..=b'9' => Some(byte - b'0'),
             b'a'..=b'f' => Some(byte - b'a' + 10),
