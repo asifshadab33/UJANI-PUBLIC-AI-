@@ -922,7 +922,8 @@ mod tests {
 
         let mut unsupported = fixture.envelope.clone();
         unsupported.required_capabilities = vec!["unregistered.capability".into()];
-        unsupported.consent.user.binding_sha256 = unsupported.consent_binding_sha256().unwrap();
+        let binding = unsupported.consent_binding_sha256().unwrap();
+        unsupported.consent.user.binding_sha256 = binding;
         assert_eq!(unsupported.validate(1_000), Err(ContractError::InvalidCapability));
 
         let mut expired = fixture.envelope.clone();
@@ -931,7 +932,8 @@ mod tests {
         let mut long_lived = fixture.envelope;
         long_lived.expires_at_unix_ms += 1;
         long_lived.consent.user.expires_at_unix_ms += 1;
-        long_lived.consent.user.binding_sha256 = long_lived.consent_binding_sha256().unwrap();
+        let binding = long_lived.consent_binding_sha256().unwrap();
+        long_lived.consent.user.binding_sha256 = binding;
         assert_eq!(long_lived.validate(1_000), Err(ContractError::ExcessiveLifetime));
     }
 
@@ -940,7 +942,9 @@ mod tests {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
         let key = SigningKey::from_bytes(&[6u8; 32]);
         let mut envelope = fixture.envelope;
-        envelope.signature.value = sign_message(&envelope, "task_envelope", "sender-key-1", &key);
+        let signature = sign_message(&envelope, "task_envelope", "sender-key-1", &key);
+        envelope.signature.value = signature;
+        let verifying_key = key.verifying_key();
         let context = AuthenticatedTaskContext {
             principal_id: "user-1",
             sender_device_id: "personal-device-1",
@@ -948,7 +952,7 @@ mod tests {
             service_id: "ujani-enterprise",
             target_device_id: Some("worker-device-1"),
             signing_key_id: "sender-key-1",
-            signing_key: &key.verifying_key(),
+            signing_key: &verifying_key,
             now_unix_ms: 1_000,
         };
         envelope.verify_authenticated(&context).unwrap();
@@ -996,7 +1000,8 @@ mod tests {
 
         let mut no_target = fixture.envelope;
         no_target.device_trust.target_device_id = NullableIdentifier::Null(());
-        no_target.consent.user.binding_sha256 = no_target.consent_binding_sha256().unwrap();
+        let binding = no_target.consent_binding_sha256().unwrap();
+        no_target.consent.user.binding_sha256 = binding;
         no_target.validate(1_000).unwrap();
     }
 
@@ -1035,7 +1040,8 @@ mod tests {
             }
         })).unwrap();
         let key = SigningKey::from_bytes(&[8u8; 32]);
-        status.signature.value = sign_message(&status, "task_status", "service-key-1", &key);
+        let signature = sign_message(&status, "task_status", "service-key-1", &key);
+        status.signature.value = signature;
         status.verify_signature("service-key-1", &key.verifying_key()).unwrap();
         status.validate_after(Some(1)).unwrap();
         assert_eq!(status.validate_after(Some(2)), Err(ContractError::StaleSequence));
@@ -1078,7 +1084,8 @@ mod tests {
             }
         })).unwrap();
         let key = SigningKey::from_bytes(&[9u8; 32]);
-        receipt.signature.value = sign_message(&receipt, "execution_receipt", "worker-key-1", &key);
+        let signature = sign_message(&receipt, "execution_receipt", "worker-key-1", &key);
+        receipt.signature.value = signature;
         receipt.validate().unwrap();
         receipt.verify_signature("worker-key-1", &key.verifying_key()).unwrap();
         receipt.validate_after(Some(0)).unwrap();
