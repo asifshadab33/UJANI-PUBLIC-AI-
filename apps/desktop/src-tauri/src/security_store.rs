@@ -468,7 +468,7 @@ fn set_cloud_budget_limit_db(
     db: &mut Connection,
     daily_limit: i64,
     now: u64,
-    approved_previous_limit: Option<i64>,
+    approved_change: Option<(i64, i64)>,
 ) -> Result<CloudBudgetStatus, String> {
     if !(MIN_DAILY_CLOUD_TOKEN_LIMIT..=MAX_DAILY_CLOUD_TOKEN_LIMIT).contains(&daily_limit) {
         return Err(format!("Daily cloud token limit must be between {MIN_DAILY_CLOUD_TOKEN_LIMIT} and {MAX_DAILY_CLOUD_TOKEN_LIMIT}."));
@@ -480,8 +480,11 @@ fn set_cloud_budget_limit_db(
         [],
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
-    match approved_previous_limit {
-        Some(expected) if expected == current_limit && daily_limit > current_limit => {}
+    match approved_change {
+        Some((expected_current, expected_new))
+            if expected_current == current_limit
+                && expected_new == daily_limit
+                && daily_limit > current_limit => {}
         Some(_) => {
             return Err("Cloud budget changed while awaiting native confirmation. Review the current value and try again.".into());
         }
@@ -533,7 +536,7 @@ pub async fn set_cloud_budget_limit(app: AppHandle, daily_limit_tokens: i64) -> 
         if !approved {
             return Err("The cloud budget increase was declined, cancelled or timed out. No setting was changed.".into());
         }
-        Some(before.daily_limit_tokens)
+        Some((before.daily_limit_tokens, daily_limit_tokens))
     } else {
         None
     };
@@ -1302,6 +1305,14 @@ mod tests {
 
         let denied = set_cloud_budget_limit_db(&mut db, 300_000, 86_400, None).unwrap_err();
         assert!(denied.contains("fresh native confirmation"));
+        let wrong_target = set_cloud_budget_limit_db(
+            &mut db,
+            350_000,
+            86_400,
+            Some((250_000, 300_000)),
+        ).unwrap_err();
+        assert!(wrong_target.contains("changed while awaiting native confirmation"));
+
         let unchanged: i64 = db.query_row(
             "SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1",
             [],
@@ -1309,10 +1320,10 @@ mod tests {
         ).unwrap();
         assert_eq!(unchanged, 250_000);
 
-        let approved = set_cloud_budget_limit_db(&mut db, 300_000, 86_400, Some(250_000)).unwrap();
+        let approved = set_cloud_budget_limit_db(&mut db, 300_000, 86_400, Some((250_000, 300_000))).unwrap();
         assert_eq!(approved.daily_limit_tokens, 300_000);
 
-        let stale = set_cloud_budget_limit_db(&mut db, 350_000, 86_400, Some(250_000)).unwrap_err();
+        let stale = set_cloud_budget_limit_db(&mut db, 350_000, 86_400, Some((250_000, 350_000))).unwrap_err();
         assert!(stale.contains("changed while awaiting native confirmation"));
         let still_current: i64 = db.query_row(
             "SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1",
