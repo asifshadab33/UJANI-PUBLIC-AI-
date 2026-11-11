@@ -211,7 +211,12 @@ fn scan_duplicates_with_budget(
                 truncated = true;
                 continue;
             }
-            let (digest, bytes_read) = match hash_file(&selected_root, &candidate.path, candidate.size_bytes, remaining_budget) {
+            let (digest, bytes_read) = match hash_file(
+                &selected_root,
+                &candidate.path,
+                candidate.size_bytes,
+                remaining_budget,
+            ) {
                 Ok(result) => result,
                 Err((_, bytes_read)) => {
                     total_hash_bytes = total_hash_bytes.saturating_add(bytes_read);
@@ -253,7 +258,12 @@ fn scan_duplicates_with_budget(
 }
 
 /// Computes a bounded content hash for a regular file without following a final-component link.
-fn hash_file(root: &Path, path: &Path, expected_size: u64, limit: u64) -> Result<(String, u64), (String, u64)> {
+fn hash_file(
+    root: &Path,
+    path: &Path,
+    expected_size: u64,
+    limit: u64,
+) -> Result<(String, u64), (String, u64)> {
     let mut file = crate::safe_fs::open_regular_file_under_root(root, path)
         .map_err(|error| (error.to_string(), 0))?;
     let metadata = file.metadata().map_err(|error| (error.to_string(), 0))?;
