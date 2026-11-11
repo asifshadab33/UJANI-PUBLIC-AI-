@@ -108,7 +108,8 @@ def main() -> None:
             raise SystemExit(
                 f"{path}:{name} is missing local policy preflight: " + ", ".join(missing)
             )
-\n    tests = (TAURI / "lib.rs").read_text(encoding="utf-8")
+
+    tests = (TAURI / "lib.rs").read_text(encoding="utf-8")
     for test_name in (
         "managed_task_outcomes_are_classified_for_receipts",
         "failed_receipt_digest_does_not_include_error_text",
