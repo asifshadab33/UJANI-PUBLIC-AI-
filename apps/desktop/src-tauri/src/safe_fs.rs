@@ -39,14 +39,21 @@ pub(crate) fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
 /// final component with O_NOFOLLOW, so replacing a path component with a symlink
 /// cannot redirect a later file read outside the selected directory.
 #[cfg(unix)]
-pub(crate) fn open_regular_file_under_root(root: &Path, path: &Path) -> io::Result<std::fs::File> {
+pub(crate) fn open_regular_file_under_root(
+    root: &Path,
+    path: &Path,
+) -> io::Result<std::fs::File> {
     use std::{
         ffi::CString,
         os::fd::{AsRawFd, FromRawFd},
         os::unix::ffi::OsStrExt,
     };
 
-    fn open_at(parent: &std::fs::File, name: &std::ffi::OsStr, flags: i32) -> io::Result<std::fs::File> {
+    fn open_at(
+        parent: &std::fs::File,
+        name: &std::ffi::OsStr,
+        flags: i32,
+    ) -> io::Result<std::fs::File> {
         let name = CString::new(name.as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path component contains NUL"))?;
         // SAFETY: parent is a live directory descriptor; name is NUL-terminated;
@@ -60,15 +67,29 @@ pub(crate) fn open_regular_file_under_root(root: &Path, path: &Path) -> io::Resu
     }
 
     if !root.is_absolute() || !path.is_absolute() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "selected root and file path must be absolute"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected root and file path must be absolute",
+        ));
     }
     let relative = path.strip_prefix(root)
-        .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "file path is outside selected root"))?;
-    let mut components = root.components().chain(relative.components()).filter_map(|component| {
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "file path is outside selected root",
+            )
+        })?;
+    let mut components = root
+        .components()
+        .chain(relative.components())
+        .filter_map(|component| {
         match component {
             std::path::Component::RootDir => None,
             std::path::Component::Normal(name) => Some(Ok(name)),
-            _ => Some(Err(io::Error::new(io::ErrorKind::InvalidInput, "non-normal path component rejected"))),
+            _ => Some(Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "non-normal path component rejected",
+            ))),
         }
     }).peekable();
 
@@ -85,27 +106,42 @@ pub(crate) fn open_regular_file_under_root(root: &Path, path: &Path) -> io::Resu
         if final_component {
             let metadata = opened.metadata()?;
             if !metadata.is_file() || is_reparse_point(&metadata) {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "selected path is not a regular file"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "selected path is not a regular file",
+                ));
             }
             return Ok(opened);
         }
         if !opened.metadata()?.is_dir() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "selected path ancestor is not a directory"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "selected path ancestor is not a directory",
+            ));
         }
         directory = opened;
     }
-    Err(io::Error::new(io::ErrorKind::InvalidInput, "selected path does not name a file"))
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "selected path does not name a file",
+    ))
 }
 
 /// Non-Unix fallback retains final-component no-follow checks and verifies the
 /// canonical path is inside the selected root. Windows handle-relative traversal
 /// remains a separate hardening task; this fallback does not claim to close its race.
 #[cfg(not(unix))]
-pub(crate) fn open_regular_file_under_root(root: &Path, path: &Path) -> io::Result<std::fs::File> {
+pub(crate) fn open_regular_file_under_root(
+    root: &Path,
+    path: &Path,
+) -> io::Result<std::fs::File> {
     let canonical_root = std::fs::canonicalize(root)?;
     let canonical_path = std::fs::canonicalize(path)?;
     if !canonical_path.starts_with(&canonical_root) {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "file path is outside selected root"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file path is outside selected root",
+        ));
     }
     open_regular_file(&canonical_path)
 }
@@ -161,7 +197,14 @@ mod tests {
         fs::write(selected.join("nested").join("data.txt"), b"inside").unwrap();
         let canonical_root = fs::canonicalize(&selected).unwrap();
         let target = canonical_root.join("nested").join("data.txt");
-        assert_eq!(open_regular_file_under_root(&canonical_root, &target).unwrap().metadata().unwrap().len(), 6);
+        assert_eq!(
+            open_regular_file_under_root(&canonical_root, &target)
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .len(),
+            6
+        );
 
         fs::remove_dir_all(canonical_root.join("nested")).unwrap();
         symlink(&outside, canonical_root.join("nested")).unwrap();
