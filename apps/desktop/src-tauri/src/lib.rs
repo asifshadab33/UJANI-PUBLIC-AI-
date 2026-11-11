@@ -1029,6 +1029,9 @@ where
             .collect::<String>()
     );
     let receipt_slot = security_store::reserve_execution_receipt_slot(app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(app, &task_id, "receipt_archive_warning", warning, 3);
+    }
     let (value, output_metadata) = execute()?;
     let completed_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
