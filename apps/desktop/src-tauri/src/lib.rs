@@ -988,6 +988,10 @@ mod receipt_outcome_tests {
             ExecutionOutcome::Cancelled
         );
         assert_eq!(
+            execution_outcome::<()>(&Err("Task canceled by user.".into()), "budget"),
+            ExecutionOutcome::Cancelled
+        );
+        assert_eq!(
             execution_outcome::<()>(&Err("operation exceeded 95-second budget".into()), "95-second"),
             ExecutionOutcome::TimedOut
         );
