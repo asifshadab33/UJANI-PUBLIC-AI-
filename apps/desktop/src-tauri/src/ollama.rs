@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::{HashMap, HashSet}, sync::OnceLock, time::Duration};
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 const BASE_URL: &str = "http://127.0.0.1:11434";
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
@@ -519,20 +520,63 @@ fn parse_pull_progress_line(line: &[u8]) -> Result<PullProgress, String> {
 #[derive(Serialize)]
 struct PullModelRequest<'a> { name: &'a str, stream: bool }
 
-/// Pulls one model from the local Ollama service. Progress is parsed from its NDJSON stream.
-pub async fn pull_model<F>(model: &str, mut on_progress: F) -> Result<(), String>
-where F: FnMut(String, u8) {
+/// Pulls one model from the fixed loopback Ollama service. Cancellation drops the
+/// active request or response stream instead of waiting for the next progress event.
+pub async fn pull_model<F>(
+    model: &str,
+    cancellation: &CancellationToken,
+    on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(String, u8),
+{
     if !valid_pull_model(model) {
         return Err("Invalid Ollama model name. Use an official library identifier such as llama3.2 or qwen2.5:3b.".into());
     }
-    let client = build_client(None)?;
-    let response = client.post(format!("{BASE_URL}/api/pull"))
-        .json(&PullModelRequest { name: model, stream: true })
-        .send().await
-        .map_err(|e| format!("Could not start local model download: {e}"))?;
+    if cancellation.is_cancelled() {
+        return Err("Model download cancelled by user.".into());
+    }
+    // Bound the complete HTTP operation as well as the per-chunk idle interval below.
+    let client = build_client(Some(Duration::from_secs(20 * 60)))?;
+    pull_model_with_client(&client, BASE_URL, model, cancellation, on_progress).await
+}
+
+/// Internal transport seam for loopback-only production use and deterministic local HTTP tests.
+/// The production caller supplies BASE_URL; the endpoint is never accepted from IPC or UI input.
+async fn pull_model_with_client<F>(
+    client: &reqwest::Client,
+    base_url: &str,
+    model: &str,
+    cancellation: &CancellationToken,
+    mut on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(String, u8),
+{
+    if !valid_pull_model(model) {
+        return Err("Invalid Ollama model name.".into());
+    }
+    if cancellation.is_cancelled() {
+        return Err("Model download cancelled by user.".into());
+    }
+
+    // Selecting on the token drops reqwest's in-flight send future immediately.
+    let response = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => {
+            return Err("Model download cancelled by user.".into());
+        }
+        result = client
+            .post(format!("{base_url}/api/pull"))
+            .json(&PullModelRequest { name: model, stream: true })
+            .send() => {
+                result.map_err(|error| format!("Could not start local model download: {error}"))?
+            }
+    };
     if !response.status().is_success() {
         return Err(format!("Local Ollama returned HTTP {} while starting model download.", response.status()));
     }
+
     let mut response = response;
     let mut pending = Vec::<u8>::new();
     let mut last_percent: i32 = -1;
@@ -540,9 +584,16 @@ where F: FnMut(String, u8) {
     let mut total_stream_bytes = 0usize;
     let mut completed = false;
     loop {
-        let chunk = match tokio::time::timeout(Duration::from_secs(120), response.chunk()).await {
+        // Dropping the response on cancellation closes the active HTTP body stream.
+        let chunk = match tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => {
+                return Err("Model download cancelled by user.".into());
+            }
+            result = tokio::time::timeout(Duration::from_secs(120), response.chunk()) => result,
+        } {
             Err(_) => return Err("Model download stalled for 2 minutes. Check your connection and retry.".into()),
-            Ok(Err(e)) => return Err(format!("Model download stream failed: {e}")),
+            Ok(Err(error)) => return Err(format!("Model download stream failed: {error}")),
             Ok(Ok(None)) => break,
             Ok(Ok(Some(chunk))) => chunk,
         };
@@ -552,7 +603,7 @@ where F: FnMut(String, u8) {
             return Err("Model download progress exceeded the 8 MiB safety limit.".into());
         }
         for byte in chunk {
-            if byte == b'\n' {
+            if byte == b'\\n' {
                 if pending.is_empty() { continue; }
                 let progress = parse_pull_progress_line(&pending)?;
                 pending.clear();
@@ -575,6 +626,9 @@ where F: FnMut(String, u8) {
             .map_err(|_| "Ollama returned an incomplete or invalid model-download progress event.".to_string())?;
         on_progress(progress.status.clone(), progress.percent);
         if progress.success { completed = true; }
+    }
+    if cancellation.is_cancelled() {
+        return Err("Model download cancelled by user.".into());
     }
     if !completed { return Err("Ollama download ended before reporting success. Check Ollama and retry.".into()); }
     on_progress("Model installed and ready".into(), 100);
@@ -753,5 +807,91 @@ mod tests {
         assert_eq!(gpu.models.iter().fold(0_u64, |total, m| total.saturating_add(m.size_vram)), 1024);
         let cpu = RunningModels { models: vec![RunningModel { size_vram: 0 }] };
         assert_eq!(cpu.models.iter().fold(0_u64, |total, m| total.saturating_add(m.size_vram)), 0);
+    } 
+    #[tokio::test]
+    async fn pull_cancellation_aborts_a_pending_http_response() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).await;
+            let _ = accepted_tx.send(());
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let client = build_client(Some(Duration::from_secs(30))).unwrap();
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let base_url = format!("http://{address}");
+        let pull = tokio::spawn(async move {
+            pull_model_with_client(
+                &client,
+                &base_url,
+                "llama3.2",
+                &worker_cancellation,
+                |_, _| {},
+            ).await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), accepted_rx).await.unwrap().unwrap();
+        cancellation.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), pull).await.unwrap().unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        server.abort();
     }
+
+    #[tokio::test]
+    async fn pull_cancellation_aborts_an_active_progress_stream() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).await;
+            let event = b"{\\"status\\":\\"downloading\\",\\"total\\":100,\\"completed\\":10}\\n";
+            let header = format!(
+                "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: keep-alive\\r\\n\\r\\n{:X}\\r\\n",
+                event.len()
+            );
+            stream.write_all(header.as_bytes()).await.unwrap();
+            stream.write_all(event).await.unwrap();
+            stream.write_all(b"\\r\\n").await.unwrap();
+            stream.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+
+        let client = build_client(Some(Duration::from_secs(30))).unwrap();
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let base_url = format!("http://{address}");
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let pull = tokio::spawn(async move {
+            pull_model_with_client(
+                &client,
+                &base_url,
+                "llama3.2",
+                &worker_cancellation,
+                move |status, percent| {
+                    let _ = progress_tx.send((status, percent));
+                },
+            ).await
+        });
+
+        let progress = tokio::time::timeout(Duration::from_secs(1), progress_rx.recv())
+            .await.unwrap().unwrap();
+        assert_eq!(progress, ("downloading".to_string(), 10));
+        cancellation.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), pull).await.unwrap().unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        server.abort();
+    }
+
 }
