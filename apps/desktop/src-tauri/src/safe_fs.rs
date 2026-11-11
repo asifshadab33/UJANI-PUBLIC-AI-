@@ -547,4 +547,39 @@ mod walk_tests {
         assert!(walk_directory(&folder, options(2, 20, LinkPolicy::Skip), &cancellation).is_err());
         fs::remove_dir_all(folder).unwrap();
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn handle_relative_open_rejects_junctioned_ancestor() {
+        use super::open_regular_file_under_root;
+        use std::{fs, process::Command, time::{SystemTime, UNIX_EPOCH}};
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base = std::env::temp_dir().join(format!("ujani-safe-fs-junction-{id}"));
+        let selected = base.join("selected");
+        let outside = base.join("outside");
+        let junction = selected.join("nested");
+        fs::create_dir_all(&selected).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"outside secret").unwrap();
+
+        let output = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .output()
+            .expect("Windows cmd must be available to create a test junction");
+        assert!(
+            output.status.success(),
+            "could not create test junction: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let root = fs::canonicalize(&selected).unwrap();
+        let target = junction.join("secret.txt");
+        assert!(
+            open_regular_file_under_root(&root, &target).is_err(),
+            "a path traversing a junction outside the selected root must be rejected"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
 }
