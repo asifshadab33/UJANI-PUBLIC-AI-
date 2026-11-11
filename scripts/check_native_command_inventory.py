@@ -33,8 +33,13 @@ def table_commands(document: str, start_heading: str, end_heading: str) -> list[
     commands: list[str] = []
     for line in section.splitlines():
         if line.lstrip().startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if len(cells) < 2:
+                continue
+            # The command is the final column; category/notes cells may also
+            # contain backticked identifiers that are not registered commands.
             commands.extend(
-                re.findall(r"`([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)`", line)
+                re.findall(r"`([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)`", cells[-1])
             )
     return commands
 
