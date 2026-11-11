@@ -1,5 +1,6 @@
 //! Versioned, privacy-minimised inventory assembled from OS and loopback Ollama evidence.
 use crate::ollama::{AcceleratorObservation, OllamaModel, OllamaModelMetadata};
+use ujani_core::model_advisor::estimate_model_working_memory_mb;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -78,6 +79,7 @@ struct InventoryModel {
     availability: &'static str,
     size_bytes: Option<u64>,
     context_length_tokens: Option<u64>,
+    estimated_min_memory_mb: Option<u64>,
     capabilities: Vec<String>,
     evidence: InventoryEvidence,
 }
@@ -234,6 +236,9 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
                 size_bytes: (model.size > 0).then_some(model.size),
                 context_length_tokens: model_metadata
                     .and_then(|item| item.context_length_tokens),
+                // A bounded advisory estimate from the shared core heuristic; never runtime evidence.
+                estimated_min_memory_mb: estimate_model_working_memory_mb(model.size)
+                    .filter(|estimate| *estimate <= 16_777_216),
                 capabilities,
                 evidence,
             }
@@ -333,6 +338,7 @@ mod tests {
         assert_eq!(inventory.runtimes[0].evidence.confidence, "unknown");
         assert_eq!(inventory.models[0].capabilities, vec!["unknown".to_string()]);
         assert_eq!(inventory.models[0].context_length_tokens, None);
+        assert_eq!(inventory.models[0].estimated_min_memory_mb, Some(514));
         assert_eq!(inventory.hardware.storage_free_mb, None);
         assert_eq!(inventory.hardware.accelerators[0].evidence.confidence, "unknown");
         assert_eq!(inventory.hardware.accelerators[1].kind, "npu");
@@ -341,6 +347,26 @@ mod tests {
         assert!(!inventory.privacy.contains_user_files);
         assert!(!inventory.privacy.contains_local_paths);
         assert!(!inventory.privacy.contains_credentials);
+    }
+
+    #[test]
+    fn unbounded_model_size_does_not_emit_an_unsafe_memory_estimate() {
+        let models = [model("huge", u64::MAX)];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        });
+        assert_eq!(inventory.models[0].estimated_min_memory_mb, None);
     }
 
     #[test]
@@ -455,6 +481,7 @@ mod tests {
         assert_eq!(inventory.runtimes[0].version.as_deref(), Some("0.5.12"));
         assert_eq!(inventory.models[0].version.as_deref(), Some("a".repeat(64).as_str()));
         assert_eq!(inventory.models[0].context_length_tokens, Some(32_768));
+        assert_eq!(inventory.models[0].estimated_min_memory_mb, Some(516));
         assert_eq!(
             inventory.models[0].capabilities,
             vec!["chat".to_string(), "vision".to_string(), "tool_use".to_string()]
