@@ -568,11 +568,13 @@ mod selected_root_open_boundary_tests {
         let parent = temp_root("containment");
         let selected = parent.join("selected");
         fs::create_dir_all(&selected).unwrap();
-        let inside = selected.join("inside.txt");
+        fs::write(selected.join("inside.txt"), b"inside").unwrap();
         let outside = parent.join("outside.txt");
-        fs::write(&inside, b"inside").unwrap();
         fs::write(&outside, b"outside").unwrap();
         let root = fs::canonicalize(&selected).unwrap();
+        // Build the in-root target from the canonical root: temp directories may
+        // be exposed through a symlinked prefix (for example /tmp on macOS).
+        let inside = root.join("inside.txt");
 
         assert!(open_regular_file_under_root(&root, Path::new("relative.txt")).is_err());
         assert!(open_regular_file_under_root(&root, &outside).is_err());
