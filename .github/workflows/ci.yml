@@ -76,6 +76,8 @@ jobs:
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
       - name: Check opt-in peer preview feature
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --features peer-preview --locked
+      - name: Run opt-in peer preview unit tests
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --features peer-preview --locked
       - name: Run desktop native unit tests
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --locked
       - name: Run dedicated PDF worker regression tests
@@ -123,7 +125,7 @@ jobs:
       - name: Lint core
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Lint desktop
-        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --features pdf-worker-build --locked -- -D warnings
+        run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --features "pdf-worker-build peer-preview" --locked -- -D warnings
 
   workflow-lint:
     name: GitHub Actions workflow lint
