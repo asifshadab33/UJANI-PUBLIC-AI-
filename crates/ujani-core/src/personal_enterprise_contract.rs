@@ -590,6 +590,15 @@ impl ExecutionReceiptV1 {
         Ok(())
     }
 
+    /// The caller must persist the accepted receipt sequence atomically with its task record.
+    pub fn validate_after(&self, last_accepted_sequence: Option<u64>) -> Result<(), ContractError> {
+        self.validate()?;
+        if last_accepted_sequence.is_some_and(|last| self.sequence <= last) {
+            return Err(ContractError::StaleSequence);
+        }
+        Ok(())
+    }
+
     pub fn verify_signature(&self, expected_key_id: &str, trusted_key: &VerifyingKey) -> Result<(), ContractError> {
         verify_signed_value(self, "execution_receipt", &self.signature, expected_key_id, trusted_key)
     }
@@ -982,6 +991,8 @@ mod tests {
             }
         })).unwrap();
         receipt.validate().unwrap();
+        receipt.validate_after(Some(0)).unwrap();
+        assert_eq!(receipt.validate_after(Some(1)), Err(ContractError::StaleSequence));
         receipt.output_byte_length = 1;
         assert_eq!(receipt.validate(), Err(ContractError::InvalidReceipt));
         receipt.output_sha256 = NullableSha256::Digest("0".repeat(64));
