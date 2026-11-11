@@ -926,7 +926,7 @@ mod tests {
         unsupported.consent.user.binding_sha256 = binding;
         assert_eq!(unsupported.validate(1_000), Err(ContractError::InvalidCapability));
 
-        let mut expired = fixture.envelope.clone();
+        let expired = fixture.envelope.clone();
         assert_eq!(expired.validate(301_000), Err(ContractError::Expired));
 
         let mut long_lived = fixture.envelope;
