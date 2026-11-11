@@ -56,6 +56,11 @@ REQUIRED_POLICY_MARKERS = {
         "signed.verify(",
         "claim_nonce_tx(",
     ),
+    ("device_identity.rs", "get_or_create_device_identity"): ("load_or_create_signing_key(&app)",),
+    ("device_identity.rs", "sign_peer_task_envelope"): (
+        "confirm_native(",
+        "load_or_create_signing_key(&app)",
+    ),
     ("folder_import.rs", "process_selected_folder"): (
         "require_local_operation(",
         '"file.analyze_text"',
@@ -90,6 +95,12 @@ REQUIRED_MARKERS = {
     ("security_store.rs", "enroll_trusted_peer"): ("with_local_state_receipt",),
     ("security_store.rs", "revoke_trusted_peer"): ("with_local_state_receipt",),
     ("security_store.rs", "verify_and_claim_peer_envelope"): ("with_local_state_receipt",),
+    ("device_identity.rs", "load_or_create_signing_key"): ("with_local_state_receipt",),
+    ("device_identity.rs", "rotate_device_identity"): (
+        "load_existing_device_identity",
+        "confirm_native(",
+        "with_local_state_receipt",
+    ),
 }
 
 
