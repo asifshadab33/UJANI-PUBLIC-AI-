@@ -27,11 +27,31 @@ def function_body(relative_path: str, name: str) -> str:
 
 REQUIRED_POLICY_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): ("plan_local_task(", "local_plan.accepted"),
+    ("lib.rs", "execute_cloud_ai_task"): (
+        "if !external_data_approved",
+        "native_consent::confirm_native",
+        "reserve_cloud_tokens",
+    ),
+    ("lib.rs", "pull_ollama_model"): (
+        'mode == "fortress"',
+        "native_consent::confirm_native",
+        "reserve_execution_receipt_slot",
+    ),
     ("lib.rs", "execute_document_workflow"): ("plan_task_graph(",),
     ("lib.rs", "summarize_selected_text"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_document"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
     ("lib.rs", "translate_text_local"): ('require_local_operation(&snapshot, "translate.text"',),
+    ("security_store.rs", "set_cloud_budget_limit"): (
+        "native_consent::confirm_native",
+        "set_cloud_budget_limit_db",
+    ),
+    ("security_store.rs", "enroll_trusted_peer"): ("native_consent::confirm_native",),
+    ("security_store.rs", "revoke_trusted_peer"): ("native_consent::confirm_native",),
+    ("security_store.rs", "verify_and_claim_peer_envelope"): (
+        "signed.verify(",
+        "claim_nonce_tx(",
+    ),
     ("folder_import.rs", "process_selected_folder"): (
         "require_local_operation(",
         '"file.analyze_text"',
