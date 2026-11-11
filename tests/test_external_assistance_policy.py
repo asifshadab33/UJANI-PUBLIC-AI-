@@ -26,5 +26,21 @@ class ExternalAssistancePolicyTests(unittest.TestCase):
         self.assertIn("file_content_not_explicitly_selected",
             external_assistance_denials(self.request(contains_local_file_content=True)))
 
+
+    def test_rejects_truthy_non_boolean_approval_flags(self):
+        denials = external_assistance_denials(self.request(
+            user_enabled_external_assistance=1,
+            task_approved_for_external_assistance="yes",
+            payload_minimized=1,
+            destination_configured="configured",
+            contains_local_file_content=None,
+            file_content_explicitly_selected=1))
+        self.assertIn("invalid_user_enabled_external_assistance", denials)
+        self.assertIn("invalid_task_approved_for_external_assistance", denials)
+        self.assertIn("invalid_payload_minimized", denials)
+        self.assertIn("invalid_destination_configured", denials)
+        self.assertIn("invalid_contains_local_file_content", denials)
+        self.assertIn("invalid_file_content_selection", denials)
+
 if __name__ == "__main__":
     unittest.main()
