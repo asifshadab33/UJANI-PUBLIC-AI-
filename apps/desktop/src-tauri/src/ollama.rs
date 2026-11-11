@@ -894,4 +894,52 @@ mod tests {
         server.abort();
     }
 
+
+    #[tokio::test]
+    async fn local_client_does_not_follow_redirect_responses() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            stream.write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/redirect-target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            ).await.unwrap();
+        });
+
+        let response = build_client(Some(Duration::from_secs(2))).unwrap()
+            .get(format!("http://{address}/api/tags"))
+            .send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounded_json_reader_rejects_oversized_content_length_before_body_read() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await;
+            stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2097153\r\nConnection: close\r\n\r\n"
+            ).await.unwrap();
+        });
+
+        let response = build_client(Some(Duration::from_secs(2))).unwrap()
+            .get(format!("http://{address}/api/tags"))
+            .send().await.unwrap();
+        let error = parse_limited::<serde_json::Value>(response).await.unwrap_err();
+        assert!(error.contains("2 MiB limit"));
+        server.await.unwrap();
+    }
+
 }
