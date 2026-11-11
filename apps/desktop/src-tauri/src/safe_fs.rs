@@ -550,6 +550,7 @@ mod walk_tests {
 }
 
 
+// Regression coverage for the caller-visible root/path containment contract.
 #[cfg(test)]
 mod selected_root_open_boundary_tests {
     use super::open_regular_file_under_root;
