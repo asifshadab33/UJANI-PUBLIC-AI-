@@ -25,6 +25,11 @@ def function_body(relative_path: str, name: str) -> str:
     return source[opening : opening + closing.start() + 2]
 
 
+FORBIDDEN_MARKERS = {
+    ("security_store.rs", "verify_and_claim_peer_envelope"): ("get_or_create_device_identity",),
+    ("device_identity.rs", "rotate_device_identity"): ("get_or_create_device_identity",),
+}
+
 REQUIRED_POLICY_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): ("plan_local_task(", "local_plan.accepted"),
     ("lib.rs", "get_security_provider_status"): (
@@ -111,6 +116,13 @@ def main() -> None:
         if missing:
             raise SystemExit(
                 f"{path}:{name} is missing receipt wiring: " + ", ".join(missing)
+            )
+    for (path, name), markers in FORBIDDEN_MARKERS.items():
+        body = function_body(path, name)
+        present = [marker for marker in markers if marker in body]
+        if present:
+            raise SystemExit(
+                f"{path}:{name} performs a forbidden pre-consent mutation: " + ", ".join(present)
             )
     for (path, name), markers in REQUIRED_POLICY_MARKERS.items():
         body = function_body(path, name)
