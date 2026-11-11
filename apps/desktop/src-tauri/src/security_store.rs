@@ -1066,30 +1066,43 @@ pub fn verify_and_claim_peer_envelope(
     if payload.len() > 10 * 1024 * 1024 {
         return Err("Peer payload exceeds the 10 MiB verification limit.".into());
     }
-    let mut db = open(&app)?;
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    let public_key_hex: String = tx.query_row(
-        "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
-        params![peer_id.to_ascii_lowercase()], |row| row.get(0)
-    ).optional().map_err(|e| e.to_string())?
-      .ok_or_else(|| "Peer is not enrolled or has been revoked.".to_string())?;
-    let public = decode_public_key(&public_key_hex)?;
-    let key = VerifyingKey::from_bytes(&public)
-        .map_err(|_| "Stored peer public key is invalid.".to_string())?;
-    if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
-        return Err("Stored peer identity fingerprint does not match its public key.".into());
-    }
-    let local_identity = crate::device_identity::get_or_create_device_identity(app.clone())?;
-    if signed.envelope.recipient_device_id != local_identity.device_id {
-        return Err("Signed peer task is addressed to a different UJANI device.".into());
-    }
-    signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
-    let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
-    let now = now_seconds()?;
-    signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
-        .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
-    claim_nonce_tx(&tx, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)?;
-    tx.commit().map_err(|e| e.to_string())
+    let input_metadata = serde_json::to_vec(&(
+        peer_id.to_ascii_lowercase(),
+        signed.envelope.task_id.as_str(),
+        signed.envelope.operation.as_str(),
+        signed.envelope.input_sha256.as_str(),
+        signed.envelope.nonce.as_str(),
+        signed.envelope.expires_at,
+        &signed.envelope.requested_scopes,
+    ))
+    .map_err(|error| format!("Could not encode peer-envelope audit metadata: {error}"))?;
+    crate::with_local_state_receipt(&app, "peer.envelope.claim", &input_metadata, || {
+        let mut db = open(&app)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+        let public_key_hex: String = tx.query_row(
+            "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
+            params![peer_id.to_ascii_lowercase()], |row| row.get(0)
+        ).optional().map_err(|e| e.to_string())?
+          .ok_or_else(|| "Peer is not enrolled or has been revoked.".to_string())?;
+        let public = decode_public_key(&public_key_hex)?;
+        let key = VerifyingKey::from_bytes(&public)
+            .map_err(|_| "Stored peer public key is invalid.".to_string())?;
+        if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
+            return Err("Stored peer identity fingerprint does not match its public key.".into());
+        }
+        let local_identity = crate::device_identity::get_or_create_device_identity(app.clone())?;
+        if signed.envelope.recipient_device_id != local_identity.device_id {
+            return Err("Signed peer task is addressed to a different UJANI device.".into());
+        }
+        signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
+        let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
+        let now = now_seconds()?;
+        signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
+            .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
+        claim_nonce_tx(&tx, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(((), b"peer-envelope-replay-nonce-claimed".to_vec()))
+    })
 }
 
 #[cfg(test)]
