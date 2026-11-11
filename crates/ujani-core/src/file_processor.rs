@@ -14,9 +14,19 @@ pub struct FileAnalysis {
     pub top_keywords: Vec<String>,
 }
 
+fn valid_display_file_name(file_name: &str) -> bool {
+    !file_name.trim().is_empty()
+        && file_name.len() <= 255
+        && file_name != "."
+        && file_name != ".."
+        && !file_name.chars().any(|character| {
+            character.is_control() || character == '/' || character == char::from(92)
+        })
+}
+
 pub fn analyze_text(file_name: &str, content: &str) -> Result<FileAnalysis, String> {
-    if file_name.trim().is_empty() || file_name.len() > 255 {
-        return Err("A valid file name is required.".into());
+    if !valid_display_file_name(file_name) {
+        return Err("A valid file name without path separators or control characters is required.".into());
     }
     if content.len() > MAX_TEXT_BYTES {
         return Err("Text file exceeds the 1 MiB processing limit.".into());
@@ -81,9 +91,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_and_overlong_file_names() {
+    fn rejects_empty_overlong_path_like_and_control_character_file_names() {
         assert!(analyze_text("  ", "content").is_err());
         assert!(analyze_text(&"n".repeat(256), "content").is_err());
+        assert!(analyze_text("../notes.txt", "content").is_err());
+        assert!(analyze_text(r"C:\Users\person\notes.txt", "content").is_err());
+        assert!(analyze_text("notes\n.txt", "content").is_err());
+        assert!(analyze_text(".", "content").is_err());
+        assert!(analyze_text("..", "content").is_err());
+        assert!(analyze_text("notes.txt", "content").is_ok());
     }
 
     #[test]
