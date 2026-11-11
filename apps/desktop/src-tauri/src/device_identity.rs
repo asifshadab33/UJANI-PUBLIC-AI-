@@ -32,10 +32,10 @@ fn signing_key_from_encoded(encoded: String) -> Result<SigningKey, String> {
         B64.decode(encoded.as_bytes())
             .map_err(|_| "Stored device identity is corrupted.".to_string())?,
     );
-    let seed: [u8; 32] = decoded
-        .as_slice()
-        .try_into()
-        .map_err(|_| "Stored device identity has an invalid key length.".to_string())?;
+    let seed = Zeroizing::new(
+        <[u8; 32]>::try_from(decoded.as_slice())
+            .map_err(|_| "Stored device identity has an invalid key length.".to_string())?,
+    );
     Ok(SigningKey::from_bytes(&seed))
 }
 
