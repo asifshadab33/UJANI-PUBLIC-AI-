@@ -950,8 +950,19 @@ async fn flush_pending_receipts(app: &AppHandle) {
 fn execution_outcome<T>(result: &Result<T, String>, timeout_marker: &str) -> ExecutionOutcome {
     match result {
         Ok(_) => ExecutionOutcome::Completed,
-        Err(error) if error.to_ascii_lowercase().contains("cancelled") => ExecutionOutcome::Cancelled,
-        Err(error) if error.contains(timeout_marker) => ExecutionOutcome::TimedOut,
+        Err(error)
+            if error.to_ascii_lowercase().contains("cancelled")
+                || error.to_ascii_lowercase().contains("canceled") =>
+        {
+            ExecutionOutcome::Cancelled
+        }
+        Err(error)
+            if error
+                .to_ascii_lowercase()
+                .contains(&timeout_marker.to_ascii_lowercase()) =>
+        {
+            ExecutionOutcome::TimedOut
+        }
         Err(_) => ExecutionOutcome::Failed,
     }
 }
@@ -1193,9 +1204,13 @@ where
         .as_millis()
         .max(started_at_unix_ms as u128)
         .min(u64::MAX as u128) as u64;
-    let location = match ollama::accelerator_observation().await.ok() {
-        Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
-        _ => ReceiptExecutionLocation::LocalUnverified,
+    let location = if outcome == ExecutionOutcome::Completed {
+        match ollama::accelerator_observation().await.ok() {
+            Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
+            _ => ReceiptExecutionLocation::LocalUnverified,
+        }
+    } else {
+        ReceiptExecutionLocation::LocalUnverified
     };
     let receipt = ExecutionReceipt {
         schema_version: 3,
