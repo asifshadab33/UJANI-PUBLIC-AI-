@@ -28,5 +28,14 @@ class ModelFallbackPolicyTests(unittest.TestCase):
     def test_invalid_attempt_state_stops(self):
         self.assertEqual(next_execution_route(self.failure(local_attempts=-1)), "stop_invalid_state")
 
+
+    def test_rejects_truthy_non_boolean_flags_and_unbounded_attempts(self):
+        self.assertEqual(next_execution_route(self.failure(retryable=1)), "stop_invalid_state")
+        self.assertEqual(next_execution_route(self.failure(external_assistance_allowed=1)), "stop_invalid_state")
+        self.assertEqual(next_execution_route(self.failure(task_approved_for_external="yes")), "stop_invalid_state")
+        self.assertEqual(next_execution_route(self.failure(local_attempts=True)), "stop_invalid_state")
+        self.assertEqual(next_execution_route(self.failure(max_local_attempts=100)), "stop_invalid_state")
+        self.assertEqual(next_execution_route(self.failure(local_attempts=3, max_local_attempts=2)), "stop_invalid_state")
+
 if __name__ == "__main__":
     unittest.main()
