@@ -966,16 +966,37 @@ pub async fn enroll_trusted_peer(
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
-    let now = now_seconds()? as i64;
-    let db = open(&app)?;
-    db.execute(
-        "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
-         VALUES(?1,?2,?3,?4,NULL)
-         ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
-        params![expected_id, public_key_hex.to_ascii_lowercase(), label, now]
-    ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
-    Ok(TrustedPeer { peer_id: expected_id, public_key_hex: public_key_hex.to_ascii_lowercase(), label, enrolled_at: now, revoked_at: None })
-
+    let input_metadata = serde_json::to_vec(&(
+        expected_id.as_str(),
+        sha256_hex(&public),
+        label.as_str(),
+    ))
+    .map_err(|error| format!("Could not encode peer-enrollment audit metadata: {error}"))?;
+    crate::with_local_state_receipt(&app, "peer.trust.enroll", &input_metadata, || {
+        let now = now_seconds()? as i64;
+        let db = open(&app)?;
+        db.execute(
+            "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
+             VALUES(?1,?2,?3,?4,NULL)
+             ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
+            params![expected_id, public_key_hex.to_ascii_lowercase(), label, now]
+        ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
+        let peer = TrustedPeer {
+            peer_id: expected_id,
+            public_key_hex: public_key_hex.to_ascii_lowercase(),
+            label,
+            enrolled_at: now,
+            revoked_at: None,
+        };
+        let output = serde_json::to_vec(&(
+            peer.peer_id.as_str(),
+            sha256_hex(public.as_slice()),
+            peer.label.as_str(),
+            peer.enrolled_at,
+        ))
+        .map_err(|error| format!("Could not encode peer-enrollment receipt metadata: {error}"))?;
+        Ok((peer, output))
+    })
 }
 
 /// Check whether a peer fingerprint is currently enrolled and not revoked.
@@ -1000,11 +1021,15 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     }
     let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved { return Err("Peer revocation was cancelled.".into()); }
-    let changed = open(&app)?.execute(
-        "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
-        params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
-    ).map_err(|e| format!("Could not revoke trusted peer: {e}"))?;
-    Ok(changed == 1)
+    let input_metadata = peer_id.to_ascii_lowercase().into_bytes();
+    crate::with_local_state_receipt(&app, "peer.trust.revoke", &input_metadata, || {
+        let changed = open(&app)?.execute(
+            "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
+            params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
+        ).map_err(|e| format!("Could not revoke trusted peer: {e}"))?;
+        let revoked = changed == 1;
+        Ok((revoked, vec![u8::from(revoked)]))
+    })
 }
 
 /// List enrolled peer public keys and their local revocation state.
