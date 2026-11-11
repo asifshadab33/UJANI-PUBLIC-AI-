@@ -548,3 +548,63 @@ mod walk_tests {
         fs::remove_dir_all(folder).unwrap();
     }
 }
+
+
+#[cfg(test)]
+mod selected_root_open_boundary_tests {
+    use super::open_regular_file_under_root;
+    use std::{fs, path::Path, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("ujani-open-boundary-{label}-{nonce}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn rejects_relative_paths_outside_root_and_directory_targets() {
+        let parent = temp_root("containment");
+        let selected = parent.join("selected");
+        fs::create_dir_all(&selected).unwrap();
+        let inside = selected.join("inside.txt");
+        let outside = parent.join("outside.txt");
+        fs::write(&inside, b"inside").unwrap();
+        fs::write(&outside, b"outside").unwrap();
+        let root = fs::canonicalize(&selected).unwrap();
+
+        assert!(open_regular_file_under_root(&root, Path::new("relative.txt")).is_err());
+        assert!(open_regular_file_under_root(&root, &outside).is_err());
+        assert!(open_regular_file_under_root(&root, &root).is_err());
+        let mut opened = open_regular_file_under_root(&root, &inside).unwrap();
+        use std::io::Read;
+        let mut contents = Vec::new();
+        opened.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"inside");
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_final_symlink_and_symlinked_root_component() {
+        use std::os::unix::fs::symlink;
+        let parent = temp_root("links");
+        let selected = parent.join("selected");
+        fs::create_dir_all(&selected).unwrap();
+        let target = parent.join("secret.txt");
+        fs::write(&target, b"secret").unwrap();
+
+        let final_link = selected.join("final-link.txt");
+        symlink(&target, &final_link).unwrap();
+        let canonical_selected = fs::canonicalize(&selected).unwrap();
+        assert!(open_regular_file_under_root(&canonical_selected, &final_link).is_err());
+
+        let root_link = parent.join("selected-link");
+        symlink(&selected, &root_link).unwrap();
+        let path_through_link = root_link.join("ordinary.txt");
+        fs::write(selected.join("ordinary.txt"), b"ordinary").unwrap();
+        assert!(open_regular_file_under_root(&root_link, &path_through_link).is_err());
+
+        fs::remove_dir_all(parent).unwrap();
+    }
+}
