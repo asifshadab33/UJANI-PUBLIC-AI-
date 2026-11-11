@@ -271,7 +271,8 @@ pub async fn find_local_files(
                 incomplete = true;
             } else {
                 let read_path = candidate.path.clone();
-                match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
+                let read_root = root.clone();
+                match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_root, &read_path, MAX_TEXT_FILE_BYTES)).await {
                     Ok(Ok(bytes)) => {
                         let actual_bytes = bytes.len() as u64;
                         if text_bytes.saturating_add(actual_bytes) > MAX_TEXT_TOTAL_BYTES {
@@ -302,7 +303,8 @@ pub async fn find_local_files(
             if tokio::time::Instant::now() >= deadline { truncated = true; break; }
             pdf_count += 1;
             let read_path = candidate.path.clone();
-            match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
+            let read_root = root.clone();
+            match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_root, &read_path, MAX_PDF_BYTES)).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
                     let actual_bytes = bytes.len() as u64;
                     if pdf_bytes.saturating_add(actual_bytes) > MAX_PDF_TOTAL_BYTES {
@@ -524,8 +526,8 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
 
 /// Opens and reads one regular file with a hard byte cap; validation uses the opened handle.
 /// Reads at most `limit` bytes from a regular file without following its final link.
-fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
-    let mut file = crate::safe_fs::open_regular_file(path).map_err(|e| e.to_string())?;
+fn read_bounded(root: &Path, path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let mut file = crate::safe_fs::open_regular_file_under_root(root, path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() > limit {
         return Err("File is not eligible for bounded reading.".into());
