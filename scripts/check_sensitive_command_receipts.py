@@ -49,6 +49,9 @@ REQUIRED_MARKERS = {
     ("history.rs", "delete_task_history"): ("with_local_state_receipt",),
     ("history.rs", "clear_task_history"): ("with_local_state_receipt",),
     ("security_store.rs", "set_cloud_budget_limit"): ("with_local_state_receipt",),
+    ("security_store.rs", "enroll_trusted_peer"): ("with_local_state_receipt",),
+    ("security_store.rs", "revoke_trusted_peer"): ("with_local_state_receipt",),
+    ("security_store.rs", "verify_and_claim_peer_envelope"): ("with_local_state_receipt",),
 }
 
 
