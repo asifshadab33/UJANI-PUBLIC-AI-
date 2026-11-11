@@ -603,7 +603,7 @@ where
             return Err("Model download progress exceeded the 8 MiB safety limit.".into());
         }
         for byte in chunk {
-            if byte == b'\\n' {
+            if byte == b'\n' {
                 if pending.is_empty() { continue; }
                 let progress = parse_pull_progress_line(&pending)?;
                 pending.clear();
@@ -856,14 +856,14 @@ mod tests {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0_u8; 2048];
             let _ = stream.read(&mut request).await;
-            let event = b"{\\"status\\":\\"downloading\\",\\"total\\":100,\\"completed\\":10}\\n";
+            let event = b"{\"status\":\"downloading\",\"total\":100,\"completed\":10}\n";
             let header = format!(
-                "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: keep-alive\\r\\n\\r\\n{:X}\\r\\n",
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n{:X}\r\n",
                 event.len()
             );
             stream.write_all(header.as_bytes()).await.unwrap();
             stream.write_all(event).await.unwrap();
-            stream.write_all(b"\\r\\n").await.unwrap();
+            stream.write_all(b"\r\n").await.unwrap();
             stream.flush().await.unwrap();
             tokio::time::sleep(Duration::from_secs(5)).await;
         });
