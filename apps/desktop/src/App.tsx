@@ -5,8 +5,10 @@ import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
 import ChatMessageContent from "./ChatMessageContent";
 import EverydayTools from "./EverydayTools";
+import EverydayWritingActions from "./EverydayWritingActions";
+import IntegrationDirectory from "./IntegrationDirectory";
 import SecurityCentre from "./SecurityCentre";
-import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
+import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
 type ChatDeltaEvent = { task_id: string; delta: string };
@@ -139,7 +141,7 @@ function readFileAsBase64(file: File, signal?: AbortSignal, onReadComplete?: () 
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
-  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre">("new-task");
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre" | "integrations">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
@@ -1056,6 +1058,9 @@ export default function App() {
         >
           <HardDrive size={17}/> Local resources
         </button>
+        <button type="button" className={`nav ${activeSidebarSection === "integrations" ? "active" : ""}`} aria-label="Integration directory" aria-current={activeSidebarSection === "integrations" ? "page" : undefined} onClick={(event) => { setActiveSidebarSection("integrations"); const target = document.getElementById("integration-directory"); target?.scrollIntoView({ behavior: "smooth", block: "start" }); if (event.detail === 0) target?.focus({ preventScroll: true }); }}>
+          <ExternalLink size={17}/> Integrations
+        </button>
       </nav>
       <div className="sidebar-bottom"><ShieldCheck size={17}/><span>Local-first mode<br/><small>Your device, your control</small></span></div>
     </aside>
@@ -1071,7 +1076,13 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
+      <EverydayWritingActions onChoose={(prompt) => {
+        setRequest(prompt);
+        document.getElementById("chat-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("task-request")?.focus({ preventScroll: true });
+      }} />
       <SecurityCentre />
+      <IntegrationDirectory />
       <section className="launcher-section" id="new-task" tabIndex={-1} aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
@@ -1180,7 +1191,7 @@ export default function App() {
       <div className="workspace" id="chat-workspace">
         <div className="task-panel">
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a task, or continue in the local or online chat workspace below.</p></div><Zap size={20}/></div>
-          <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
+          <textarea id="task-request" value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
           <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
           <div className="mode-panel">
             <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
