@@ -7,6 +7,20 @@ const FIXED_RUNTIME_OVERHEAD_MB: u64 = 512;
 const USABLE_MEMORY_NUMERATOR: u64 = 3;
 const USABLE_MEMORY_DENOMINATOR: u64 = 4;
 
+/// Estimate working memory from model disk size using the shared advisory heuristic.
+/// This is an estimate only; it is not runtime telemetry or a fit guarantee.
+pub fn estimate_model_working_memory_mb(size_bytes: u64) -> Option<u64> {
+    if size_bytes == 0 {
+        return None;
+    }
+    let size_mb = size_bytes.saturating_add(MIB - 1) / MIB;
+    Some(
+        size_mb
+            .saturating_mul(RUNTIME_MULTIPLIER)
+            .saturating_add(FIXED_RUNTIME_OVERHEAD_MB),
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstalledModelSize {
     pub name: String,
@@ -44,16 +58,8 @@ pub fn recommend_local_model(
     let mut candidates: Vec<ModelFitEstimate> = models
         .iter()
         .map(|model| {
-            let estimated_working_memory_mb = if model.size_bytes == 0 {
-                None
-            } else {
-                let size_mb = model.size_bytes.saturating_add(MIB - 1) / MIB;
-                Some(
-                    size_mb
-                        .saturating_mul(RUNTIME_MULTIPLIER)
-                        .saturating_add(FIXED_RUNTIME_OVERHEAD_MB),
-                )
-            };
+            let estimated_working_memory_mb =
+                estimate_model_working_memory_mb(model.size_bytes);
             let estimated_to_fit = estimated_working_memory_mb.is_some_and(|required| {
                 available_memory_mb > 0 && required <= usable_memory_budget_mb
             });
@@ -144,6 +150,13 @@ mod tests {
         );
         assert!(result.recommended_model.is_none());
         assert!(result.candidates[0].estimated_working_memory_mb.is_none());
+    }
+
+    #[test]
+    fn working_memory_estimate_uses_rounded_mebibytes_and_fixed_overhead() {
+        assert_eq!(estimate_model_working_memory_mb(0), None);
+        assert_eq!(estimate_model_working_memory_mb(1), Some(514));
+        assert_eq!(estimate_model_working_memory_mb(512 * MIB), Some(1_536));
     }
 
     #[test]
