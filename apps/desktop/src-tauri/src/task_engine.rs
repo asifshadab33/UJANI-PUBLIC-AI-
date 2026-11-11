@@ -7,6 +7,7 @@ use ujani_core::router::{evaluate_mode, ExecutionMode, RouteAction, RouteRequest
 use ujani_core::{analyze_text as core_analyze_text, inspect_image as core_inspect_image, FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, CapabilityRecord, CapabilityState};
 use super::ollama;
+use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize};
 
 #[derive(Serialize)]
 pub struct AiTaskResult {
@@ -95,17 +96,56 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
     system.refresh_memory();
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
+    let available_memory_mb = system.available_memory() / (1024 * 1024);
     plan_with_runtime_capabilities(
         operation_id,
-        system.available_memory() / (1024 * 1024),
+        available_memory_mb,
         cpu_available,
         ollama_available,
     )?;
     let installed = ollama::list_models().await?;
-    let installed_names: Vec<&str> = installed.iter().map(|entry| entry.name.as_str()).collect();
-    if !is_installed_model(model, &installed_names) {
-        return Err(format!(
+    let selected = installed
+        .iter()
+        .find(|entry| entry.name == model)
+        .ok_or_else(|| format!(
             "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
+        ))?;
+    let metadata = ollama::inspect_model_metadata(model).await?;
+    validate_local_model_evidence(model, selected.size, &metadata, available_memory_mb)?;
+    Ok(())
+}
+
+fn validate_local_model_evidence(
+    model: &str,
+    size_bytes: u64,
+    metadata: &ollama::OllamaModelMetadata,
+    available_memory_mb: u64,
+) -> Result<(), String> {
+    if !metadata.capabilities.iter().any(|capability| capability == "chat") {
+        return Err(format!(
+            "Local model '{model}' has no verified chat capability. UJANI will not infer capability from its name."
+        ));
+    }
+    let context_capacity = metadata.context_length_tokens.ok_or_else(|| {
+        format!("Local model '{model}' has unknown context capacity; select a model with verified context metadata.")
+    })?;
+    const CONFIGURED_CONTEXT_TOKENS: u64 = 8192;
+    if context_capacity < CONFIGURED_CONTEXT_TOKENS {
+        return Err(format!(
+            "Local model '{model}' reports {context_capacity} context tokens, below UJANI's configured {CONFIGURED_CONTEXT_TOKENS}-token context."
+        ));
+    }
+    let recommendation = recommend_local_model(
+        &[InstalledModelSize { name: model.to_owned(), size_bytes }],
+        available_memory_mb,
+    );
+    let fit = recommendation.candidates.first().ok_or_else(|| {
+        format!("Local model '{model}' has no usable memory-fit evidence.")
+    })?;
+    if !fit.estimated_to_fit {
+        return Err(format!(
+            "Local model '{model}' is not recommended for the currently available RAM: {}",
+            fit.reason
         ));
     }
     Ok(())
@@ -844,5 +884,82 @@ mod pdf_worker_seccomp_tests {
             assert!(denied.contains(&libc::SYS_fork));
             assert!(denied.contains(&libc::SYS_vfork));
         }
+    }
+}
+
+#[cfg(test)]
+mod local_model_evidence_tests {
+    use super::validate_local_model_evidence;
+    use crate::ollama::OllamaModelMetadata;
+
+    fn metadata(capabilities: &[&str], context: Option<u64>) -> OllamaModelMetadata {
+        OllamaModelMetadata {
+            context_length_tokens: context,
+            capabilities: capabilities.iter().map(|value| (*value).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn accepts_only_verified_chat_model_that_fits_context_and_memory() {
+        assert!(validate_local_model_evidence(
+            "small-chat",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], Some(8192)),
+            4096,
+        ).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_or_non_chat_capability() {
+        assert!(validate_local_model_evidence(
+            "unknown",
+            512 * 1024 * 1024,
+            &metadata(&["unknown"], Some(8192)),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_evidence(
+            "no-chat",
+            512 * 1024 * 1024,
+            &metadata(&["embeddings"], Some(8192)),
+            4096,
+        ).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_or_insufficient_context_capacity() {
+        assert!(validate_local_model_evidence(
+            "unknown-context",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], None),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_evidence(
+            "short-context",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], Some(4096)),
+            4096,
+        ).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_size_or_insufficient_available_memory() {
+        assert!(validate_local_model_evidence(
+            "unknown-size",
+            0,
+            &metadata(&["chat"], Some(8192)),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_evidence(
+            "too-large",
+            8 * 1024 * 1024 * 1024,
+            &metadata(&["chat"], Some(8192)),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_evidence(
+            "unknown-ram",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], Some(8192)),
+            0,
+        ).is_err());
     }
 }
