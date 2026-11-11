@@ -947,10 +947,10 @@ mod tests {
         let verifying_key = key.verifying_key();
         let context = AuthenticatedTaskContext {
             principal_id: "user-1",
-            sender_device_id: "personal-device-1",
+            sender_device_id: "personal-1",
             organisation_id: "org-1",
             service_id: "ujani-enterprise",
-            target_device_id: Some("worker-device-1"),
+            target_device_id: Some("worker-1"),
             signing_key_id: "sender-key-1",
             signing_key: &verifying_key,
             now_unix_ms: 1_000,
