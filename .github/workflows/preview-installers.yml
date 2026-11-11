@@ -2,6 +2,8 @@ name: UJANI unsigned preview installers
 
 on:
   workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -12,10 +14,11 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'fix/receipt-all-managed-task-outcomes-20261111'
     name: Build unsigned installer (${{ matrix.name }})
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
         include:
           - name: windows-x64
@@ -39,6 +42,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22
