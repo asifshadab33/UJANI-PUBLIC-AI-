@@ -907,7 +907,7 @@ mod tests {
             let mut request = [0_u8; 1024];
             let _ = stream.read(&mut request).await;
             stream.write_all(
-                b"HTTP/1.1 302 Found\\r\\nLocation: http://127.0.0.1:9/redirect-target\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/redirect-target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             ).await.unwrap();
         });
 
@@ -930,7 +930,7 @@ mod tests {
             let mut request = [0_u8; 1024];
             let _ = stream.read(&mut request).await;
             stream.write_all(
-                b"HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: 2097153\\r\\nConnection: close\\r\\n\\r\\n"
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2097153\r\nConnection: close\r\n\r\n"
             ).await.unwrap();
         });
 
