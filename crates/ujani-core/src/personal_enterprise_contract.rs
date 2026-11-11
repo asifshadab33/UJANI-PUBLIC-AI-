@@ -855,6 +855,25 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_capabilities_and_expired_or_long_lived_tasks_fail_closed() {
+        let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
+
+        let mut unsupported = fixture.envelope.clone();
+        unsupported.required_capabilities = vec!["unregistered.capability".into()];
+        unsupported.consent.user.binding_sha256 = unsupported.consent_binding_sha256().unwrap();
+        assert_eq!(unsupported.validate(1_000), Err(ContractError::InvalidCapability));
+
+        let mut expired = fixture.envelope.clone();
+        assert_eq!(expired.validate(301_000), Err(ContractError::Expired));
+
+        let mut long_lived = fixture.envelope;
+        long_lived.expires_at_unix_ms += 1;
+        long_lived.consent.user.expires_at_unix_ms += 1;
+        long_lived.consent.user.binding_sha256 = long_lived.consent_binding_sha256().unwrap();
+        assert_eq!(long_lived.validate(1_000), Err(ContractError::ExcessiveLifetime));
+    }
+
+    #[test]
     fn payload_verification_uses_exact_bytes_and_length() {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
         assert_eq!(fixture.envelope.verify_payload(b""), Err(ContractError::PayloadMismatch));
