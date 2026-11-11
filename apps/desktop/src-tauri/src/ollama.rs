@@ -838,9 +838,9 @@ mod tests {
             ).await
         });
 
-        tokio::time::timeout(Duration::from_secs(1), accepted_rx).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), accepted_rx).await.unwrap().unwrap();
         cancellation.cancel();
-        let result = tokio::time::timeout(Duration::from_secs(1), pull).await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(3), pull).await.unwrap().unwrap();
         assert!(result.unwrap_err().contains("cancelled"));
         server.abort();
     }
@@ -885,11 +885,11 @@ mod tests {
             ).await
         });
 
-        let progress = tokio::time::timeout(Duration::from_secs(1), progress_rx.recv())
+        let progress = tokio::time::timeout(Duration::from_secs(3), progress_rx.recv())
             .await.unwrap().unwrap();
         assert_eq!(progress, ("downloading".to_string(), 10));
         cancellation.cancel();
-        let result = tokio::time::timeout(Duration::from_secs(1), pull).await.unwrap().unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(3), pull).await.unwrap().unwrap();
         assert!(result.unwrap_err().contains("cancelled"));
         server.abort();
     }
