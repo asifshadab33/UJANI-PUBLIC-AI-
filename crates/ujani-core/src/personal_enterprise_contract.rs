@@ -815,6 +815,25 @@ mod tests {
     const CONSENT_FIXTURE: &str =
         include_str!("../../../schemas/test-vectors/consent-binding-v1.json");
 
+    fn sign_message<T: Serialize>(
+        message: &T,
+        message_type: &str,
+        key_id: &str,
+        key: &SigningKey,
+    ) -> String {
+        let mut value = serde_json::to_value(message).unwrap();
+        let _ = value.as_object_mut().unwrap().remove("signature");
+        let mut canonical = Vec::new();
+        canonical_json(&value, &mut canonical).unwrap();
+        let mut preimage = SIGNATURE_DOMAIN.to_vec();
+        preimage.extend_from_slice(message_type.as_bytes());
+        preimage.extend_from_slice(b"\0ed25519\0");
+        preimage.extend_from_slice(key_id.as_bytes());
+        preimage.push(0);
+        preimage.extend_from_slice(&canonical);
+        encode_base64url(&key.sign(&preimage).to_bytes())
+    }
+
     #[test]
     fn shared_fixture_matches_the_native_consent_binding_profile() {
         let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
@@ -937,7 +956,7 @@ mod tests {
 
     #[test]
     fn status_requires_all_approvals_before_active_states_and_monotonic_sequence() {
-        let status: TaskStatusV1 = serde_json::from_value(serde_json::json!({
+        let mut status: TaskStatusV1 = serde_json::from_value(serde_json::json!({
             "message_type": "task_status",
             "schema_version": 1,
             "task_id": "task-1",
@@ -956,8 +975,17 @@ mod tests {
                 "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
             }
         })).unwrap();
+        let key = SigningKey::from_bytes(&[8u8; 32]);
+        status.signature.value = sign_message(&status, "task_status", "service-key-1", &key);
+        status.verify_signature("service-key-1", &key.verifying_key()).unwrap();
         status.validate_after(Some(1)).unwrap();
         assert_eq!(status.validate_after(Some(2)), Err(ContractError::StaleSequence));
+        let mut tampered = status.clone();
+        tampered.state = TaskState::Completed;
+        assert_eq!(
+            tampered.verify_signature("service-key-1", &key.verifying_key()),
+            Err(ContractError::InvalidSignature)
+        );
         let mut revoked = status;
         revoked.consent_state.worker_device_owner = ApprovalState::Revoked;
         assert_eq!(revoked.validate(), Err(ContractError::InvalidConsent));
@@ -990,8 +1018,17 @@ mod tests {
                 "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
             }
         })).unwrap();
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        receipt.signature.value = sign_message(&receipt, "execution_receipt", "worker-key-1", &key);
         receipt.validate().unwrap();
+        receipt.verify_signature("worker-key-1", &key.verifying_key()).unwrap();
         receipt.validate_after(Some(0)).unwrap();
+        let mut tampered = receipt.clone();
+        tampered.outcome = ExecutionOutcome::Failed;
+        assert_eq!(
+            tampered.verify_signature("worker-key-1", &key.verifying_key()),
+            Err(ContractError::InvalidSignature)
+        );
         assert_eq!(receipt.validate_after(Some(1)), Err(ContractError::StaleSequence));
         receipt.output_byte_length = 1;
         assert_eq!(receipt.validate(), Err(ContractError::InvalidReceipt));
