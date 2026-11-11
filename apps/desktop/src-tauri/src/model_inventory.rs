@@ -134,6 +134,17 @@ fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
     })
 }
 
+/// Accept only an Ollama SHA-256 digest as a model version identifier.
+/// Unknown or malformed runtime metadata stays unknown rather than being guessed.
+fn normalized_model_digest(digest: Option<&str>) -> Option<String> {
+    let digest = digest?;
+    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(hex.to_ascii_lowercase())
+}
+
 /// Normalizes OS memory readings once for both model-fit advice and inventory output.
 ///
 /// Non-positive totals are unknown. Available RAM above a known positive total is
@@ -218,7 +229,7 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
                     model.details.as_ref().and_then(|details| details.family.clone()),
                     96,
                 ),
-                version: None,
+                version: normalized_model_digest(model.digest.as_deref()),
                 availability: "installed",
                 size_bytes: (model.size > 0).then_some(model.size),
                 context_length_tokens: model_metadata
@@ -278,6 +289,7 @@ mod tests {
         OllamaModel {
             name: name.into(),
             size,
+            digest: None,
             details: Some(OllamaModelDetails {
                 format: Some("gguf".into()),
                 family: Some("llama".into()),
@@ -286,6 +298,15 @@ mod tests {
                 quantization_level: Some("Q4_K_M".into()),
             }),
         }
+    }
+
+    #[test]
+    fn model_version_requires_a_valid_sha256_digest() {
+        let valid = format!("sha256:{}", "B".repeat(64));
+        assert_eq!(normalized_model_digest(Some(&valid)), Some("b".repeat(64)));
+        assert_eq!(normalized_model_digest(Some("sha256:short")), None);
+        assert_eq!(normalized_model_digest(Some("not-a-digest")), None);
+        assert_eq!(normalized_model_digest(None), None);
     }
 
     #[test]
@@ -402,7 +423,8 @@ mod tests {
 
     #[test]
     fn inventory_preserves_only_runtime_reported_capabilities_and_context() {
-        let model = model("qwen2.5:3b", 2_000_000);
+        let mut model = model("qwen2.5:3b", 2_000_000);
+        model.digest = Some(format!("sha256:{}", "A".repeat(64)));
         let models = [model.clone()];
         let metadata = HashMap::from([(
             model.name.clone(),
@@ -431,6 +453,7 @@ mod tests {
         });
 
         assert_eq!(inventory.runtimes[0].version.as_deref(), Some("0.5.12"));
+        assert_eq!(inventory.models[0].version.as_deref(), Some("a".repeat(64).as_str()));
         assert_eq!(inventory.models[0].context_length_tokens, Some(32_768));
         assert_eq!(
             inventory.models[0].capabilities,
