@@ -79,7 +79,10 @@ fn load_or_create_signing_key(app: &AppHandle) -> Result<SigningKey, String> {
             Ok(encoded) => signing_key_from_encoded(encoded)?,
             Err(keyring::Error::NoEntry) => {
                 let mut seed = Zeroizing::new([0_u8; 32]);
-                OsRng.fill_bytes(&mut *seed);
+                let mut random = OsRng;
+                random
+                    .try_fill_bytes(&mut *seed)
+                    .map_err(|_| "OS random source is unavailable.".to_string())?;
                 let key = SigningKey::from_bytes(&seed);
                 let encoded = Zeroizing::new(B64.encode(*seed));
                 entry.set_password(encoded.as_str())
@@ -147,7 +150,10 @@ pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, St
         let entry = keyring::Entry::new(SERVICE, USER)
             .map_err(|e| format!("OS credential vault unavailable: {e}"))?;
         let mut seed = Zeroizing::new([0_u8; 32]);
-        OsRng.fill_bytes(&mut *seed);
+        let mut random = OsRng;
+        random
+            .try_fill_bytes(&mut *seed)
+            .map_err(|_| "OS random source is unavailable.".to_string())?;
         let signing = SigningKey::from_bytes(&seed);
         let encoded = Zeroizing::new(B64.encode(*seed));
         entry.set_password(encoded.as_str())
@@ -202,7 +208,10 @@ pub async fn sign_peer_task_envelope(
         .map_err(|e| e.to_string())?.as_secs();
     // Two independent OS-CSPRNG words provide the 128-bit envelope nonce.
     let mut rng = OsRng;
-    let nonce = format!("{:016x}{:016x}", rng.next_u64(), rng.next_u64());
+    let mut nonce_bytes = [0u8; 16];
+    rng.try_fill_bytes(&mut nonce_bytes)
+        .map_err(|_| "OS random source is unavailable.".to_string())?;
+    let nonce = hex(&nonce_bytes);
     let envelope = TaskEnvelope {
         protocol_version: PROTOCOL_VERSION,
         task_id,
