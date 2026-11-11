@@ -13,13 +13,13 @@ TAURI = ROOT / "apps/desktop/src-tauri/src"
 
 def function_body(relative_path: str, name: str) -> str:
     source = (TAURI / relative_path).read_text(encoding="utf-8")
-    match = re.search(r"\\bfn\\s+" + re.escape(name) + r"\\s*\\(", source)
+    match = re.search(r"\bfn\s+" + re.escape(name) + r"\s*\(", source)
     if not match:
         raise SystemExit(f"missing audited command/function: {relative_path}:{name}")
     opening = source.find("{", match.end())
     if opening < 0:
         raise SystemExit(f"missing function body: {relative_path}:{name}")
-    closing = re.search(r"\\n}\\s*(?:\\n|$)", source[opening:])
+    closing = re.search(r"\n}\s*(?:\n|$)", source[opening:])
     if not closing:
         raise SystemExit(f"could not bound function body: {relative_path}:{name}")
     return source[opening : opening + closing.start() + 2]
