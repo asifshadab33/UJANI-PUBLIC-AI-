@@ -89,7 +89,7 @@ fn evaluate_task_route(
 
 
 #[derive(Serialize)]
-struct CapabilitySnapshot {
+pub(crate) struct CapabilitySnapshot {
     capabilities: Vec<CapabilityRecord>,
     operations: Vec<OperationDescriptor>,
     available_memory_mb: u64,
