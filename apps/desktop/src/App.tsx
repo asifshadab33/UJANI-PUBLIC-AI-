@@ -1078,7 +1078,7 @@ export default function App() {
       <EverydayTools />
       <EverydayWritingActions onChoose={(prompt) => {
         setRequest(prompt);
-        document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("chat-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
         document.getElementById("task-request")?.focus({ preventScroll: true });
       }} />
       <SecurityCentre />
