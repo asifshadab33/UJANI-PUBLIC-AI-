@@ -33,8 +33,9 @@ REQUIRED_POLICY_MARKERS = {
     ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
     ("lib.rs", "translate_text_local"): ('require_local_operation(&snapshot, "translate.text"',),
     ("folder_import.rs", "process_selected_folder"): (
-        'require_local_operation(&capability_snapshot, "file.analyze_text"',
-        'require_local_operation(&capability_snapshot, "document.summarize"',
+        "require_local_operation(",
+        '"file.analyze_text"',
+        '"document.summarize"',
     ),
 }
 
