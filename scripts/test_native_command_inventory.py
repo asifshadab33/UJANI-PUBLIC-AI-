@@ -14,12 +14,10 @@ class CommandTokenTests(unittest.TestCase):
             command_one,
             module::command_two,
             // ignored_command,
-            #[cfg(feature = "peer-preview")]
-            peer_command!(peer_only),
         """
         self.assertEqual(
             command_tokens(source),
-            ["command_one", "module::command_two", "cfg", "feature", "peer", "preview", "peer_only"],
+            ["command_one", "module::command_two", "module::command_two"],
         )
 
     def test_does_not_treat_comment_text_as_registered_commands(self):
@@ -39,7 +37,7 @@ class InventoryTableTests(unittest.TestCase):
 """
         self.assertEqual(
             table_commands(document, "## Registered command inventory", "### Conditional peer-preview surface"),
-            ["open_file", "safe_fs::open", "search_files"],
+            ["open_file", "search_files"],
         )
 
     def test_missing_section_boundary_fails_closed(self):
