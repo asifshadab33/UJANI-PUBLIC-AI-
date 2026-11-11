@@ -29,10 +29,10 @@ class CommandTokenTests(unittest.TestCase):
 class InventoryTableTests(unittest.TestCase):
     def test_reads_only_backticked_command_names_in_table_rows(self):
         document = """## Registered command inventory
-| Command | Notes |
+| Area | Registered command |
 | --- | --- |
-| `open_file` | Calls `safe_fs::open` |
-| `search_files` | Read-only |
+| Filesystem | `open_file` |
+| Search | `search_files` |
 ### Conditional peer-preview surface
 """
         self.assertEqual(
