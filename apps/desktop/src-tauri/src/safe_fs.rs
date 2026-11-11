@@ -32,6 +32,120 @@ pub(crate) fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
     Ok(file)
 }
 
+
+
+/// Opens a file beneath a canonical selected root using handle-relative, no-follow
+/// traversal. On Unix every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the
+/// final component with O_NOFOLLOW, so replacing a path component with a symlink
+/// cannot redirect a later file read outside the selected directory.
+#[cfg(unix)]
+pub(crate) fn open_regular_file_under_root(
+    root: &Path,
+    path: &Path,
+) -> io::Result<std::fs::File> {
+    use std::{
+        ffi::CString,
+        os::fd::{AsRawFd, FromRawFd},
+        os::unix::ffi::OsStrExt,
+    };
+
+    fn open_at(
+        parent: &std::fs::File,
+        name: &std::ffi::OsStr,
+        flags: i32,
+    ) -> io::Result<std::fs::File> {
+        let name = CString::new(name.as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path component contains NUL"))?;
+        // SAFETY: parent is a live directory descriptor; name is NUL-terminated;
+        // openat returns a new owned descriptor or -1 and does not retain pointers.
+        let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fd is a fresh descriptor returned by openat and ownership is transferred.
+        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    }
+
+    if !root.is_absolute() || !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected root and file path must be absolute",
+        ));
+    }
+    let relative = path.strip_prefix(root)
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "file path is outside selected root",
+            )
+        })?;
+    let mut components = root
+        .components()
+        .chain(relative.components())
+        .filter_map(|component| {
+        match component {
+            std::path::Component::RootDir => None,
+            std::path::Component::Normal(name) => Some(Ok(name)),
+            _ => Some(Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "non-normal path component rejected",
+            ))),
+        }
+    }).peekable();
+
+    let mut directory = std::fs::File::open("/")?;
+    while let Some(component) = components.next() {
+        let name = component?;
+        let final_component = components.peek().is_none();
+        let flags = if final_component {
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
+        } else {
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY
+        };
+        let opened = open_at(&directory, name, flags)?;
+        if final_component {
+            let metadata = opened.metadata()?;
+            if !metadata.is_file() || is_reparse_point(&metadata) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "selected path is not a regular file",
+                ));
+            }
+            return Ok(opened);
+        }
+        if !opened.metadata()?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "selected path ancestor is not a directory",
+            ));
+        }
+        directory = opened;
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "selected path does not name a file",
+    ))
+}
+
+/// Non-Unix fallback retains final-component no-follow checks and verifies the
+/// canonical path is inside the selected root. Windows handle-relative traversal
+/// remains a separate hardening task; this fallback does not claim to close its race.
+#[cfg(not(unix))]
+pub(crate) fn open_regular_file_under_root(
+    root: &Path,
+    path: &Path,
+) -> io::Result<std::fs::File> {
+    let canonical_root = std::fs::canonicalize(root)?;
+    let canonical_path = std::fs::canonicalize(path)?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file path is outside selected root",
+        ));
+    }
+    open_regular_file(&canonical_path)
+}
+
 /// Detects links and Windows reparse points from filesystem metadata.
 pub(crate) fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
     #[cfg(unix)]
@@ -66,6 +180,36 @@ mod tests {
         assert_eq!(contents, b"local data");
         assert!(open_regular_file(&root).is_err());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handle_relative_open_rejects_symlinked_ancestor() {
+        use super::open_regular_file_under_root;
+        use std::os::unix::fs::symlink;
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-safe-fs-ancestor-{id}"));
+        let selected = root.join("selected");
+        let outside = root.join("outside");
+        fs::create_dir_all(selected.join("nested")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"outside secret").unwrap();
+        fs::write(selected.join("nested").join("data.txt"), b"inside").unwrap();
+        let canonical_root = fs::canonicalize(&selected).unwrap();
+        let target = canonical_root.join("nested").join("data.txt");
+        assert_eq!(
+            open_regular_file_under_root(&canonical_root, &target)
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .len(),
+            6
+        );
+
+        fs::remove_dir_all(canonical_root.join("nested")).unwrap();
+        symlink(&outside, canonical_root.join("nested")).unwrap();
+        assert!(open_regular_file_under_root(&canonical_root, &target).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
@@ -402,5 +546,68 @@ mod walk_tests {
         cancellation.cancel();
         assert!(walk_directory(&folder, options(2, 20, LinkPolicy::Skip), &cancellation).is_err());
         fs::remove_dir_all(folder).unwrap();
+    }
+}
+
+
+// Regression coverage for the caller-visible root/path containment contract.
+#[cfg(test)]
+mod selected_root_open_boundary_tests {
+    use super::open_regular_file_under_root;
+    use std::{fs, path::Path, time::{SystemTime, UNIX_EPOCH}};
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("ujani-open-boundary-{label}-{nonce}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn rejects_relative_paths_outside_root_and_directory_targets() {
+        let parent = temp_root("containment");
+        let selected = parent.join("selected");
+        fs::create_dir_all(&selected).unwrap();
+        fs::write(selected.join("inside.txt"), b"inside").unwrap();
+        let outside = parent.join("outside.txt");
+        fs::write(&outside, b"outside").unwrap();
+        let root = fs::canonicalize(&selected).unwrap();
+        // Build the in-root target from the canonical root: temp directories may
+        // be exposed through a symlinked prefix (for example /tmp on macOS).
+        let inside = root.join("inside.txt");
+
+        assert!(open_regular_file_under_root(&root, Path::new("relative.txt")).is_err());
+        assert!(open_regular_file_under_root(&root, &outside).is_err());
+        assert!(open_regular_file_under_root(&root, &root).is_err());
+        let mut opened = open_regular_file_under_root(&root, &inside).unwrap();
+        use std::io::Read;
+        let mut contents = Vec::new();
+        opened.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"inside");
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_final_symlink_and_symlinked_root_component() {
+        use std::os::unix::fs::symlink;
+        let parent = temp_root("links");
+        let selected = parent.join("selected");
+        fs::create_dir_all(&selected).unwrap();
+        let target = parent.join("secret.txt");
+        fs::write(&target, b"secret").unwrap();
+
+        let final_link = selected.join("final-link.txt");
+        symlink(&target, &final_link).unwrap();
+        let canonical_selected = fs::canonicalize(&selected).unwrap();
+        assert!(open_regular_file_under_root(&canonical_selected, &final_link).is_err());
+
+        let root_link = parent.join("selected-link");
+        symlink(&selected, &root_link).unwrap();
+        let path_through_link = root_link.join("ordinary.txt");
+        fs::write(selected.join("ordinary.txt"), b"ordinary").unwrap();
+        assert!(open_regular_file_under_root(&root_link, &path_through_link).is_err());
+
+        fs::remove_dir_all(parent).unwrap();
     }
 }

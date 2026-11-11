@@ -271,7 +271,10 @@ pub async fn find_local_files(
                 incomplete = true;
             } else {
                 let read_path = candidate.path.clone();
-                match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_TEXT_FILE_BYTES)).await {
+                let read_root = root.clone();
+                match tauri::async_runtime::spawn_blocking(move || {
+                    read_bounded(&read_root, &read_path, MAX_TEXT_FILE_BYTES)
+                }).await {
                     Ok(Ok(bytes)) => {
                         let actual_bytes = bytes.len() as u64;
                         if text_bytes.saturating_add(actual_bytes) > MAX_TEXT_TOTAL_BYTES {
@@ -302,7 +305,10 @@ pub async fn find_local_files(
             if tokio::time::Instant::now() >= deadline { truncated = true; break; }
             pdf_count += 1;
             let read_path = candidate.path.clone();
-            match tauri::async_runtime::spawn_blocking(move || read_bounded(&read_path, MAX_PDF_BYTES)).await {
+            let read_root = root.clone();
+            match tauri::async_runtime::spawn_blocking(move || {
+                read_bounded(&read_root, &read_path, MAX_PDF_BYTES)
+            }).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
                     let actual_bytes = bytes.len() as u64;
                     if pdf_bytes.saturating_add(actual_bytes) > MAX_PDF_TOTAL_BYTES {
@@ -445,7 +451,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
             || candidate.identity.as_ref() != cached_identity.as_ref() {
             return false;
         }
-        let Ok(file) = crate::safe_fs::open_regular_file(&path) else { return false; };
+        let Ok(file) = crate::safe_fs::open_regular_file_under_root(root, &path) else { return false; };
         let Ok(metadata) = file.metadata() else { return false; };
         if !metadata.is_file() || metadata.len() != candidate.size
             || modified_unix_ns(&metadata) != candidate.modified_unix_ns
@@ -484,6 +490,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
         }
     })?;
 
+    let selected_root = walked.root.clone();
     let mut candidates = Vec::with_capacity(walked.files.len());
     let mut scanned_files = 0usize;
     let mut truncated = walked.truncated;
@@ -492,7 +499,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             return Err("File search cancelled by user.".into());
         }
         scanned_files += 1;
-        let file = match crate::safe_fs::open_regular_file(&entry.path) {
+        let file = match crate::safe_fs::open_regular_file_under_root(&selected_root, &entry.path) {
             Ok(file) => file,
             Err(_) => { truncated = true; continue; }
         };
@@ -523,8 +530,12 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
 
 /// Opens and reads one regular file with a hard byte cap; validation uses the opened handle.
 /// Reads at most `limit` bytes from a regular file without following its final link.
-fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
-    let mut file = crate::safe_fs::open_regular_file(path).map_err(|e| e.to_string())?;
+fn read_bounded(
+    root: &Path,
+    path: &Path,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
+    let mut file = crate::safe_fs::open_regular_file_under_root(root, path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() > limit {
         return Err("File is not eligible for bounded reading.".into());
@@ -687,7 +698,7 @@ mod tests {
         }
         fs::write(root.join("document-0999.txt"), "A supplier contract with ACME-RARE-ENTITY-9917 mentioned once.").unwrap();
 
-        let (_, candidates, scanned, truncated) =
+        let (canonical_root, candidates, scanned, truncated) =
             collect_candidates(&root, &CancellationToken::new()).unwrap();
         assert_eq!(scanned, 1_000);
         assert_eq!(candidates.len(), 1_000);
@@ -696,7 +707,7 @@ mod tests {
         let mut found = Vec::new();
         for candidate in candidates {
             if candidate.extension != "txt" { continue; }
-            let bytes = read_bounded(&candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let bytes = read_bounded(&canonical_root, &candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
             let content = String::from_utf8(bytes).unwrap();
             if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
                 found.push((candidate.name, preview));

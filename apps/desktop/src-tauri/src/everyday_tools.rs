@@ -159,6 +159,7 @@ fn scan_duplicates_with_budget(
             format!("Cannot scan selected folder: {error}")
         }
     })?;
+    let selected_root = walked.root.clone();
     let root_name = walked.root.file_name().map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Selected folder".into());
     let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
@@ -174,7 +175,7 @@ fn scan_duplicates_with_budget(
             truncated = true;
             continue;
         }
-        let file = match crate::safe_fs::open_regular_file(&entry.path) {
+        let file = match crate::safe_fs::open_regular_file_under_root(&selected_root, &entry.path) {
             Ok(file) => file,
             Err(_) => { truncated = true; continue; }
         };
@@ -210,7 +211,12 @@ fn scan_duplicates_with_budget(
                 truncated = true;
                 continue;
             }
-            let (digest, bytes_read) = match hash_file(&candidate.path, candidate.size_bytes, remaining_budget) {
+            let (digest, bytes_read) = match hash_file(
+                &selected_root,
+                &candidate.path,
+                candidate.size_bytes,
+                remaining_budget,
+            ) {
                 Ok(result) => result,
                 Err((_, bytes_read)) => {
                     total_hash_bytes = total_hash_bytes.saturating_add(bytes_read);
@@ -252,8 +258,13 @@ fn scan_duplicates_with_budget(
 }
 
 /// Computes a bounded content hash for a regular file without following a final-component link.
-fn hash_file(path: &Path, expected_size: u64, limit: u64) -> Result<(String, u64), (String, u64)> {
-    let mut file = crate::safe_fs::open_regular_file(path)
+fn hash_file(
+    root: &Path,
+    path: &Path,
+    expected_size: u64,
+    limit: u64,
+) -> Result<(String, u64), (String, u64)> {
+    let mut file = crate::safe_fs::open_regular_file_under_root(root, path)
         .map_err(|error| (error.to_string(), 0))?;
     let metadata = file.metadata().map_err(|error| (error.to_string(), 0))?;
     if !metadata.is_file() || metadata.len() != expected_size || expected_size > limit {
