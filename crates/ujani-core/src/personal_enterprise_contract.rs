@@ -983,7 +983,27 @@ mod tests {
         value.as_object_mut().unwrap().insert("unrecognised".into(), Value::Bool(true));
         let bytes = serde_json::to_vec(&value).unwrap();
         assert_eq!(TaskEnvelopeV1::parse(&bytes), Err(ContractError::InvalidJson));
-        assert!(TaskEnvelopeV1::parse(br#"{"message_type":"task_envelope","message_type":"task_envelope"}"#).is_err());
+        let duplicate_envelope = br#"{"message_type":"task_envelope","message_type":"task_envelope"}"#;
+        let envelope_error = serde_json::from_slice::<TaskEnvelopeV1>(duplicate_envelope).unwrap_err();
+        assert!(envelope_error.to_string().contains("duplicate field"));
+
+        let duplicate_status = br#"{"message_type":"task_status","message_type":"task_status"}"#;
+        let status_error = serde_json::from_slice::<TaskStatusV1>(duplicate_status).unwrap_err();
+        assert!(status_error.to_string().contains("duplicate field"));
+
+        let duplicate_receipt = br#"{"message_type":"execution_receipt","message_type":"execution_receipt"}"#;
+        let receipt_error = serde_json::from_slice::<ExecutionReceiptV1>(duplicate_receipt).unwrap_err();
+        assert!(receipt_error.to_string().contains("duplicate field"));
+
+        let duplicate_nested_status = br#"{
+            "message_type":"task_status","schema_version":1,"task_id":"task-1",
+            "sequence":1,"state":"received","updated_at_unix_ms":1000,
+            "policy_version":"policy-1",
+            "consent_state":{"user":"granted","user":"revoked","organisation_admin":"pending","worker_device_owner":"pending"},
+            "signature":{"algorithm":"ed25519","key_id":"service-key-1","value":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+        }"#;
+        let nested_error = serde_json::from_slice::<TaskStatusV1>(duplicate_nested_status).unwrap_err();
+        assert!(nested_error.to_string().contains("duplicate field"));
     }
 
     #[test]
