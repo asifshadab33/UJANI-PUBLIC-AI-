@@ -707,7 +707,7 @@ mod tests {
         let mut found = Vec::new();
         for candidate in candidates {
             if candidate.extension != "txt" { continue; }
-            let bytes = read_bounded(&candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let bytes = read_bounded(&root, &candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
             let content = String::from_utf8(bytes).unwrap();
             if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
                 found.push((candidate.name, preview));
