@@ -1028,9 +1028,6 @@ where
     );
     let receipt_slot = security_store::reserve_execution_receipt_slot(app, &task_id)?;
     let (value, output_metadata) = execute()?;
-    if output_metadata.len() > 16 * 1024 {
-        return Err("Local state audit result exceeds its size limit; the transaction must be rolled back.".into());
-    }
     let completed_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
