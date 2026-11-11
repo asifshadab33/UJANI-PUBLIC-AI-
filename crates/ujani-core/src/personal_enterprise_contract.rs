@@ -200,6 +200,20 @@ pub struct TaskEnvelopeV1 {
     pub network_destinations: Vec<String>,
 }
 
+/// Identity and key bindings obtained from an authenticated enrollment/session layer.
+/// These values must not be copied from the untrusted envelope itself.
+pub struct AuthenticatedTaskContext<'a> {
+    pub principal_id: &'a str,
+    pub sender_device_id: &'a str,
+    pub organisation_id: &'a str,
+    pub service_id: &'a str,
+    /// A null envelope target permits scheduler selection; an explicit target must match.
+    pub target_device_id: Option<&'a str>,
+    pub signing_key_id: &'a str,
+    pub signing_key: &'a VerifyingKey,
+    pub now_unix_ms: u64,
+}
+
 impl TaskEnvelopeV1 {
     /// Parse one strict v1 envelope. Duplicate and unknown struct fields are rejected by Serde.
     pub fn parse(input: &[u8]) -> Result<Self, ContractError> {
@@ -314,6 +328,26 @@ impl TaskEnvelopeV1 {
             return Err(ContractError::ConsentBindingMismatch);
         }
         Ok(())
+    }
+
+    /// Validate identity/audience/target against authenticated context, then verify the
+    /// domain-separated Ed25519 signature using the key bound to that authenticated identity.
+    pub fn verify_authenticated(&self, context: &AuthenticatedTaskContext<'_>) -> Result<(), ContractError> {
+        self.validate(context.now_unix_ms)?;
+        let target_matches = match (&self.device_trust.target_device_id, context.target_device_id) {
+            (NullableIdentifier::Null(()), _) => true,
+            (NullableIdentifier::Value(expected), Some(actual)) => expected == actual,
+            (NullableIdentifier::Value(_), None) => false,
+        };
+        if self.sender.principal_id != context.principal_id
+            || self.sender.device_id != context.sender_device_id
+            || self.audience.organisation_id != context.organisation_id
+            || self.audience.service_id != context.service_id
+            || !target_matches
+        {
+            return Err(ContractError::InvalidConsent);
+        }
+        self.verify_signature(context.signing_key_id, context.signing_key)
     }
 
     /// Hash the exact received payload bytes; never hash a re-serialized payload.
@@ -899,6 +933,31 @@ mod tests {
         long_lived.consent.user.expires_at_unix_ms += 1;
         long_lived.consent.user.binding_sha256 = long_lived.consent_binding_sha256().unwrap();
         assert_eq!(long_lived.validate(1_000), Err(ContractError::ExcessiveLifetime));
+    }
+
+    #[test]
+    fn authenticated_context_binds_sender_audience_target_and_signing_key() {
+        let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
+        let key = SigningKey::from_bytes(&[6u8; 32]);
+        let mut envelope = fixture.envelope;
+        envelope.signature.value = sign_message(&envelope, "task_envelope", "sender-key-1", &key);
+        let context = AuthenticatedTaskContext {
+            principal_id: "user-1",
+            sender_device_id: "personal-device-1",
+            organisation_id: "org-1",
+            service_id: "ujani-enterprise",
+            target_device_id: Some("worker-device-1"),
+            signing_key_id: "sender-key-1",
+            signing_key: &key.verifying_key(),
+            now_unix_ms: 1_000,
+        };
+        envelope.verify_authenticated(&context).unwrap();
+
+        let wrong_audience = AuthenticatedTaskContext {
+            organisation_id: "other-org",
+            ..context
+        };
+        assert_eq!(envelope.verify_authenticated(&wrong_audience), Err(ContractError::InvalidConsent));
     }
 
     #[test]
