@@ -24,7 +24,8 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::{atomic::{AtomicUsize, Ordering}, Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
+use rand::{rngs::OsRng, RngCore};
+use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 
 use tokio_util::sync::CancellationToken;
@@ -996,8 +997,6 @@ mod receipt_outcome_tests {
     }
 }
 
-static LOCAL_STATE_RECEIPT_COUNTER: AtomicUsize = AtomicUsize::new(1);
-
 /// Execute one local persistent-state mutation only after reserving its audit slot.
 /// The callback must use a transaction and return metadata bytes, never source content.
 pub(crate) fn with_local_state_receipt<T, F>(
@@ -1017,14 +1016,17 @@ where
         .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
         .as_millis()
         .min(u64::MAX as u128) as u64;
-    let sequence = LOCAL_STATE_RECEIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut operation_nonce = [0u8; 16];
+    let mut random = OsRng;
+    random
+        .try_fill_bytes(&mut operation_nonce)
+        .map_err(|_| "The OS random source is unavailable; no state change was started.".to_string())?;
     let task_id = format!(
-        "state-{:032x}-{:016x}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-        sequence as u64
+        "state-{}",
+        operation_nonce
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     );
     let receipt_slot = security_store::reserve_execution_receipt_slot(app, &task_id)?;
     let (value, output_metadata) = execute()?;
