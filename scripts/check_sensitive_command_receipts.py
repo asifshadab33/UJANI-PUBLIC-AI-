@@ -139,6 +139,7 @@ def main() -> None:
         "summary_and_translation_fail_closed_without_local_ollama",
         "pdf_pipeline_requires_parser_and_local_model_capabilities",
         "worker_and_partner_are_not_scheduled_by_the_local_policy",
+        "public_key_hex_is_fixed_width_and_lowercase",
     ):
         if test_name not in tests:
             raise SystemExit(f"missing receipt regression test: {test_name}")
