@@ -25,6 +25,19 @@ def function_body(relative_path: str, name: str) -> str:
     return source[opening : opening + closing.start() + 2]
 
 
+REQUIRED_POLICY_MARKERS = {
+    ("lib.rs", "execute_local_ai_task"): ("plan_local_task(", "local_plan.accepted"),
+    ("lib.rs", "execute_document_workflow"): ("plan_task_graph(",),
+    ("lib.rs", "summarize_selected_text"): ('require_local_operation(&snapshot, "document.summarize"',),
+    ("lib.rs", "process_selected_document"): ('require_local_operation(&snapshot, "document.summarize"',),
+    ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
+    ("lib.rs", "translate_text_local"): ('require_local_operation(&snapshot, "translate.text"',),
+    ("folder_import.rs", "process_selected_folder"): (
+        'require_local_operation(&capability_snapshot, "file.analyze_text"',
+        'require_local_operation(&capability_snapshot, "document.summarize"',
+    ),
+}
+
 REQUIRED_MARKERS = {
     ("lib.rs", "run_managed_task_registered"): (
         "execution_outcome(&result",
@@ -63,14 +76,24 @@ def main() -> None:
             raise SystemExit(
                 f"{path}:{name} is missing receipt wiring: " + ", ".join(missing)
             )
-    tests = (TAURI / "lib.rs").read_text(encoding="utf-8")
+    for (path, name), markers in REQUIRED_POLICY_MARKERS.items():
+        body = function_body(path, name)
+        missing = [marker for marker in markers if marker not in body]
+        if missing:
+            raise SystemExit(
+                f"{path}:{name} is missing local policy preflight: " + ", ".join(missing)
+            )
+\n    tests = (TAURI / "lib.rs").read_text(encoding="utf-8")
     for test_name in (
         "managed_task_outcomes_are_classified_for_receipts",
         "failed_receipt_digest_does_not_include_error_text",
+        "summary_and_translation_fail_closed_without_local_ollama",
+        "pdf_pipeline_requires_parser_and_local_model_capabilities",
+        "worker_and_partner_are_not_scheduled_by_the_local_policy",
     ):
         if test_name not in tests:
             raise SystemExit(f"missing receipt regression test: {test_name}")
-    print(f"Sensitive receipt wiring check passed for {len(REQUIRED_MARKERS)} functions.")
+    print(f"Sensitive receipt and local-policy wiring checks passed for {len(REQUIRED_MARKERS)} receipt paths and {len(REQUIRED_POLICY_MARKERS)} policy paths.")
 
 
 if __name__ == "__main__":
