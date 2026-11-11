@@ -472,4 +472,47 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
  #[test] fn stored_results_are_bounded(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let large="x".repeat(MAX_STORED_OUTPUT+100);save(&mut c,"p",&large,"smart","m","chat",1).unwrap();let row=list(&c).unwrap().remove(0);assert!(row.output.len()<=MAX_STORED_OUTPUT+64);assert!(row.output.contains("truncated to 64 KiB"));}
  #[test] fn rejects_oversized_values(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();assert!(save(&mut c,&"p".repeat(MAX_PROMPT+1),"o","smart","m","chat",1).is_err());assert!(save(&mut c,"p",&"o".repeat(MAX_OUTPUT+1),"smart","m","chat",1).is_err());}
+
+    #[test]
+    fn every_plaintext_metadata_field_is_authenticated_with_history_ciphertext() {
+        let mut connection = db();
+        connection.execute("UPDATE history_settings SET value='true'", []).unwrap();
+        let key = test_key();
+        let id = save_secure(
+            &mut connection, &key, "private prompt", "private output",
+            "smart", "model-a", "chat", 10,
+        ).unwrap();
+
+        // Each field is independently part of the v3 AAD. Altering any one
+        // field must make both encrypted payload columns unreadable.
+        for (column, replacement) in [
+            ("mode", "fortress"),
+            ("model", "model-b"),
+            ("kind", "document"),
+            ("created_at", "11"),
+        ] {
+            connection.execute(
+                &format!("UPDATE task_history SET {column}=?1 WHERE id=?2"),
+                params![replacement, id],
+            ).unwrap();
+            let entries = list_secure(&connection, &key).unwrap();
+            let entry = entries.iter().find(|entry| entry.id == id).unwrap();
+            assert!(entry.prompt.starts_with("[unreadable entry:"), "{column} did not invalidate prompt");
+            assert!(entry.output.starts_with("[unreadable entry:"), "{column} did not invalidate output");
+            connection.execute(
+                &format!("UPDATE task_history SET {column}=?1 WHERE id=?2"),
+                params![match column {
+                    "mode" => "smart",
+                    "model" => "model-a",
+                    "kind" => "chat",
+                    "created_at" => "10",
+                    _ => unreachable!(),
+                }, id],
+            ).unwrap();
+            let restored = list_secure(&connection, &key).unwrap();
+            let restored_entry = restored.iter().find(|entry| entry.id == id).unwrap();
+            assert_eq!(restored_entry.prompt, "private prompt");
+            assert_eq!(restored_entry.output, "private output");
+        }
+    }
 }
