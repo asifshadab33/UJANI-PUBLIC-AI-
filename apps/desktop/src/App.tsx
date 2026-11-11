@@ -1079,6 +1079,7 @@ export default function App() {
       <EverydayWritingActions onChoose={(prompt) => {
         setRequest(prompt);
         document.getElementById("new-task")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("task-request")?.focus({ preventScroll: true });
       }} />
       <SecurityCentre />
       <IntegrationDirectory />
@@ -1190,7 +1191,7 @@ export default function App() {
       <div className="workspace" id="chat-workspace">
         <div className="task-panel">
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a task, or continue in the local or online chat workspace below.</p></div><Zap size={20}/></div>
-          <textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
+          <textarea id="task-request" value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
           <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
           <div className="mode-panel">
             <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
