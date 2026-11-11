@@ -550,11 +550,27 @@ pub async fn set_cloud_budget_limit(app: AppHandle, daily_limit_tokens: i64) -> 
         None
     };
 
-    set_cloud_budget_limit_db(
-        &mut open(&app)?,
+    let input_metadata = serde_json::to_vec(&(
+        before.daily_limit_tokens,
         daily_limit_tokens,
-        now_seconds()?,
-        approved_previous_limit,
+        before.reserved_tokens,
+    ))
+    .map_err(|error| format!("Could not encode cloud-budget audit metadata: {error}"))?;
+    crate::with_local_state_receipt(
+        &app,
+        "cloud_budget.limit.update",
+        &input_metadata,
+        || {
+            let status = set_cloud_budget_limit_db(
+                &mut open(&app)?,
+                daily_limit_tokens,
+                now_seconds()?,
+                approved_previous_limit,
+            )?;
+            let output = serde_json::to_vec(&status)
+                .map_err(|error| format!("Could not encode cloud-budget receipt metadata: {error}"))?;
+            Ok((status, output))
+        },
     )
 }
 
