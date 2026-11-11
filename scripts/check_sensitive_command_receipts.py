@@ -43,11 +43,11 @@ REQUIRED_POLICY_MARKERS = {
     ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
     ("lib.rs", "translate_text_local"): ('require_local_operation(&snapshot, "translate.text"',),
     ("security_store.rs", "set_cloud_budget_limit"): (
-        "native_consent::confirm_native",
+        "confirm_native(",
         "set_cloud_budget_limit_db",
     ),
-    ("security_store.rs", "enroll_trusted_peer"): ("native_consent::confirm_native",),
-    ("security_store.rs", "revoke_trusted_peer"): ("native_consent::confirm_native",),
+    ("security_store.rs", "enroll_trusted_peer"): ("confirm_native(",),
+    ("security_store.rs", "revoke_trusted_peer"): ("confirm_native(",),
     ("security_store.rs", "verify_and_claim_peer_envelope"): (
         "signed.verify(",
         "claim_nonce_tx(",
