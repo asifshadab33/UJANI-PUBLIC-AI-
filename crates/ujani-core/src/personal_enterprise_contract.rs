@@ -149,9 +149,17 @@ pub enum RequiredTrustState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum NullableIdentifier {
+    Value(String),
+    Null(()),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceTrustRequirement {
-    pub target_device_id: Option<String>,
+    /// Required on the wire, but nullable when no target device has been selected yet.
+    pub target_device_id: NullableIdentifier,
     pub required_trust_state: RequiredTrustState,
     pub require_owner_opt_in: bool,
 }
@@ -281,8 +289,8 @@ impl TaskEnvelopeV1 {
         {
             return Err(ContractError::InvalidConsent);
         }
-        if self.device_trust.require_owner_opt_in != true
-            || self.device_trust.target_device_id.as_ref().is_some_and(|id| !valid_identifier(id, 128))
+        if !self.device_trust.require_owner_opt_in
+            || matches!(&self.device_trust.target_device_id, NullableIdentifier::Value(id) if !valid_identifier(id, 128))
         {
             return Err(ContractError::InvalidConsent);
         }
@@ -310,10 +318,10 @@ impl TaskEnvelopeV1 {
     pub fn consent_binding_preimage(&self) -> Result<Vec<u8>, ContractError> {
         let mut value = serde_json::to_value(self).map_err(|_| ContractError::InvalidJson)?;
         let object = value.as_object_mut().ok_or(ContractError::InvalidJson)?;
-        object.remove("signature");
+        let _ = object.remove("signature");
         let consent = object.get_mut("consent").and_then(Value::as_object_mut).ok_or(ContractError::InvalidConsent)?;
         let user = consent.get_mut("user").and_then(Value::as_object_mut).ok_or(ContractError::InvalidConsent)?;
-        user.remove("binding_sha256");
+        let _ = user.remove("binding_sha256");
         let mut canonical = Vec::new();
         canonical_json(&value, &mut canonical)?;
         Ok(canonical)
