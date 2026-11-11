@@ -464,6 +464,10 @@ pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tok
     })
 }
 
+/// Updates the daily BYOK token ceiling, requiring a fresh approval pair for increases.
+///
+/// The approval is checked against the current value inside the same immediate transaction
+/// that writes the new ceiling, so stale confirmations cannot authorize a later change.
 fn set_cloud_budget_limit_db(
     db: &mut Connection,
     daily_limit: i64,
