@@ -48,13 +48,19 @@ fn match_preview_for(content: &str, query: &str) -> Option<String> {
     if query.is_empty() { return None; }
     // Unicode lowercase conversion can expand one source character into multiple
     // normalized characters. Map normalized characters back to original offsets.
-    let mut normalized = String::new();
-    let mut normalized_to_original = Vec::new();
+    // Use whole-string lowercasing so context-sensitive mappings (such as Greek
+    // final sigma) match the query normalization. Per-character lowercase output
+    // still supplies the expansion-aware map back to original character offsets.
+    let normalized = content.to_lowercase();
+    let mut normalized_to_original = Vec::with_capacity(normalized.chars().count());
     for (original_index, character) in content.chars().enumerate() {
-        for lowered in character.to_lowercase() {
-            normalized.push(lowered);
+        for _ in character.to_lowercase() {
             normalized_to_original.push(original_index);
         }
+    }
+    // Fail closed if a future Unicode mapping changes expansion length by context.
+    if normalized_to_original.len() != normalized.chars().count() {
+        return None;
     }
     let start_byte = normalized.find(&query)?;
     let start_normalized_char = normalized[..start_byte].chars().count();
@@ -564,6 +570,11 @@ mod tests {
         assert!(preview.contains("İSTANBUL"));
         assert!(preview.len() < 500);
     }
+    #[test]
+    fn match_preview_uses_contextual_lowercase_for_final_sigma() {
+        assert_eq!(match_preview_for("ΟΣ", "ΟΣ"), Some("ΟΣ".to_string()));
+    }
+
     #[test]
     fn cached_search_payload_never_persists_document_match_excerpts() {
         let result = LocalSearchResult {
