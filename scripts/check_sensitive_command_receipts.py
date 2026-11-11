@@ -132,17 +132,21 @@ def main() -> None:
                 f"{path}:{name} is missing local policy preflight: " + ", ".join(missing)
             )
 
-    tests = (TAURI / "lib.rs").read_text(encoding="utf-8")
-    for test_name in (
-        "managed_task_outcomes_are_classified_for_receipts",
-        "failed_receipt_digest_does_not_include_error_text",
-        "summary_and_translation_fail_closed_without_local_ollama",
-        "pdf_pipeline_requires_parser_and_local_model_capabilities",
-        "worker_and_partner_are_not_scheduled_by_the_local_policy",
-        "public_key_hex_is_fixed_width_and_lowercase",
-    ):
-        if test_name not in tests:
-            raise SystemExit(f"missing receipt regression test: {test_name}")
+    required_tests = {
+        "lib.rs": (
+            "managed_task_outcomes_are_classified_for_receipts",
+            "failed_receipt_digest_does_not_include_error_text",
+            "summary_and_translation_fail_closed_without_local_ollama",
+            "pdf_pipeline_requires_parser_and_local_model_capabilities",
+            "worker_and_partner_are_not_scheduled_by_the_local_policy",
+        ),
+        "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
+    }
+    for path, test_names in required_tests.items():
+        tests = (TAURI / path).read_text(encoding="utf-8")
+        for test_name in test_names:
+            if test_name not in tests:
+                raise SystemExit(f"missing receipt/policy regression test in {path}: {test_name}")
     print(f"Sensitive receipt and local-policy wiring checks passed for {len(REQUIRED_MARKERS)} receipt paths and {len(REQUIRED_POLICY_MARKERS)} policy paths.")
 
 
