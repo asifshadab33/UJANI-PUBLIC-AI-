@@ -27,6 +27,10 @@ def function_body(relative_path: str, name: str) -> str:
 
 REQUIRED_POLICY_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): ("plan_local_task(", "local_plan.accepted"),
+    ("lib.rs", "get_security_provider_status"): (
+        "validate_security_provider_ids",
+        "native_consent::confirm_native",
+    ),
     ("lib.rs", "execute_cloud_ai_task"): (
         "if !external_data_approved",
         "native_consent::confirm_native",
