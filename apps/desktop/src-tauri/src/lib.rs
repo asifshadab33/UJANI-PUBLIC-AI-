@@ -960,6 +960,42 @@ fn outcome_receipt_digest(domain: &str, outcome: ExecutionOutcome) -> String {
     sha256_hex(format!("{domain}:{outcome:?}").as_bytes())
 }
 
+#[cfg(test)]
+mod receipt_outcome_tests {
+    use super::{execution_outcome, outcome_receipt_digest};
+    use ujani_core::ExecutionOutcome;
+
+    #[test]
+    fn managed_task_outcomes_are_classified_for_receipts() {
+        assert_eq!(
+            execution_outcome::<()>(&Ok(()), "budget"),
+            ExecutionOutcome::Completed
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("Task cancelled by user.".into()), "budget"),
+            ExecutionOutcome::Cancelled
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("operation exceeded 95-second budget".into()), "95-second"),
+            ExecutionOutcome::TimedOut
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("provider unavailable".into()), "95-second"),
+            ExecutionOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn failed_receipt_digest_does_not_include_error_text() {
+        let first = outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", ExecutionOutcome::Failed);
+        let second = outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", ExecutionOutcome::Failed);
+        let cancelled = outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", ExecutionOutcome::Cancelled);
+        assert_eq!(first, second);
+        assert_ne!(first, cancelled);
+        assert_eq!(first.len(), 64);
+    }
+}
+
 fn persist_receipt_or_warn(
     label: &str,
     slot: security_store::ReceiptSlotReservation,
