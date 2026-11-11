@@ -13,7 +13,7 @@ This checklist is for the controlled alpha review of issue #184. The directory c
 
 ## Integration directory
 - [ ] Use the sidebar Integrations link; confirm it scrolls to the directory and receives focus when activated by keyboard.
-- [ ] Confirm all six links are ordinary anchors and open only after explicit activation.
+- [ ] Confirm all 32 directory links are ordinary anchors and open only after explicit activation.
 - [ ] Confirm each anchor has `target="_blank"` and `rel="noopener noreferrer"`.
 - [ ] Confirm no link is opened automatically on first render.
 - [ ] Confirm the disclosure says accounts are not connected, free-tier limits may change and external providers have independent terms and privacy policies.
