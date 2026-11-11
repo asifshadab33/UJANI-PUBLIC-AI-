@@ -464,12 +464,32 @@ pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tok
     })
 }
 
-fn set_cloud_budget_limit_db(db: &mut Connection, daily_limit: i64, now: u64) -> Result<CloudBudgetStatus, String> {
+fn set_cloud_budget_limit_db(
+    db: &mut Connection,
+    daily_limit: i64,
+    now: u64,
+    approved_previous_limit: Option<i64>,
+) -> Result<CloudBudgetStatus, String> {
     if !(MIN_DAILY_CLOUD_TOKEN_LIMIT..=MAX_DAILY_CLOUD_TOKEN_LIMIT).contains(&daily_limit) {
         return Err(format!("Daily cloud token limit must be between {MIN_DAILY_CLOUD_TOKEN_LIMIT} and {MAX_DAILY_CLOUD_TOKEN_LIMIT}."));
     }
     let day = (now / 86_400) as i64;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let current_limit: i64 = tx.query_row(
+        "SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1",
+        [],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    match approved_previous_limit {
+        Some(expected) if expected == current_limit && daily_limit > current_limit => {}
+        Some(_) => {
+            return Err("Cloud budget changed while awaiting native confirmation. Review the current value and try again.".into());
+        }
+        None if daily_limit > current_limit => {
+            return Err("Increasing the daily cloud token limit requires a fresh native confirmation.".into());
+        }
+        None => {}
+    }
     let used: i64 = tx.query_row("SELECT reserved_tokens FROM cloud_budget WHERE utc_day=?1", params![day], |row| row.get(0))
         .optional().map_err(|e| e.to_string())?.unwrap_or(0);
     if daily_limit < used {
@@ -484,8 +504,46 @@ fn set_cloud_budget_limit_db(db: &mut Connection, daily_limit: i64, now: u64) ->
 /// Set the per-installation UTC-day BYOK token limit. This never changes historical usage.
 /// Sets this installation's local UTC-day BYOK token ceiling.
 #[tauri::command]
-pub fn set_cloud_budget_limit(app: AppHandle, daily_limit_tokens: i64) -> Result<CloudBudgetStatus, String> {
-    set_cloud_budget_limit_db(&mut open(&app)?, daily_limit_tokens, now_seconds()?)
+pub async fn set_cloud_budget_limit(app: AppHandle, daily_limit_tokens: i64) -> Result<CloudBudgetStatus, String> {
+    if !(MIN_DAILY_CLOUD_TOKEN_LIMIT..=MAX_DAILY_CLOUD_TOKEN_LIMIT).contains(&daily_limit_tokens) {
+        return Err(format!("Daily cloud token limit must be between {MIN_DAILY_CLOUD_TOKEN_LIMIT} and {MAX_DAILY_CLOUD_TOKEN_LIMIT}."));
+    }
+
+    let before = get_cloud_budget_status(app.clone())?;
+    if daily_limit_tokens < before.reserved_tokens {
+        return Err(format!(
+            "The new limit cannot be lower than today's {} already reserved tokens.",
+            before.reserved_tokens
+        ));
+    }
+
+    let approved_previous_limit = if daily_limit_tokens > before.daily_limit_tokens {
+        let approved = confirm_native(
+            &app,
+            "Approve higher daily cloud budget",
+            format!(
+                "Increase UJANI's local daily BYOK cloud-token allowance from {} to {} tokens?\n\nToday's already reserved allowance: {} tokens.\n\nA higher limit can permit more requests to external providers and may increase provider charges. This is not a monetary spending cap; actual charges depend on the provider's pricing and usage. This settings change does not send a prompt or credential.\n\nApprove this one-time increase?",
+                before.daily_limit_tokens,
+                daily_limit_tokens,
+                before.reserved_tokens,
+            ),
+            tokio_util::sync::CancellationToken::new(),
+            std::time::Duration::from_secs(120),
+        ).await;
+        if !approved {
+            return Err("The cloud budget increase was declined, cancelled or timed out. No setting was changed.".into());
+        }
+        Some(before.daily_limit_tokens)
+    } else {
+        None
+    };
+
+    set_cloud_budget_limit_db(
+        &mut open(&app)?,
+        daily_limit_tokens,
+        now_seconds()?,
+        approved_previous_limit,
+    )
 }
 
 /// Holds one durable ledger slot while a local or cloud inference is in flight.
@@ -1228,14 +1286,40 @@ mod tests {
 #[test]
     fn cloud_budget_limit_is_configurable_and_cannot_drop_below_reserved_usage() {
         let mut db = db();
-        let configured = set_cloud_budget_limit_db(&mut db, 100_000, 86_400).unwrap();
+        let configured = set_cloud_budget_limit_db(&mut db, 100_000, 86_400, None).unwrap();
         assert_eq!(configured.daily_limit_tokens, 100_000);
         let used = reserve_budget_db(&mut db, 4_000, 8_192, 86_400).unwrap();
         assert_eq!(used.reserved_tokens, 12_192);
-        assert!(set_cloud_budget_limit_db(&mut db, 10_000, 86_400).is_err());
-        let status = set_cloud_budget_limit_db(&mut db, 50_000, 86_400).unwrap();
+        assert!(set_cloud_budget_limit_db(&mut db, 10_000, 86_400, None).is_err());
+        let status = set_cloud_budget_limit_db(&mut db, 50_000, 86_400, None).unwrap();
         assert_eq!(status.remaining_tokens, 37_808);
-        assert!(set_cloud_budget_limit_db(&mut db, 5_000_001, 86_400).is_err());
+        assert!(set_cloud_budget_limit_db(&mut db, 5_000_001, 86_400, None).is_err());
+    }
+
+    #[test]
+    fn cloud_budget_increases_require_fresh_approval_bound_to_previous_limit() {
+        let mut db = db();
+
+        let denied = set_cloud_budget_limit_db(&mut db, 300_000, 86_400, None).unwrap_err();
+        assert!(denied.contains("fresh native confirmation"));
+        let unchanged: i64 = db.query_row(
+            "SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(unchanged, 250_000);
+
+        let approved = set_cloud_budget_limit_db(&mut db, 300_000, 86_400, Some(250_000)).unwrap();
+        assert_eq!(approved.daily_limit_tokens, 300_000);
+
+        let stale = set_cloud_budget_limit_db(&mut db, 350_000, 86_400, Some(250_000)).unwrap_err();
+        assert!(stale.contains("changed while awaiting native confirmation"));
+        let still_current: i64 = db.query_row(
+            "SELECT daily_limit_tokens FROM cloud_budget_settings WHERE id=1",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(still_current, 300_000);
     }
 
     #[test]
