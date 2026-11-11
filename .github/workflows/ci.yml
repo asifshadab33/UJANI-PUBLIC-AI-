@@ -35,6 +35,8 @@ jobs:
         run: bash scripts/check-doc-claims.sh
       - name: Test public release evidence gate
         run: python3 -m unittest discover -s tests -p 'test_public_release_readiness.py' -v
+      - name: Test bounded Ubuntu package retry helper
+        run: python3 -m unittest discover -s tests -p 'test_install_ubuntu_packages_with_retry.py' -v
       - name: Check native IPC command inventory parity
         run: python3 scripts/check_native_command_inventory.py
       - name: Test native IPC inventory parser
