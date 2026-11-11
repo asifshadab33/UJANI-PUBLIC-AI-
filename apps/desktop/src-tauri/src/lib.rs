@@ -474,28 +474,32 @@ async fn execute_cloud_ai_task(
    }
   }
  };
- if let Ok(output) = &result {
-  let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-   .map_err(|e| e.to_string())?.as_millis() as u64;
-  let receipt = ExecutionReceipt {
-   schema_version: 2,
-   task_id: task_id.clone(),
-   operation_id: "cloud.ai.generate".into(),
-   location: ReceiptExecutionLocation::ExternalProvider,
-   adapter_id: "byok.cloud-gateway".into(),
-   adapter_version: env!("CARGO_PKG_VERSION").into(),
-   model_id: Some(receipt_model_id),
-   model_version: Some("provider-reported-unverified".into()),
-   input_sha256: input_digest,
-   output_sha256: sha256_hex(output.text.as_bytes()),
-   started_at_unix_ms,
-   completed_at_unix_ms,
-   user_approval_id: Some(approval_id),
-   network_activity: network_activity.clone(),
-   outcome: None,
-  };
-  receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
- }
+ let outcome = execution_outcome(&result, "95-second");
+ let output_sha256 = match &result {
+  Ok(output) => sha256_hex(output.text.as_bytes()),
+  Err(_) => outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", outcome),
+ };
+ let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .unwrap_or_default().as_millis().max(started_at_unix_ms as u128)
+  .min(u64::MAX as u128) as u64;
+ let receipt = ExecutionReceipt {
+  schema_version: 3,
+  task_id: task_id.clone(),
+  operation_id: "cloud.ai.generate".into(),
+  location: ReceiptExecutionLocation::ExternalProvider,
+  adapter_id: "byok.cloud-gateway".into(),
+  adapter_version: env!("CARGO_PKG_VERSION").into(),
+  model_id: Some(receipt_model_id),
+  model_version: Some("provider-reported-unverified".into()),
+  input_sha256: input_digest,
+  output_sha256,
+  started_at_unix_ms,
+  completed_at_unix_ms,
+  user_approval_id: Some(approval_id),
+  network_activity: network_activity.clone(),
+  outcome: Some(outcome),
+ };
+ receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  match &result {
   Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
@@ -942,6 +946,20 @@ async fn flush_pending_receipts(app: &AppHandle) {
 }
 
 /// Persists a receipt or returns a warning while preserving the completed task result.
+fn execution_outcome<T>(result: &Result<T, String>, timeout_marker: &str) -> ExecutionOutcome {
+    match result {
+        Ok(_) => ExecutionOutcome::Completed,
+        Err(error) if error.to_ascii_lowercase().contains("cancelled") => ExecutionOutcome::Cancelled,
+        Err(error) if error.contains(timeout_marker) => ExecutionOutcome::TimedOut,
+        Err(_) => ExecutionOutcome::Failed,
+    }
+}
+
+/// Failure receipts hash a stable outcome label, never the error text or task content.
+fn outcome_receipt_digest(domain: &str, outcome: ExecutionOutcome) -> String {
+    sha256_hex(format!("{domain}:{outcome:?}").as_bytes())
+}
+
 fn persist_receipt_or_warn(
     label: &str,
     slot: security_store::ReceiptSlotReservation,
@@ -1060,37 +1078,41 @@ where
         future,
     ).await;
     drop(registration);
-    let mut receipt_warning = None;
-    if let Ok(value) = &result {
-        let output_bytes = serde_json::to_vec(value)
-            .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
-        let completed_at_unix_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_millis() as u64;
-        let location = match ollama::accelerator_observation().await.ok() {
-            Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
-            _ => ReceiptExecutionLocation::LocalUnverified,
-        };
-        let receipt = ExecutionReceipt {
-            schema_version: 2,
-            task_id: task_id.clone(),
-            operation_id: receipt_context.operation_id.into(),
-            location,
-            adapter_id: "ollama.local".into(),
-            adapter_version: env!("CARGO_PKG_VERSION").into(),
-            model_id: Some(receipt_context.model_id),
-            model_version: Some("unknown".into()),
-            input_sha256: receipt_context.input_sha256,
-            output_sha256: sha256_hex(&output_bytes),
-            started_at_unix_ms,
-            completed_at_unix_ms,
-            user_approval_id: None,
-            network_activity,
-            outcome: None,
-        };
-        receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
-    }
+    let outcome = execution_outcome(&result, "240-second");
+    let output_sha256 = match &result {
+        Ok(value) => serde_json::to_vec(value)
+            .map(|bytes| sha256_hex(&bytes))
+            .unwrap_or_else(|_| outcome_receipt_digest("UJANI-LOCAL-OUTPUT-SERIALIZATION-FAILED-V1", outcome)),
+        Err(_) => outcome_receipt_digest("UJANI-LOCAL-TASK-OUTCOME-V1", outcome),
+    };
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let location = match ollama::accelerator_observation().await.ok() {
+        Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
+        _ => ReceiptExecutionLocation::LocalUnverified,
+    };
+    let receipt = ExecutionReceipt {
+        schema_version: 3,
+        task_id: task_id.clone(),
+        operation_id: receipt_context.operation_id.into(),
+        location,
+        adapter_id: "ollama.local".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: Some(receipt_context.model_id),
+        model_version: Some("unknown".into()),
+        input_sha256: receipt_context.input_sha256,
+        output_sha256,
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        user_approval_id: None,
+        network_activity,
+        outcome: Some(outcome),
+    };
+    let mut receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
