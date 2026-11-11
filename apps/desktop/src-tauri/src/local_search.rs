@@ -44,22 +44,36 @@ fn record_pdf_search_result(
 /// Returns a bounded, lowercase excerpt around the first exact phrase match.
 /// Lowercasing both values keeps matching consistent with the search operation.
 fn match_preview_for(content: &str, query: &str) -> Option<String> {
-    let normalized = content.to_lowercase();
     let query = query.to_lowercase();
-    let start = normalized.find(&query)?;
-    // Convert the normalized byte offset to a character offset, then slice the
-    // original text by characters so the evidence keeps its original casing.
-    let start_char = normalized[..start].chars().count();
+    if query.is_empty() { return None; }
+    // Unicode lowercase conversion can expand one source character into multiple
+    // normalized characters. Map normalized characters back to original offsets.
+    // Use whole-string lowercasing so context-sensitive mappings (such as Greek
+    // final sigma) match the query normalization. Per-character lowercase output
+    // still supplies the expansion-aware map back to original character offsets.
+    let normalized = content.to_lowercase();
+    let mut normalized_to_original = Vec::with_capacity(normalized.chars().count());
+    for (original_index, character) in content.chars().enumerate() {
+        for _ in character.to_lowercase() {
+            normalized_to_original.push(original_index);
+        }
+    }
+    // Fail closed if a future Unicode mapping changes expansion length by context.
+    if normalized_to_original.len() != normalized.chars().count() {
+        return None;
+    }
+    let start_byte = normalized.find(&query)?;
+    let start_normalized_char = normalized[..start_byte].chars().count();
     let query_chars = query.chars().count();
+    let end_normalized_char = start_normalized_char.checked_add(query_chars)?;
+    let start_char = *normalized_to_original.get(start_normalized_char)?;
+    let end_char = normalized_to_original.get(end_normalized_char.saturating_sub(1)).copied()?.saturating_add(1);
     let total_chars = content.chars().count();
     let excerpt_start = start_char.saturating_sub(100);
-    let excerpt_end = start_char.saturating_add(query_chars).saturating_add(180).min(total_chars);
+    let excerpt_end = end_char.saturating_add(180).min(total_chars);
     let prefix = if excerpt_start > 0 { "…" } else { "" };
     let suffix = if excerpt_end < total_chars { "…" } else { "" };
-    let excerpt: String = content.chars()
-        .skip(excerpt_start)
-        .take(excerpt_end.saturating_sub(excerpt_start))
-        .collect();
+    let excerpt: String = content.chars().skip(excerpt_start).take(excerpt_end.saturating_sub(excerpt_start)).collect();
     Some(format!("{prefix}{}{suffix}", excerpt.trim()))
 }
 
@@ -546,6 +560,19 @@ mod tests {
         assert!(preview.ends_with("…"));
         assert!(preview.len() < 400);
         assert!(match_preview_for("nothing relevant here", "acme-holdings-xyz").is_none());
+    }
+
+    #[test]
+    fn match_preview_maps_unicode_case_expansion_to_original_character_offsets() {
+        let content = format!("{}İSTANBUL{}", "prefix ".repeat(20), " suffix".repeat(20));
+        let query = format!("i{}stanbul", '\u{307}');
+        let preview = match_preview_for(&content, &query).unwrap();
+        assert!(preview.contains("İSTANBUL"));
+        assert!(preview.len() < 500);
+    }
+    #[test]
+    fn match_preview_uses_contextual_lowercase_for_final_sigma() {
+        assert_eq!(match_preview_for("ΟΣ", "ΟΣ"), Some("ΟΣ".to_string()));
     }
 
     #[test]
