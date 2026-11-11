@@ -1033,6 +1033,34 @@ mod receipt_outcome_tests {
         assert_ne!(first, cancelled);
         assert_eq!(first.len(), 64);
     }
+
+    #[test]
+    fn schema_three_failure_and_cancellation_receipts_validate() {
+        for outcome in [
+            ExecutionOutcome::Failed,
+            ExecutionOutcome::Cancelled,
+            ExecutionOutcome::TimedOut,
+        ] {
+            let receipt = ExecutionReceipt {
+                schema_version: 3,
+                task_id: "receipt-outcome-test".into(),
+                operation_id: "document.summarize".into(),
+                location: ReceiptExecutionLocation::LocalUnverified,
+                adapter_id: "ollama.local".into(),
+                adapter_version: env!("CARGO_PKG_VERSION").into(),
+                model_id: Some("test-model".into()),
+                model_version: Some("unknown".into()),
+                input_sha256: "a".repeat(64),
+                output_sha256: outcome_receipt_digest("UJANI-LOCAL-TASK-OUTCOME-V1", outcome),
+                started_at_unix_ms: 100,
+                completed_at_unix_ms: 101,
+                user_approval_id: None,
+                network_activity: NetworkActivity::unknown(),
+                outcome: Some(outcome),
+            };
+            ujani_core::validate_receipt(&receipt).unwrap();
+        }
+    }
 }
 
 /// Execute one local persistent-state mutation only after reserving its audit slot.
