@@ -14,6 +14,10 @@ const MAX_ATTEMPTS: u8 = 3;
 pub struct OllamaModel {
     pub name: String,
     pub size: u64,
+    /// Immutable model digest reported by the local runtime, when available.
+    /// It is treated as untrusted metadata and validated before inventory use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<OllamaModelDetails>,
 }
@@ -668,21 +672,34 @@ mod tests {
 
 
     #[test]
+    fn model_list_deserializes_optional_runtime_digest() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let payload = serde_json::json!({
+            "name": "qwen2.5:3b",
+            "size": 123_u64,
+            "digest": digest,
+            "details": null
+        });
+        let model: OllamaModel = serde_json::from_value(payload).unwrap();
+        assert_eq!(model.digest.as_deref(), Some(format!("sha256:{}", "a".repeat(64)).as_str()));
+    }
+
+    #[test]
     fn model_list_validation_rejects_duplicate_and_unsafe_identifiers() {
         let duplicate = vec![
-            OllamaModel { name: "llama3.2:latest".into(), size: 10, details: None },
-            OllamaModel { name: "llama3.2:latest".into(), size: 20, details: None },
+            OllamaModel { name: "llama3.2:latest".into(), size: 10, digest: None, details: None },
+            OllamaModel { name: "llama3.2:latest".into(), size: 20, digest: None, details: None },
         ];
         assert!(validate_model_list(&duplicate).is_err());
 
         let unsafe_name = vec![
-            OllamaModel { name: "../outside".into(), size: 10, details: None },
+            OllamaModel { name: "../outside".into(), size: 10, digest: None, details: None },
         ];
         assert!(validate_model_list(&unsafe_name).is_err());
 
         let valid = vec![
-            OllamaModel { name: "llama3.2:latest".into(), size: 10, details: None },
-            OllamaModel { name: "qwen2.5:3b".into(), size: 20, details: None },
+            OllamaModel { name: "llama3.2:latest".into(), size: 10, digest: None, details: None },
+            OllamaModel { name: "qwen2.5:3b".into(), size: 20, digest: None, details: None },
         ];
         assert!(validate_model_list(&valid).is_ok());
     }
