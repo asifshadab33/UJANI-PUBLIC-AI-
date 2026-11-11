@@ -445,7 +445,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
             || candidate.identity.as_ref() != cached_identity.as_ref() {
             return false;
         }
-        let Ok(file) = crate::safe_fs::open_regular_file(&path) else { return false; };
+        let Ok(file) = crate::safe_fs::open_regular_file_under_root(root, &path) else { return false; };
         let Ok(metadata) = file.metadata() else { return false; };
         if !metadata.is_file() || metadata.len() != candidate.size
             || modified_unix_ns(&metadata) != candidate.modified_unix_ns
@@ -484,6 +484,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
         }
     })?;
 
+    let selected_root = walked.root.clone();
     let mut candidates = Vec::with_capacity(walked.files.len());
     let mut scanned_files = 0usize;
     let mut truncated = walked.truncated;
@@ -492,7 +493,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             return Err("File search cancelled by user.".into());
         }
         scanned_files += 1;
-        let file = match crate::safe_fs::open_regular_file(&entry.path) {
+        let file = match crate::safe_fs::open_regular_file_under_root(&selected_root, &entry.path) {
             Ok(file) => file,
             Err(_) => { truncated = true; continue; }
         };
