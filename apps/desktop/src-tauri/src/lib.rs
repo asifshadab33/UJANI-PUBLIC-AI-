@@ -203,6 +203,29 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     })
 }
 
+/// Enforce the shared local capability plan before a sensitive local inference begins.
+/// A successful plan is only a preflight; the managed-task resource reservation still follows.
+pub(crate) fn require_local_operation(
+    snapshot: &CapabilitySnapshot,
+    operation_id: &str,
+    mode: &str,
+) -> Result<(), String> {
+    let plan = plan_local_task(
+        operation_id,
+        mode,
+        snapshot.available_memory_mb,
+        &snapshot.capabilities,
+    );
+    if !plan.accepted {
+        return Err(format!(
+            "UJANI local-first policy blocked this operation: {}",
+            plan.reason
+        ));
+    }
+    Ok(())
+}
+
+
 /// Returns the bounded, built-in tool catalogue. Listing metadata never executes a tool or grants permissions.
 #[tauri::command]
 fn get_tool_catalogue() -> Vec<ToolManifest> {
@@ -1539,6 +1562,9 @@ async fn summarize_selected_text(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "document.summarize", &mode)?;
+
     let receipt = local_receipt_context(
         "document.summarize",
         &model,
@@ -1562,6 +1588,9 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "document.summarize", &mode)?;
+
     let language = translation_language.as_deref().unwrap_or("");
     let receipt = local_receipt_context(
         "document.summarize",
@@ -1820,6 +1849,9 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "pdf.extract_and_summarize", &mode)?;
+
     // Register before decoding so the user can cancel the native preparation phase.
     let registration = register_active_task(&control, &task_id)?;
     emit_task_progress(&app, &task_id, "preparing", "Preparing the selected PDF upload…", 5);
@@ -1851,6 +1883,9 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "translate.text", &mode)?;
+
     let receipt = local_receipt_context(
         "translate.text",
         &model,
