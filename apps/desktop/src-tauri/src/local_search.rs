@@ -698,7 +698,7 @@ mod tests {
         }
         fs::write(root.join("document-0999.txt"), "A supplier contract with ACME-RARE-ENTITY-9917 mentioned once.").unwrap();
 
-        let (_, candidates, scanned, truncated) =
+        let (canonical_root, candidates, scanned, truncated) =
             collect_candidates(&root, &CancellationToken::new()).unwrap();
         assert_eq!(scanned, 1_000);
         assert_eq!(candidates.len(), 1_000);
@@ -707,7 +707,7 @@ mod tests {
         let mut found = Vec::new();
         for candidate in candidates {
             if candidate.extension != "txt" { continue; }
-            let bytes = read_bounded(&root, &candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let bytes = read_bounded(&canonical_root, &candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
             let content = String::from_utf8(bytes).unwrap();
             if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
                 found.push((candidate.name, preview));
