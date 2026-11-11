@@ -164,6 +164,14 @@ pub struct DeviceTrustRequirement {
     pub require_owner_opt_in: bool,
 }
 
+fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskEnvelopeV1 {
@@ -182,7 +190,7 @@ pub struct TaskEnvelopeV1 {
     pub privacy_classification: PrivacyClassification,
     pub required_scopes: Vec<String>,
     pub required_capabilities: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
     pub min_context_length_tokens: Option<u64>,
     pub resource_limits: ResourceLimits,
     pub network_access: NetworkAccess,
@@ -283,6 +291,8 @@ impl TaskEnvelopeV1 {
             || !valid_identifier(&self.consent.user.consent_id, 128)
             || !valid_identifier(&self.consent.user.subject_id, 128)
             || self.consent.user.subject_id != self.sender.principal_id
+            || self.consent.user.granted_at_unix_ms == 0
+            || self.consent.user.expires_at_unix_ms == 0
             || self.consent.user.granted_at_unix_ms > self.issued_at_unix_ms
             || self.consent.user.expires_at_unix_ms < self.expires_at_unix_ms
             || self.consent.user.expires_at_unix_ms <= self.consent.user.granted_at_unix_ms
@@ -420,7 +430,7 @@ pub struct TaskStatusV1 {
     pub updated_at_unix_ms: u64,
     pub policy_version: String,
     pub consent_state: ConsentState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
     pub reason_code: Option<ReasonCode>,
     pub signature: ContractSignature,
 }
@@ -528,7 +538,7 @@ pub struct ExecutionReceiptV1 {
     pub started_at_unix_ms: u64,
     pub completed_at_unix_ms: u64,
     pub outcome: ExecutionOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_optional_non_null", skip_serializing_if = "Option::is_none")]
     pub resource_usage: Option<ResourceUsage>,
     pub consent_refs: ConsentReferences,
     pub policy_version: String,
@@ -562,6 +572,7 @@ impl ExecutionReceiptV1 {
             return Err(ContractError::InvalidReceipt);
         }
         if self.started_at_unix_ms == 0
+            || self.started_at_unix_ms > SAFE_INTEGER_MAX
             || self.completed_at_unix_ms < self.started_at_unix_ms
             || self.completed_at_unix_ms > SAFE_INTEGER_MAX
         {
@@ -596,7 +607,7 @@ fn verify_signed_value<T: Serialize>(
         return Err(ContractError::UnknownSigningKey);
     }
     let mut value = serde_json::to_value(message).map_err(|_| ContractError::InvalidJson)?;
-    value.as_object_mut().ok_or(ContractError::InvalidJson)?.remove("signature");
+    let _ = value.as_object_mut().ok_or(ContractError::InvalidJson)?.remove("signature");
     let mut canonical = Vec::new();
     canonical_json(&value, &mut canonical)?;
     let mut preimage = SIGNATURE_DOMAIN.to_vec();
@@ -657,7 +668,7 @@ fn canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), ContractErr
                 let encoded_key = serde_json::to_string(key).map_err(|_| ContractError::InvalidJson)?;
                 output.extend_from_slice(encoded_key.as_bytes());
                 output.push(b':');
-                canonical_json(&object[*key], output)?;
+                canonical_json(object.get(*key).ok_or(ContractError::InvalidJson)?, output)?;
             }
             output.push(b'}');
         }
@@ -823,7 +834,7 @@ mod tests {
         let key = SigningKey::from_bytes(&[7u8; 32]);
         let mut envelope = fixture.envelope;
         let mut value = serde_json::to_value(&envelope).unwrap();
-        value.as_object_mut().unwrap().remove("signature");
+        let _ = value.as_object_mut().unwrap().remove("signature");
         let mut canonical = Vec::new();
         canonical_json(&value, &mut canonical).unwrap();
         let mut preimage = SIGNATURE_DOMAIN.to_vec();
