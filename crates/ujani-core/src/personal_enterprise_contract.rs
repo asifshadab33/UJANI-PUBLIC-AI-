@@ -876,6 +876,24 @@ mod tests {
     }
 
     #[test]
+    fn required_nullable_and_optional_non_null_fields_match_the_schema() {
+        let fixture: ConsentFixture = serde_json::from_str(CONSENT_FIXTURE).unwrap();
+
+        let mut missing_target = serde_json::to_value(&fixture.envelope).unwrap();
+        missing_target["device_trust"].as_object_mut().unwrap().remove("target_device_id");
+        assert!(TaskEnvelopeV1::parse(&serde_json::to_vec(&missing_target).unwrap()).is_err());
+
+        let mut null_context = serde_json::to_value(&fixture.envelope).unwrap();
+        null_context.as_object_mut().unwrap().insert("min_context_length_tokens".into(), Value::Null);
+        assert!(TaskEnvelopeV1::parse(&serde_json::to_vec(&null_context).unwrap()).is_err());
+
+        let mut no_target = fixture.envelope;
+        no_target.device_trust.target_device_id = NullableIdentifier::Null(());
+        no_target.consent.user.binding_sha256 = no_target.consent_binding_sha256().unwrap();
+        no_target.validate(1_000).unwrap();
+    }
+
+    #[test]
     fn status_requires_all_approvals_before_active_states_and_monotonic_sequence() {
         let status: TaskStatusV1 = serde_json::from_value(serde_json::json!({
             "message_type": "task_status",
