@@ -1268,6 +1268,74 @@ where
 }
 
 #[cfg(test)]
+mod local_operation_policy_tests {
+    use super::*;
+
+    fn snapshot(ollama_available: bool, pdf_available: bool) -> CapabilitySnapshot {
+        CapabilitySnapshot {
+            capabilities: vec![
+                CapabilityRecord {
+                    id: "cpu".into(),
+                    category: "compute".into(),
+                    state: CapabilityState::Available,
+                    source: "test".into(),
+                    detail: "test CPU".into(),
+                },
+                CapabilityRecord {
+                    id: "ollama.local".into(),
+                    category: "model_runtime".into(),
+                    state: if ollama_available {
+                        CapabilityState::Available
+                    } else {
+                        CapabilityState::Unavailable
+                    },
+                    source: "test".into(),
+                    detail: "test Ollama".into(),
+                },
+                CapabilityRecord {
+                    id: "pdf.text_extraction".into(),
+                    category: "document".into(),
+                    state: if pdf_available {
+                        CapabilityState::Available
+                    } else {
+                        CapabilityState::Unavailable
+                    },
+                    source: "test".into(),
+                    detail: "test PDF parser".into(),
+                },
+            ],
+            operations: registered_operations(),
+            available_memory_mb: 4096,
+        }
+    }
+
+    #[test]
+    fn summary_and_translation_fail_closed_without_local_ollama() {
+        let unavailable = snapshot(false, true);
+        assert!(require_local_operation(&unavailable, "document.summarize", "smart").is_err());
+        assert!(require_local_operation(&unavailable, "translate.text", "fortress").is_err());
+        assert!(require_local_operation(&unavailable, "file.analyze_text", "smart").is_ok());
+    }
+
+    #[test]
+    fn pdf_pipeline_requires_parser_and_local_model_capabilities() {
+        let no_parser = snapshot(true, false);
+        assert!(require_local_operation(&no_parser, "pdf.extract_and_summarize", "smart").is_err());
+        let no_model = snapshot(false, true);
+        assert!(require_local_operation(&no_model, "pdf.extract_and_summarize", "smart").is_err());
+        let ready = snapshot(true, true);
+        assert!(require_local_operation(&ready, "pdf.extract_and_summarize", "smart").is_ok());
+    }
+
+    #[test]
+    fn worker_and_partner_are_not_scheduled_by_the_local_policy() {
+        let ready = snapshot(true, true);
+        assert!(require_local_operation(&ready, "document.summarize", "worker").is_err());
+        assert!(require_local_operation(&ready, "document.summarize", "partner").is_err());
+    }
+}
+
+#[cfg(test)]
 mod model_inventory_recommendation_tests {
     use super::*;
 
