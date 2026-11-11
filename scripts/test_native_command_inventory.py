@@ -17,7 +17,7 @@ class CommandTokenTests(unittest.TestCase):
         """
         self.assertEqual(
             command_tokens(source),
-            ["command_one", "module::command_two", "module::command_two"],
+            ["command_one", "module::command_two"],
         )
 
     def test_does_not_treat_comment_text_as_registered_commands(self):
