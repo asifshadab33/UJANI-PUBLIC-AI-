@@ -468,6 +468,11 @@ pub fn reserve_cloud_tokens(app: &AppHandle, prompt_bytes: usize, completion_tok
 ///
 /// The approval is checked against the current value inside the same immediate transaction
 /// that writes the new ceiling, so stale confirmations cannot authorize a later change.
+/// Updates the local daily cloud-token ceiling inside an immediate SQLite transaction.
+///
+/// An increase is accepted only when `approved_change` matches both the current stored
+/// ceiling and the exact requested ceiling, binding the native confirmation to this write.
+/// Decreases and unchanged values do not require an approval tuple.
 fn set_cloud_budget_limit_db(
     db: &mut Connection,
     daily_limit: i64,
