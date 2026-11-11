@@ -24,7 +24,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
+use std::{collections::{BTreeSet, HashMap}, sync::{atomic::{AtomicU64, Ordering}, Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 
 use tokio_util::sync::CancellationToken;
@@ -994,6 +994,70 @@ mod receipt_outcome_tests {
         assert_ne!(first, cancelled);
         assert_eq!(first.len(), 64);
     }
+}
+
+static LOCAL_STATE_RECEIPT_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Execute one local persistent-state mutation only after reserving its audit slot.
+/// The callback must use a transaction and return metadata bytes, never source content.
+pub(crate) fn with_local_state_receipt<T, F>(
+    app: &AppHandle,
+    operation_id: &'static str,
+    input_metadata: &[u8],
+    execute: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<(T, Vec<u8>), String>,
+{
+    if input_metadata.len() > 16 * 1024 {
+        return Err("Local state audit metadata exceeds its size limit.".into());
+    }
+    let started_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    let sequence = LOCAL_STATE_RECEIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let task_id = format!(
+        "state-{:032x}-{:016x}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        sequence
+    );
+    let receipt_slot = security_store::reserve_execution_receipt_slot(app, &task_id)?;
+    let (value, output_metadata) = execute()?;
+    if output_metadata.len() > 16 * 1024 {
+        return Err("Local state audit result exceeds its size limit; the transaction must be rolled back.".into());
+    }
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let receipt = ExecutionReceipt {
+        schema_version: 3,
+        task_id,
+        operation_id: operation_id.into(),
+        location: ReceiptExecutionLocation::DeterministicTool,
+        adapter_id: "ujani.local-state".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: None,
+        model_version: None,
+        input_sha256: sha256_hex(input_metadata),
+        output_sha256: sha256_hex(&output_metadata),
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        user_approval_id: None,
+        network_activity: NetworkActivity::unknown(),
+        outcome: Some(ExecutionOutcome::Completed),
+    };
+    if let Some(warning) = persist_receipt_or_warn(operation_id, receipt_slot, receipt) {
+        return Err(format!("The local state change was committed, but its execution receipt needs attention: {warning}"));
+    }
+    Ok(value)
 }
 
 fn persist_receipt_or_warn(
