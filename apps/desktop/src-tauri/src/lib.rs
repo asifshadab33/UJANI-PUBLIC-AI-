@@ -569,7 +569,7 @@ async fn pull_ollama_model(
     emit_task_progress(&app, &task_id, "model_pull_starting", "Starting download from the local Ollama service.", 1);
     let progress_app = app.clone();
     let progress_task = task_id.clone();
-    let download = ollama::pull_model(&model, move |message, percent| {
+    let download = ollama::pull_model(&model, &registration.token, move |message, percent| {
         emit_task_progress(&progress_app, &progress_task, "model_downloading", &message, percent);
     });
     let (result, outcome) = tokio::select! {
