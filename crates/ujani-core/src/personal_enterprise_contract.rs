@@ -760,6 +760,7 @@ fn decode_base64url(value: &str, expected_len: usize) -> Result<Vec<u8>, Contrac
     Ok(output)
 }
 
+#[cfg(test)]
 fn encode_base64url(input: &[u8]) -> String {
     let mut output = String::new();
     let mut index = 0;
@@ -891,6 +892,19 @@ mod tests {
         no_target.device_trust.target_device_id = NullableIdentifier::Null(());
         no_target.consent.user.binding_sha256 = no_target.consent_binding_sha256().unwrap();
         no_target.validate(1_000).unwrap();
+    }
+
+    #[test]
+    fn optional_non_null_fields_reject_explicit_null_values() {
+        let status = br#"{
+            "message_type":"task_status","schema_version":1,"task_id":"task-1",
+            "sequence":1,"state":"received","updated_at_unix_ms":1000,
+            "policy_version":"policy-1",
+            "consent_state":{"user":"granted","organisation_admin":"pending","worker_device_owner":"pending"},
+            "reason_code":null,
+            "signature":{"algorithm":"ed25519","key_id":"service-key-1","value":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+        }"#;
+        assert!(serde_json::from_slice::<TaskStatusV1>(status).is_err());
     }
 
     #[test]
