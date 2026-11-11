@@ -5,8 +5,10 @@ import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
 import ChatMessageContent from "./ChatMessageContent";
 import EverydayTools from "./EverydayTools";
+import EverydayWritingActions from "./EverydayWritingActions";
+import IntegrationDirectory from "./IntegrationDirectory";
 import SecurityCentre from "./SecurityCentre";
-import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit } from "lucide-react";
+import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
 type ChatDeltaEvent = { task_id: string; delta: string };
@@ -139,7 +141,7 @@ function readFileAsBase64(file: File, signal?: AbortSignal, onReadComplete?: () 
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
-  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre">("new-task");
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre" | "integrations">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
@@ -1056,6 +1058,9 @@ export default function App() {
         >
           <HardDrive size={17}/> Local resources
         </button>
+        <button type="button" className={`nav ${activeSidebarSection === "integrations" ? "active" : ""}`} aria-label="Integration directory" aria-current={activeSidebarSection === "integrations" ? "page" : undefined} onClick={(event) => { setActiveSidebarSection("integrations"); const target = document.getElementById("integration-directory"); target?.scrollIntoView({ behavior: "smooth", block: "start" }); if (event.detail === 0) target?.focus({ preventScroll: true }); }}>
+          <ExternalLink size={17}/> Integrations
+        </button>
       </nav>
       <div className="sidebar-bottom"><ShieldCheck size={17}/><span>Local-first mode<br/><small>Your device, your control</small></span></div>
     </aside>
@@ -1071,7 +1076,12 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
+      <EverydayWritingActions onChoose={(prompt) => {
+        setRequest(prompt);
+        document.getElementById("new-task")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }} />
       <SecurityCentre />
+      <IntegrationDirectory />
       <section className="launcher-section" id="new-task" tabIndex={-1} aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
         <div className="launcher-grid">
