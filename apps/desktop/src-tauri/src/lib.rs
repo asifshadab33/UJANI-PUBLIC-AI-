@@ -486,8 +486,7 @@ async fn execute_cloud_ai_task(
  emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.status().remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter, || budget.mark_dispatched());
- let mut receipt_warning = None;
- let result = tokio::select! {
+  let result = tokio::select! {
   // If cancellation is already pending, do not poll the gateway or mark the budget dispatched.
   biased;
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
@@ -523,7 +522,7 @@ async fn execute_cloud_ai_task(
   network_activity: network_activity.clone(),
   outcome: Some(outcome),
  };
- receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
+ let receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  match &result {
   Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
@@ -998,7 +997,7 @@ fn outcome_receipt_digest(domain: &str, outcome: ExecutionOutcome) -> String {
 #[cfg(test)]
 mod receipt_outcome_tests {
     use super::{execution_outcome, outcome_receipt_digest};
-    use ujani_core::ExecutionOutcome;
+    use ujani_core::{ExecutionOutcome, ExecutionReceipt, NetworkActivity, ReceiptExecutionLocation};
 
     #[test]
     fn managed_task_outcomes_are_classified_for_receipts() {
@@ -1284,7 +1283,7 @@ where
         network_activity,
         outcome: Some(outcome),
     };
-    let mut receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
+    let receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
