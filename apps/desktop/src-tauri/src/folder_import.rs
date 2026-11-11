@@ -201,8 +201,8 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
     let selected_root = walked.root.clone();
     for entry in walked.files {
         // The walker returns canonical paths. Require the canonical file to remain an
-        // immediate child, closing the path-replacement race that could otherwise
-        // turn a selected direct child into a nested target before this reopen.
+        // immediate child, then reopen it relative to the pinned root handle so a
+        // replaced parent component cannot redirect the read outside this folder.
         if entry.path.parent() != Some(walked.root.as_path()) {
             return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
