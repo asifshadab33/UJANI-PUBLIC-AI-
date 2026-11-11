@@ -231,5 +231,7 @@ mod tests {
         assert_eq!(encoded.len(), 64);
         assert!(encoded.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
         assert_eq!(ujani_core::sha256_hex(&public).len(), 64);
+        assert_eq!(hex_to_public_bytes(&encoded).unwrap(), public);
+        assert!(hex_to_public_bytes("invalid").is_err());
     }
 }
