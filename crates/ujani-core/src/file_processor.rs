@@ -95,7 +95,10 @@ mod tests {
         assert!(analyze_text("  ", "content").is_err());
         assert!(analyze_text(&"n".repeat(256), "content").is_err());
         assert!(analyze_text("../notes.txt", "content").is_err());
+        #[cfg(windows)]
         assert!(analyze_text(r"C:\Users\person\notes.txt", "content").is_err());
+        #[cfg(not(windows))]
+        assert!(analyze_text(r"team\notes.txt", "content").is_ok());
         assert!(analyze_text("notes\n.txt", "content").is_err());
         assert!(analyze_text(".", "content").is_err());
         assert!(analyze_text("..", "content").is_err());
