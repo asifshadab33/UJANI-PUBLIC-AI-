@@ -360,7 +360,7 @@ export default function App() {
   /** Navigate to local chat and refresh model availability when needed. */
   function openLocalChat() {
     setActiveSidebarSection("new-task");
-    document.getElementById("chat-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("local-ai-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (!ollamaStatus && !ollamaBusy) void refreshOllamaStatus();
   }
 
