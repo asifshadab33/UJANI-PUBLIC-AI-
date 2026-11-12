@@ -74,6 +74,33 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
     Ok(db)
 }
 
+fn with_immediate_state_transaction<T, F>(
+    db: &mut Connection,
+    execute: F,
+) -> Result<T, String>
+where
+    F: FnOnce(&Transaction<'_>) -> Result<T, String>,
+{
+    let transaction = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not acquire local state mutation lock: {error}"))?;
+    let value = execute(&transaction)?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit local state mutation lock: {error}"))?;
+    Ok(value)
+}
+
+/// Serialize short local-state mutations across processes using SQLite's immediate writer lock.
+/// The callback must not open another write transaction on this database.
+pub(crate) fn with_local_state_lock<T, F>(app: &AppHandle, execute: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let mut db = open(app)?;
+    with_immediate_state_transaction(&mut db, |_| execute())
+}
+
 fn initialize(db: &Connection) -> Result<(), String> {
     db.execute_batch(
         "PRAGMA foreign_keys=ON;
@@ -550,11 +577,27 @@ pub async fn set_cloud_budget_limit(app: AppHandle, daily_limit_tokens: i64) -> 
         None
     };
 
-    set_cloud_budget_limit_db(
-        &mut open(&app)?,
+    let input_metadata = serde_json::to_vec(&(
+        before.daily_limit_tokens,
         daily_limit_tokens,
-        now_seconds()?,
-        approved_previous_limit,
+        before.reserved_tokens,
+    ))
+    .map_err(|error| format!("Could not encode cloud-budget audit metadata: {error}"))?;
+    crate::with_local_state_receipt(
+        &app,
+        "cloud_budget.limit.update",
+        &input_metadata,
+        || {
+            let status = set_cloud_budget_limit_db(
+                &mut open(&app)?,
+                daily_limit_tokens,
+                now_seconds()?,
+                approved_previous_limit,
+            )?;
+            let output = serde_json::to_vec(&status)
+                .map_err(|error| format!("Could not encode cloud-budget receipt metadata: {error}"))?;
+            Ok((status, output))
+        },
     )
 }
 
@@ -950,16 +993,37 @@ pub async fn enroll_trusted_peer(
     if !approved {
         return Err("Peer enrollment was not approved by the device owner.".into());
     }
-    let now = now_seconds()? as i64;
-    let db = open(&app)?;
-    db.execute(
-        "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
-         VALUES(?1,?2,?3,?4,NULL)
-         ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
-        params![expected_id, public_key_hex.to_ascii_lowercase(), label, now]
-    ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
-    Ok(TrustedPeer { peer_id: expected_id, public_key_hex: public_key_hex.to_ascii_lowercase(), label, enrolled_at: now, revoked_at: None })
-
+    let input_metadata = serde_json::to_vec(&(
+        expected_id.as_str(),
+        sha256_hex(&public),
+        label.as_str(),
+    ))
+    .map_err(|error| format!("Could not encode peer-enrollment audit metadata: {error}"))?;
+    crate::with_local_state_receipt(&app, "peer.trust.enroll", &input_metadata, || {
+        let now = now_seconds()? as i64;
+        let db = open(&app)?;
+        db.execute(
+            "INSERT INTO trusted_peers(peer_id,public_key_hex,label,enrolled_at,revoked_at)
+             VALUES(?1,?2,?3,?4,NULL)
+             ON CONFLICT(peer_id) DO UPDATE SET public_key_hex=excluded.public_key_hex,label=excluded.label,revoked_at=NULL",
+            params![expected_id, public_key_hex.to_ascii_lowercase(), label, now]
+        ).map_err(|e| format!("Could not enrol trusted peer: {e}"))?;
+        let peer = TrustedPeer {
+            peer_id: expected_id,
+            public_key_hex: public_key_hex.to_ascii_lowercase(),
+            label,
+            enrolled_at: now,
+            revoked_at: None,
+        };
+        let output = serde_json::to_vec(&(
+            peer.peer_id.as_str(),
+            sha256_hex(public.as_slice()),
+            peer.label.as_str(),
+            peer.enrolled_at,
+        ))
+        .map_err(|error| format!("Could not encode peer-enrollment receipt metadata: {error}"))?;
+        Ok((peer, output))
+    })
 }
 
 /// Check whether a peer fingerprint is currently enrolled and not revoked.
@@ -984,11 +1048,15 @@ pub async fn revoke_trusted_peer(app: AppHandle, peer_id: String) -> Result<bool
     }
     let approved = confirm_native(&app, "Confirm device revocation", format!("Revoke this trusted UJANI device?\n\nFingerprint: {peer_id}"), tokio_util::sync::CancellationToken::new(), std::time::Duration::from_secs(120)).await;
     if !approved { return Err("Peer revocation was cancelled.".into()); }
-    let changed = open(&app)?.execute(
-        "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
-        params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
-    ).map_err(|e| format!("Could not revoke trusted peer: {e}"))?;
-    Ok(changed == 1)
+    let input_metadata = peer_id.to_ascii_lowercase().into_bytes();
+    crate::with_local_state_receipt(&app, "peer.trust.revoke", &input_metadata, || {
+        let changed = open(&app)?.execute(
+            "UPDATE trusted_peers SET revoked_at=?1 WHERE peer_id=?2 AND revoked_at IS NULL",
+            params![now_seconds()? as i64, peer_id.to_ascii_lowercase()]
+        ).map_err(|e| format!("Could not revoke trusted peer: {e}"))?;
+        let revoked = changed == 1;
+        Ok((revoked, vec![u8::from(revoked)]))
+    })
 }
 
 /// List enrolled peer public keys and their local revocation state.
@@ -1025,30 +1093,44 @@ pub fn verify_and_claim_peer_envelope(
     if payload.len() > 10 * 1024 * 1024 {
         return Err("Peer payload exceeds the 10 MiB verification limit.".into());
     }
-    let mut db = open(&app)?;
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    let public_key_hex: String = tx.query_row(
-        "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
-        params![peer_id.to_ascii_lowercase()], |row| row.get(0)
-    ).optional().map_err(|e| e.to_string())?
-      .ok_or_else(|| "Peer is not enrolled or has been revoked.".to_string())?;
-    let public = decode_public_key(&public_key_hex)?;
-    let key = VerifyingKey::from_bytes(&public)
-        .map_err(|_| "Stored peer public key is invalid.".to_string())?;
-    if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
-        return Err("Stored peer identity fingerprint does not match its public key.".into());
-    }
-    let local_identity = crate::device_identity::get_or_create_device_identity(app.clone())?;
-    if signed.envelope.recipient_device_id != local_identity.device_id {
-        return Err("Signed peer task is addressed to a different UJANI device.".into());
-    }
-    signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
-    let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
-    let now = now_seconds()?;
-    signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
-        .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
-    claim_nonce_tx(&tx, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)?;
-    tx.commit().map_err(|e| e.to_string())
+    let input_metadata = serde_json::to_vec(&(
+        peer_id.to_ascii_lowercase(),
+        signed.envelope.task_id.as_str(),
+        signed.envelope.operation.as_str(),
+        signed.envelope.input_sha256.as_str(),
+        signed.envelope.nonce.as_str(),
+        signed.envelope.expires_at,
+        &signed.envelope.requested_scopes,
+    ))
+    .map_err(|error| format!("Could not encode peer-envelope audit metadata: {error}"))?;
+    crate::with_local_state_receipt(&app, "peer.envelope.claim", &input_metadata, || {
+        let mut db = open(&app)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+        let public_key_hex: String = tx.query_row(
+            "SELECT public_key_hex FROM trusted_peers WHERE peer_id=?1 AND revoked_at IS NULL",
+            params![peer_id.to_ascii_lowercase()], |row| row.get(0)
+        ).optional().map_err(|e| e.to_string())?
+          .ok_or_else(|| "Peer is not enrolled or has been revoked.".to_string())?;
+        let public = decode_public_key(&public_key_hex)?;
+        let key = VerifyingKey::from_bytes(&public)
+            .map_err(|_| "Stored peer public key is invalid.".to_string())?;
+        if sha256_hex(&public) != peer_id.to_ascii_lowercase() {
+            return Err("Stored peer identity fingerprint does not match its public key.".into());
+        }
+        let local_identity = crate::device_identity::load_existing_device_identity()?
+            .ok_or_else(|| "This device has no enrolled signing identity.".to_string())?;
+        if signed.envelope.recipient_device_id != local_identity.device_id {
+            return Err("Signed peer task is addressed to a different UJANI device.".into());
+        }
+        signed.verify_payload(&payload).map_err(|e| format!("Peer payload rejected: {e:?}"))?;
+        let operations = registered_operations().into_iter().map(|operation| operation.id).collect::<HashSet<_>>();
+        let now = now_seconds()?;
+        signed.verify(&key, now, &mut ReplayGuard::default(), &operations)
+            .map_err(|e| format!("Peer task signature or policy rejected: {e:?}"))?;
+        claim_nonce_tx(&tx, &peer_id, &signed.envelope.nonce, signed.envelope.expires_at, now)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(((), b"peer-envelope-replay-nonce-claimed".to_vec()))
+    })
 }
 
 #[cfg(test)]
@@ -1068,6 +1150,39 @@ mod tests {
             network_activity: ujani_core::NetworkActivity::unknown(),
             outcome: None,
         }
+    }
+
+    #[test]
+    fn immediate_local_state_transaction_commits_and_rolls_back() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE lock_test(value INTEGER NOT NULL);")
+            .unwrap();
+
+        let committed = with_immediate_state_transaction(&mut db, |transaction| {
+            transaction
+                .execute("INSERT INTO lock_test(value) VALUES(1)", [])
+                .map_err(|error| error.to_string())?;
+            Ok(1)
+        })
+        .unwrap();
+        assert_eq!(committed, 1);
+
+        let failed = with_immediate_state_transaction(&mut db, |transaction| {
+            transaction
+                .execute("INSERT INTO lock_test(value) VALUES(2)", [])
+                .map_err(|error| error.to_string())?;
+            Err::<(), String>("simulated local-state failure".to_string())
+        });
+        assert!(failed.is_err());
+
+        let values: Vec<i64> = db
+            .prepare("SELECT value FROM lock_test ORDER BY value")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(values, vec![1]);
     }
 
     #[test]
