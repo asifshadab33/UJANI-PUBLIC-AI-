@@ -13,6 +13,15 @@
 - Bounded image-header inspection only; this is not image decoding, OCR or vision inference.
 - Registered local operation and workflow-graph planning. A successful plan is not execution, resource reservation, filesystem permission or a sandbox.
 
+## Lightweight media capability boundary
+
+- **Documents:** selected supported text files and ordinary PDFs can be inspected within the documented file/text limits; the fixed local pipeline can summarise extracted text with Ollama and optionally translate the summary. Scanned-PDF OCR, complex-layout understanding and unbounded/very large document analysis are not implemented.
+- **Images:** basic header/metadata inspection only. OCR, image-content understanding and vision question answering are not implemented.
+- **Audio:** no local recording/transcription/speech-understanding pipeline is shipped.
+- **Video:** no local scene-understanding, transcription or summarisation pipeline is shipped.
+- These advanced media tasks are deliberately not implemented as bundled local model subsystems. The UI offers user-directed external AI websites for manual upload. UJANI does not upload media automatically; the current BYOK chat gateway accepts text prompts and does not transmit media attachments.
+- This is a deliberate lightweight boundary, not a promise that the above capabilities are queued for local implementation. Any future native support requires a separate cost/complexity, resource and privacy review.
+
 ## Important policy distinctions
 
 - Fortress means **no external task-data transfer**. Ollama is contacted over local loopback HTTP; this is local IPC/network communication and does not provide OS-wide network isolation.
