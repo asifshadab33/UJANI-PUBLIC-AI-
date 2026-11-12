@@ -498,39 +498,80 @@ pub async fn set_local_search_cache_settings(
     enabled: bool,
     retention_days: i64,
 ) -> Result<CacheSettings, String> {
+    let input_metadata = serde_json::to_vec(&(enabled, retention_days))
+        .map_err(|error| format!("Could not encode cache settings audit metadata: {error}"))?;
     tauri::async_runtime::spawn_blocking(move || {
         if !ALLOWED_RETENTION_DAYS.contains(&retention_days) {
             return Err("Choose 7, 30, 90 days, or Until cleared.".into());
         }
-        let mut db = open(&app)?;
-        let tx = db.transaction().map_err(|error| error.to_string())?;
-        tx.execute("UPDATE cache_settings SET value=?1 WHERE key='enabled'", params![if enabled {"true"} else {"false"}])
-            .map_err(|error| error.to_string())?;
-        tx.execute("UPDATE cache_settings SET value=?1 WHERE key='retention_days'", params![retention_days.to_string()])
-            .map_err(|error| error.to_string())?;
-        if !enabled {
-            tx.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
-            tx.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
-            tx.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
-        } else {
-            let settings = settings_from_db(&tx)?;
-            trim_cache(&tx, &settings, now_seconds()?)?;
-        }
-        tx.commit().map_err(|error| error.to_string())?;
-        settings_from_db(&db)
-    }).await.map_err(|error| format!("Cache preference worker failed: {error}"))?
+        crate::with_local_state_receipt(
+            &app,
+            "search_cache.settings.update",
+            &input_metadata,
+            || {
+                let mut db = open(&app)?;
+                let tx = db
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(|error| error.to_string())?;
+                tx.execute(
+                    "UPDATE cache_settings SET value=?1 WHERE key='enabled'",
+                    params![if enabled { "true" } else { "false" }],
+                )
+                .map_err(|error| error.to_string())?;
+                tx.execute(
+                    "UPDATE cache_settings SET value=?1 WHERE key='retention_days'",
+                    params![retention_days.to_string()],
+                )
+                .map_err(|error| error.to_string())?;
+                if !enabled {
+                    tx.execute("DELETE FROM search_cache", [])
+                        .map_err(|error| error.to_string())?;
+                    tx.execute("DELETE FROM recent_searches", [])
+                        .map_err(|error| error.to_string())?;
+                    tx.execute("DELETE FROM approved_scopes", [])
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    let settings = settings_from_db(&tx)?;
+                    trim_cache(&tx, &settings, now_seconds()?)?;
+                }
+                tx.commit().map_err(|error| error.to_string())?;
+                let settings = settings_from_db(&db)?;
+                let output = serde_json::to_vec(&settings)
+                    .map_err(|error| format!("Could not encode cache settings receipt metadata: {error}"))?;
+                Ok((settings, output))
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Cache preference worker failed: {error}"))?
 }
 
 /// Clears cached results, encrypted recent-query history and approved folder-scope records.
 #[tauri::command]
 pub async fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
-        db.execute("DELETE FROM search_cache", []).map_err(|error| error.to_string())?;
-        db.execute("DELETE FROM recent_searches", []).map_err(|error| error.to_string())?;
-        db.execute("DELETE FROM approved_scopes", []).map_err(|error| error.to_string())?;
-        Ok(())
-    }).await.map_err(|error| format!("Cache clear worker failed: {error}"))?
+        crate::with_local_state_receipt(
+            &app,
+            "search_cache.clear",
+            b"user-requested-cache-clear",
+            || {
+                let mut db = open(&app)?;
+                let tx = db
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(|error| error.to_string())?;
+                tx.execute("DELETE FROM search_cache", [])
+                    .map_err(|error| error.to_string())?;
+                tx.execute("DELETE FROM recent_searches", [])
+                    .map_err(|error| error.to_string())?;
+                tx.execute("DELETE FROM approved_scopes", [])
+                    .map_err(|error| error.to_string())?;
+                tx.commit().map_err(|error| error.to_string())?;
+                Ok(((), b"cache-cleared".to_vec()))
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Cache clear worker failed: {error}"))?
 }
 
 #[cfg(test)]
