@@ -548,6 +548,20 @@ async fn execute_cloud_ai_task(
  result.map(|output| output.text)
 }
 
+/// Model pulls remain fail-closed until UJANI can verify the exact upstream
+/// artifact and the storage directory/free space used by the Ollama daemon.
+fn model_download_preflight_ready() -> bool {
+    false
+}
+
+#[cfg(test)]
+mod model_download_preflight_tests {
+    #[test]
+    fn managed_model_downloads_stay_disabled_without_artifact_and_storage_evidence() {
+        assert!(!super::model_download_preflight_ready());
+    }
+}
+
 /// Explicitly downloads a named model through the local Ollama service only.
 #[tauri::command]
 async fn pull_ollama_model(
@@ -557,6 +571,9 @@ async fn pull_ollama_model(
     model: String,
     mode: String,
 ) -> Result<(), String> {
+    if !model_download_preflight_ready() {
+        return Err("UJANI-managed model downloads are temporarily disabled because UJANI cannot verify the exact registry artifact digest, licence, download size, or the Ollama daemon's actual model-store path and free space. You may install a model directly through your trusted Ollama interface after checking its source, licence and available storage, then refresh UJANI's model inventory.".into());
+    }
     if mode == "fortress" {
         return Err("Fortress mode blocks model downloads because they require internet access.".into());
     }
