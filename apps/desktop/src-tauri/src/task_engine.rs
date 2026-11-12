@@ -672,12 +672,19 @@ fn validate_display_filename(file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// PDF readers commonly accept the header within the first 1,024 bytes.
+/// Inspect only that bounded prefix before dispatching to the isolated parser.
+pub(crate) fn has_pdf_header(data: &[u8]) -> bool {
+    let prefix = &data[..data.len().min(1024)];
+    prefix.windows(5).any(|window| window == b"%PDF-")
+}
+
 fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), String> {
     if mode != "fortress" && mode != "smart" { return Err("PDF processing is available in Fortress and Smart only.".into()); }
     validate_display_filename(file_name)?;
     if !file_name.to_ascii_lowercase().ends_with(".pdf") { return Err("Select a valid PDF file.".into()); }
     if data.is_empty() || data.len() > 10 * 1024 * 1024 { return Err("PDF files must be non-empty and no larger than 10 MiB.".into()); }
-    if !data.starts_with(b"%PDF-") { return Err("The selected file does not have a valid PDF header.".into()); }
+    if !has_pdf_header(data) { return Err("The selected file does not have a valid PDF header.".into()); }
     Ok(())
 }
 
@@ -799,6 +806,12 @@ mod local_capability_tests {
     #[test]
     fn pdf_input_requires_pdf_signature_size_and_local_mode() {
         assert!(validate_pdf_input("brief.pdf", b"%PDF-1.7", "smart").is_ok());
+        let mut offset_header = vec![0; 512];
+        offset_header.extend_from_slice(b"%PDF-1.7");
+        assert!(validate_pdf_input("brief.pdf", &offset_header, "smart").is_ok());
+        let mut late_header = vec![0; 1024];
+        late_header.extend_from_slice(b"%PDF-1.7");
+        assert!(validate_pdf_input("brief.pdf", &late_header, "smart").is_err());
         assert!(validate_pdf_input("brief.pdf", b"not a pdf", "smart").is_err());
         assert!(validate_pdf_input("brief.txt", b"%PDF-1.7", "smart").is_err());
         assert!(validate_pdf_input("brief.pdf", b"%PDF-1.7", "worker").is_err());
