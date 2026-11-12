@@ -248,6 +248,9 @@ struct OllamaStatus {
     recommendation: ModelRecommendation,
 }
 
+/// Include only models whose runtime-reported chat capability and context capacity
+/// satisfy the exact context size sent to Ollama. Unknown/short-context models remain
+/// visible in inventory but cannot be recommended for this chat path.
 fn chat_capable_model_sizes(
     models: &[ollama::OllamaModel],
     metadata: &HashMap<String, ollama::OllamaModelMetadata>,
@@ -256,9 +259,11 @@ fn chat_capable_model_sizes(
         .iter()
         .filter(|model| {
             metadata.get(&model.name).is_some_and(|item| {
-                item.capabilities
-                    .iter()
-                    .any(|capability| capability == "chat")
+                item.context_length_tokens
+                    .is_some_and(|context| context >= ollama::NUM_CTX as u64)
+                    && item.capabilities
+                        .iter()
+                        .any(|capability| capability == "chat")
             })
         })
         .map(|model| InstalledModelSize {
@@ -1972,15 +1977,25 @@ mod model_capability_selection_tests {
             OllamaModel { name: "chat-model".into(), size: 1_000, digest: None, details: None },
             OllamaModel { name: "vision-model".into(), size: 2_000, digest: None, details: None },
             OllamaModel { name: "unknown-model".into(), size: 3_000, digest: None, details: None },
+            OllamaModel { name: "short-context-chat".into(), size: 4_000, digest: None, details: None },
+            OllamaModel { name: "unknown-context-chat".into(), size: 5_000, digest: None, details: None },
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
-                context_length_tokens: Some(8_192),
+                context_length_tokens: Some(ollama::NUM_CTX as u64),
                 capabilities: vec!["chat".into()],
             }),
             ("vision-model".into(), OllamaModelMetadata {
                 context_length_tokens: Some(4_096),
                 capabilities: vec!["vision".into()],
+            }),
+            ("short-context-chat".into(), OllamaModelMetadata {
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["chat".into()],
+            }),
+            ("unknown-context-chat".into(), OllamaModelMetadata {
+                context_length_tokens: None,
+                capabilities: vec!["chat".into()],
             }),
         ]);
 
