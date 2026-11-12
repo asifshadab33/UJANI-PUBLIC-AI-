@@ -46,12 +46,12 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, os, o
         <p>Desktop runtime recommendation: Ollama, only on supported desktop systems. Ollama is separate from the AI model and is not bundled or installed automatically.</p>
         {choice.model && onChooseModel && (
           <button className="model-run" type="button" onClick={() => onChooseModel(choice.model!)}>
-            Use {choice.model} as my download choice
+            Use {choice.model} as my manual Ollama setup choice
           </button>
         )}
-        <small className="muted">This is a conservative starting recommendation, not a performance guarantee. UJANI must recheck free RAM, storage, exact artifact digest, quantisation and licence before a separate download confirmation. No model is downloaded or selected for inference automatically.</small>
+        <small className="muted">This is a conservative starting recommendation, not a performance guarantee. UJANI-managed downloads are currently disabled until exact artifact and Ollama storage preflight can be verified. Selecting a candidate only fills its name for manual setup; it does not download or select it for inference.</small>
       </div>
-      <p>These are optional model candidates. Exact artifact, quantisation, publisher, licence, digest, download size and disk-space requirements must be verified before download.</p>
+      <p>These are optional model candidates. Exact artifact, quantisation, publisher, licence, digest, download size and disk-space requirements must be verified before any manual installation.</p>
       <div className="model-catalogue-list">
         {catalogue.models.map((model) => (
           <details key={model.id} className="model-catalogue-card">
