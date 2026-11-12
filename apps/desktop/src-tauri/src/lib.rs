@@ -1960,7 +1960,9 @@ mod pdf_upload_tests {
     fn maximum_upload_decode_runs_on_blocking_pool_not_async_executor_thread() {
         use std::thread;
         let caller = thread::current().id();
-        let payload = STANDARD.encode(vec![0x5a; MAX_PDF_UPLOAD_BYTES]);
+        let mut maximum_pdf = vec![0x5a; MAX_PDF_UPLOAD_BYTES];
+        maximum_pdf[..5].copy_from_slice(b"%PDF-");
+        let payload = STANDARD.encode(maximum_pdf);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
