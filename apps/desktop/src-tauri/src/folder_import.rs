@@ -69,6 +69,19 @@ pub async fn process_selected_folder(
         return Err("Invalid local model identifier.".into());
     }
 
+    // Require a live CPU plan before opening the native picker. If a local model
+    // is available and requested, preflight the model-backed summary as well.
+    let capability_snapshot = crate::get_capability_snapshot().await?;
+    crate::require_local_operation(&capability_snapshot, "file.analyze_text", &mode)?;
+    let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
+    if ollama_available {
+        crate::require_local_operation(
+            &capability_snapshot,
+            "document.summarize",
+            &mode,
+        )?;
+    }
+
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
     let picker_app = app.clone();
@@ -121,8 +134,6 @@ pub async fn process_selected_folder(
         ujani_core::NetworkActivity::unknown(),
         async move {
             let total_bytes = files.iter().map(|file| file.size_bytes).sum();
-            let ollama_available =
-                !model.trim().is_empty() && crate::ollama::is_available().await;
             let mut results = Vec::with_capacity(files.len());
 
             for file in files {
@@ -196,14 +207,15 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
         return Err(format!("The selected folder contains more than {MAX_DIRECTORY_ENTRIES} entries; choose a smaller folder."));
     }
 
+    let selected_root = walked.root.clone();
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
-    let selected_root = walked.root.clone();
     for entry in walked.files {
-        // The walker returns canonical paths. Require the canonical file to remain an
-        // immediate child, then reopen it relative to the pinned root handle on Unix.
-        // The non-Unix fallback retains canonical containment and final-link checks.
-        if entry.path.parent() != Some(walked.root.as_path()) {
+        // The walker returns canonical paths. Require a direct child and reopen it
+        // through the root-bound helper: Unix pins each ancestor with openat and
+        // O_NOFOLLOW; other platforms retain canonical containment plus final-link
+        // checks, without claiming to close the Windows ancestor replacement race.
+        if entry.path.parent() != Some(selected_root.as_path()) {
             return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
 

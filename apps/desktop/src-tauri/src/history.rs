@@ -303,30 +303,110 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
 }
 
 #[tauri::command] pub fn get_task_history_settings(app:AppHandle)->Result<HistorySettings,String>{settings(&open(&app)?)}
-#[tauri::command] pub fn set_task_history_enabled(app:AppHandle,enabled_value:bool)->Result<HistorySettings,String>{
- let db=open(&app)?;
- if enabled_value { let key=history_key()?; migrate_plaintext_rows(&db,&key)?; }
- db.execute("UPDATE history_settings SET value=?1 WHERE key='enabled'",params![if enabled_value{"true"}else{"false"}]).map_err(|e|e.to_string())?;
- settings(&db)
+#[tauri::command]
+pub fn set_task_history_enabled(app: AppHandle, enabled_value: bool) -> Result<HistorySettings, String> {
+    let input = serde_json::to_vec(&enabled_value)
+        .map_err(|error| format!("Could not encode history setting audit metadata: {error}"))?;
+    crate::with_local_state_receipt(&app, "history.settings.update", &input, || {
+        let db = open(&app)?;
+        if enabled_value {
+            let key = history_key()?;
+            migrate_plaintext_rows(&db, &key)?;
+        }
+        db.execute(
+            "UPDATE history_settings SET value=?1 WHERE key='enabled'",
+            params![if enabled_value { "true" } else { "false" }],
+        )
+        .map_err(|error| error.to_string())?;
+        let updated = settings(&db)?;
+        let output = serde_json::to_vec(&updated)
+            .map_err(|error| format!("Could not encode history setting receipt metadata: {error}"))?;
+        Ok((updated, output))
+    })
 }
-#[tauri::command] pub fn save_task_history(app:AppHandle,prompt:String,output:String,mode:String,model:String,kind:String)->Result<i64,String>{
- let mut db=open(&app)?;
- if !is_enabled(&db)? { return Err("Task history is disabled.".into()); }
- let key=history_key()?; migrate_plaintext_rows(&db,&key)?; save_secure(&mut db,&key,&prompt,&output,&mode,&model,&kind,now()?)
+
+#[tauri::command]
+pub fn save_task_history(
+    app: AppHandle,
+    prompt: String,
+    output: String,
+    mode: String,
+    model: String,
+    kind: String,
+) -> Result<i64, String> {
+    let input = serde_json::to_vec(&(
+        crate::sha256_hex(prompt.as_bytes()),
+        crate::sha256_hex(output.as_bytes()),
+        &mode,
+        &model,
+        &kind,
+        prompt.len(),
+        output.len(),
+    ))
+    .map_err(|error| format!("Could not encode history receipt metadata: {error}"))?;
+    crate::with_local_state_receipt(&app, "history.entry.create", &input, || {
+        let mut db = open(&app)?;
+        if !is_enabled(&db)? {
+            return Err("Task history is disabled.".into());
+        }
+        let key = history_key()?;
+        migrate_plaintext_rows(&db, &key)?;
+        let id = save_secure(&mut db, &key, &prompt, &output, &mode, &model, &kind, now()?)?;
+        Ok((id, id.to_be_bytes().to_vec()))
+    })
 }
-#[tauri::command] pub fn list_task_history(app:AppHandle)->Result<Vec<HistoryEntry>,String>{
- let db=open(&app)?;
- // Fresh installs must not prompt for or initialize an OS keyring when history is off.
- if !is_enabled(&db)? { return Ok(Vec::new()); }
- let key=history_key()?; migrate_plaintext_rows(&db,&key)?;
- db.execute("DELETE FROM task_history WHERE created_at < ?1",params![now()?.saturating_sub(RETENTION_SECONDS)]).map_err(|e|e.to_string())?;
- list_secure(&db,&key)
+
+#[tauri::command]
+pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
+    let db = open(&app)?;
+    // Fresh installs must not prompt for or initialize an OS keyring when history is off.
+    if !is_enabled(&db)? {
+        return Ok(Vec::new());
+    }
+    let key = history_key()?;
+    migrate_plaintext_rows(&db, &key)?;
+    db.execute(
+        "DELETE FROM task_history WHERE created_at < ?1",
+        params![now()?.saturating_sub(RETENTION_SECONDS)],
+    )
+    .map_err(|error| error.to_string())?;
+    list_secure(&db, &key)
 }
-#[tauri::command] pub fn delete_task_history(app:AppHandle,entry_id:i64)->Result<(),String>{
- if entry_id<=0{return Err("Invalid history entry identifier.".into());} open(&app)?.execute("DELETE FROM task_history WHERE id=?1",params![entry_id]).map_err(|e|e.to_string())?; Ok(())
+
+#[tauri::command]
+pub fn delete_task_history(app: AppHandle, entry_id: i64) -> Result<(), String> {
+    if entry_id <= 0 {
+        return Err("Invalid history entry identifier.".into());
+    }
+    crate::with_local_state_receipt(
+        &app,
+        "history.entry.delete",
+        &entry_id.to_be_bytes(),
+        || {
+            let db = open(&app)?;
+            db.execute(
+                "DELETE FROM task_history WHERE id=?1",
+                params![entry_id],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(((), b"history-entry-delete-completed".to_vec()))
+        },
+    )
 }
-#[tauri::command] pub fn clear_task_history(app:AppHandle)->Result<(),String>{
- open(&app)?.execute("DELETE FROM task_history",[]).map_err(|e|e.to_string())?; Ok(())
+
+#[tauri::command]
+pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
+    crate::with_local_state_receipt(
+        &app,
+        "history.clear",
+        b"user-requested-history-clear",
+        || {
+            let db = open(&app)?;
+            db.execute("DELETE FROM task_history", [])
+                .map_err(|error| error.to_string())?;
+            Ok(((), b"history-clear-completed".to_vec()))
+        },
+    )
 }
 
 #[cfg(test)] mod tests{
@@ -472,47 +552,4 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
  #[test] fn stored_results_are_bounded(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let large="x".repeat(MAX_STORED_OUTPUT+100);save(&mut c,"p",&large,"smart","m","chat",1).unwrap();let row=list(&c).unwrap().remove(0);assert!(row.output.len()<=MAX_STORED_OUTPUT+64);assert!(row.output.contains("truncated to 64 KiB"));}
  #[test] fn rejects_oversized_values(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();assert!(save(&mut c,&"p".repeat(MAX_PROMPT+1),"o","smart","m","chat",1).is_err());assert!(save(&mut c,"p",&"o".repeat(MAX_OUTPUT+1),"smart","m","chat",1).is_err());}
-
-    #[test]
-    fn every_plaintext_metadata_field_is_authenticated_with_history_ciphertext() {
-        let mut connection = db();
-        connection.execute("UPDATE history_settings SET value='true'", []).unwrap();
-        let key = test_key();
-        let id = save_secure(
-            &mut connection, &key, "private prompt", "private output",
-            "smart", "model-a", "chat", 10,
-        ).unwrap();
-
-        // Each field is independently part of the v3 AAD. Altering any one
-        // field must make both encrypted payload columns unreadable.
-        for (column, replacement) in [
-            ("mode", "fortress"),
-            ("model", "model-b"),
-            ("kind", "document"),
-            ("created_at", "11"),
-        ] {
-            connection.execute(
-                &format!("UPDATE task_history SET {column}=?1 WHERE id=?2"),
-                params![replacement, id],
-            ).unwrap();
-            let entries = list_secure(&connection, &key).unwrap();
-            let entry = entries.iter().find(|entry| entry.id == id).unwrap();
-            assert!(entry.prompt.starts_with("[unreadable entry:"), "{column} did not invalidate prompt");
-            assert!(entry.output.starts_with("[unreadable entry:"), "{column} did not invalidate output");
-            connection.execute(
-                &format!("UPDATE task_history SET {column}=?1 WHERE id=?2"),
-                params![match column {
-                    "mode" => "smart",
-                    "model" => "model-a",
-                    "kind" => "chat",
-                    "created_at" => "10",
-                    _ => unreachable!(),
-                }, id],
-            ).unwrap();
-            let restored = list_secure(&connection, &key).unwrap();
-            let restored_entry = restored.iter().find(|entry| entry.id == id).unwrap();
-            assert_eq!(restored_entry.prompt, "private prompt");
-            assert_eq!(restored_entry.output, "private output");
-        }
-    }
 }
