@@ -136,7 +136,7 @@ fn validate_local_model_metadata(
     let context_capacity = metadata.context_length_tokens.ok_or_else(|| {
         format!("Local model '{model}' has unknown context capacity in Ollama metadata; select a model with reported context metadata.")
     })?;
-    const CONFIGURED_CONTEXT_TOKENS: u64 = 8192;
+    const CONFIGURED_CONTEXT_TOKENS: u64 = ollama::NUM_CTX as u64;
     if context_capacity < CONFIGURED_CONTEXT_TOKENS {
         return Err(format!(
             "Local model '{model}' reports {context_capacity} context tokens, below UJANI's configured {CONFIGURED_CONTEXT_TOKENS}-token context."
