@@ -411,6 +411,15 @@ fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
     Ok(worker)
 }
 
+/// Maps bounded sidecar exit codes to actionable, content-free user errors.
+fn pdf_worker_failure_message(exit_code: Option<i32>) -> &'static str {
+    match exit_code {
+        Some(2) => "The PDF worker rejected the input size or header. Select a valid PDF no larger than 10 MiB.",
+        Some(3) => "The file may be encrypted, malformed, scanned, or use unsupported PDF features. Try an unencrypted text-based PDF.",
+        _ => "The isolated PDF worker could not complete extraction. Try the file again or use a smaller PDF.",
+    }
+}
+
 /// Extracts PDF text in a resource-limited sidecar and rejects truncated output.
 #[cfg(target_os = "android")]
 pub(crate) async fn extract_pdf_isolated(_data: Vec<u8>) -> Result<String, String> {
@@ -560,7 +569,9 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         let worker_metadata = stderr_reader.await
             .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
             .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
-        if !status.success() { return Err("PDF text extraction failed.".into()); }
+        if !status.success() {
+            return Err(format!("PDF text extraction failed. {}", pdf_worker_failure_message(status.code())));
+        }
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
         if pdf_worker_output_was_truncated(&worker_metadata)? {
             return Err("PDF text extraction exceeded the 1 MiB worker output limit. The incomplete result was rejected; split the PDF into smaller sections and retry.".into());
@@ -580,7 +591,14 @@ pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, S
 
 #[cfg(test)]
 mod pdf_worker_status_tests {
-    use super::pdf_worker_output_was_truncated;
+    use super::{pdf_worker_failure_message, pdf_worker_output_was_truncated};
+
+    #[test]
+    fn worker_exit_codes_provide_safe_actionable_errors() {
+        assert!(pdf_worker_failure_message(Some(2)).contains("valid PDF"));
+        assert!(pdf_worker_failure_message(Some(3)).contains("encrypted"));
+        assert!(pdf_worker_failure_message(None).contains("Try the file again"));
+    }
 
     #[test]
     fn accepts_complete_worker_status_without_metadata() {
