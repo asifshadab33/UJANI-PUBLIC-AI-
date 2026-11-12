@@ -69,6 +69,10 @@ exit 0
         self.assertEqual(log.count("apt-get update"), 3)
         self.assertEqual(log.count("apt-get install"), 1)
         self.assertIn("curl libssl-dev", log)
+        self.assertIn("-o Acquire::Retries=2", log)
+        self.assertIn("-o Acquire::http::Timeout=30", log)
+        self.assertIn("-o Acquire::https::Timeout=30", log)
+        self.assertIn("--no-install-recommends", log)
 
     def test_retries_transient_install_failure(self):
         result, log = self.run_installer(fail_installs=1)
@@ -81,6 +85,13 @@ exit 0
         self.assertEqual(result.returncode, 1)
         self.assertEqual(log.count("apt-get update"), 4)
         self.assertEqual(log.count("apt-get install"), 0)
+        self.assertIn("failed after 4 attempts", result.stderr)
+
+    def test_stops_after_four_failed_install_attempts(self):
+        result, log = self.run_installer(fail_installs=99)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(log.count("apt-get update"), 4)
+        self.assertEqual(log.count("apt-get install"), 4)
         self.assertIn("failed after 4 attempts", result.stderr)
 
     def test_requires_at_least_one_package(self):
