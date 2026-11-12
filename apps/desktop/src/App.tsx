@@ -1241,11 +1241,11 @@ export default function App() {
             </div>
             <ModelCatalogue totalMemoryMb={device?.total_memory_mb} availableMemoryMb={device?.available_memory_mb ?? inventoryAvailableMemoryMb ?? undefined} os={device?.os} onChooseModel={(model) => { setModelPullName(model); setModelPullError(""); }} />
             <div className="install-guide">
-              <b>Install a local model from UJANI</b>
-              <p>Enter an Ollama library model name. UJANI sends the name to your local Ollama service at 127.0.0.1 only; the model files are downloaded by Ollama from its configured registry. Large models can take substantial time, bandwidth and disk space.</p>
-              <small className="muted">Before downloading, verify the model source and licence and check free space in Ollama's configured model store. UJANI cannot independently verify the final artifact digest, exact download size or Ollama's storage directory/free space.</small>
-              <label className="model-select">Model name<input value={modelPullName} onChange={(event) => setModelPullName(event.target.value)} maxLength={128} placeholder="e.g. llama3.2 or qwen2.5:3b" disabled={modelPullBusy}/></label>
-              <button className="model-run" onClick={pullLocalModel} disabled={!isTauri() || !ollamaStatus?.available || modelPullBusy || !modelPullName.trim()}>{modelPullBusy ? "Downloading model…" : "Download model through Ollama"}</button>
+              <b>Prepare a local model through Ollama</b>
+              <p>UJANI-managed model downloads are temporarily disabled until UJANI can verify the exact upstream artifact digest, licence, download size and the Ollama daemon's actual model-store location and free space. This prevents an unverified download from filling a device's disk or installing an unexpected artifact.</p>
+              <small className="muted">You can use the candidate name below to install through your own trusted Ollama interface after checking the source, licence and available storage. Then refresh UJANI's model inventory. No model is downloaded by UJANI from this screen.</small>
+              <label className="model-select">Candidate model name for manual Ollama setup<input value={modelPullName} onChange={(event) => setModelPullName(event.target.value)} maxLength={128} placeholder="e.g. qwen3:0.6b" disabled={modelPullBusy}/></label>
+              <button className="model-run" onClick={pullLocalModel} disabled={true}>UJANI-managed model download unavailable</button>
               {modelPullBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeModelPullTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Ollama is downloading the model…"}</p><button className="model-run" onClick={cancelModelPull}>Cancel model download</button></>}
               {modelPullError && <p className="error" role="alert">{modelPullError}</p>}
               <small className="muted">Only download models from sources you trust. Review each model's license, size and hardware requirements before installing.</small>
