@@ -1171,7 +1171,7 @@ mod tests {
             transaction
                 .execute("INSERT INTO lock_test(value) VALUES(2)", [])
                 .map_err(|error| error.to_string())?;
-            Err("simulated local-state failure".to_string())
+            Err::<(), String>("simulated local-state failure".to_string())
         });
         assert!(failed.is_err());
 
