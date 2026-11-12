@@ -55,7 +55,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_output, extract_pdf_text, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
+    use super::{bounded_output, extract_pdf_text, has_pdf_header, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
 
     fn minimal_pdf_with_text() -> Vec<u8> {
         minimal_pdf_with_text_with_prefix(&[])
@@ -99,9 +99,15 @@ mod tests {
 
     #[test]
     fn accepts_pdf_header_within_first_kib_and_rejects_later_header() {
-        let pdf = minimal_pdf_with_text_with_prefix(&vec![b' '; 512]);
+        let pdf = minimal_pdf_with_text();
+        assert!(has_pdf_header(&pdf));
         assert!(extract_pdf_text(&pdf).unwrap().contains("UJANI worker test"));
+
+        let offset_header = minimal_pdf_with_text_with_prefix(&vec![b' '; 512]);
+        assert!(has_pdf_header(&offset_header));
+        // Header preflight accepts this offset, but parser compatibility is separate.
         let too_late = minimal_pdf_with_text_with_prefix(&vec![b' '; 1024]);
+        assert!(!has_pdf_header(&too_late));
         assert!(extract_pdf_text(&too_late).is_err());
     }
 
