@@ -13,11 +13,11 @@ export default function ModelCatalogue() {
               <span> · {model.planning_ram_gib.minimum} GiB minimum planning guide / {model.planning_ram_gib.recommended} GiB recommended guide</span>
             </summary>
             <p>{model.purpose}</p>
-            <p><b>Useful for:</b> {model.tasks.join(", ").replaceAll("_", " ")}.</p>
+            <p><b>Useful for:</b> {model.tasks.join(", ").replace(/_/g, " ")}.</p>
             <p><b>Limitations:</b> {model.limitations.join(" ")}</p>
             <p><b>Storage:</b> Exact download and installed sizes depend on the verified quantised artifact and will be shown before download.</p>
             <p><b>Licence:</b> {model.license}</p>
-            <small className="muted">Candidate only · {model.runtime_status.replaceAll("_", " ")} · RAM figures are advisory planning guidance, not a fit guarantee.</small>
+            <small className="muted">Candidate only · {model.runtime_status.replace(/_/g, " ")} · RAM figures are advisory planning guidance, not a fit guarantee.</small>
           </details>
         ))}
       </div>
@@ -25,7 +25,7 @@ export default function ModelCatalogue() {
       <div className="model-catalogue-list">
         {catalogue.specialist_tools.map((tool) => (
           <details key={tool.id} className="model-catalogue-card">
-            <summary><strong>{tool.display_name}</strong> · {tool.category.replaceAll("_", " ")}</summary>
+            <summary><strong>{tool.display_name}</strong> · {tool.category.replace(/_/g, " ")}</summary>
             <p>{tool.purpose}</p>
             <p><b>Limitations:</b> {tool.limitations.join(" ")}</p>
             <small className="muted">Separate runtime integration required · Not a general chat model.</small>
