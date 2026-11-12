@@ -151,12 +151,6 @@ fn validate_local_model_evidence(
     Ok(())
 }
 
-/// Exact model-name matching prevents a stale or user-edited selection from being
-/// mistaken for a model already installed on this device.
-fn is_installed_model(model: &str, installed_names: &[&str]) -> bool {
-    installed_names.contains(&model)
-}
-
 
 impl LocalTaskEngine {
     /// Validate the shared local-only policy and runtime prerequisites once for
