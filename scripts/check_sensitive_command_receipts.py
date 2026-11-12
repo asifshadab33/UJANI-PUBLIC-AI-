@@ -61,6 +61,7 @@ REQUIRED_POLICY_MARKERS = {
         "signed.verify(",
         "claim_nonce_tx(",
     ),
+    ("device_identity.rs", "load_or_create_signing_key"): ("with_local_state_lock",),
     ("device_identity.rs", "get_or_create_device_identity"): ("load_or_create_signing_key(&app)",),
     ("device_identity.rs", "sign_peer_task_envelope"): (
         "confirm_native(",
@@ -105,6 +106,8 @@ REQUIRED_MARKERS = {
         "load_existing_device_identity",
         "confirm_native(",
         "with_local_state_receipt",
+        "with_local_state_lock",
+        "latest.device_id != current.device_id",
     ),
 }
 
@@ -142,6 +145,7 @@ def main() -> None:
             "worker_and_partner_are_not_scheduled_by_the_local_policy",
         ),
         "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
+        "security_store.rs": ("immediate_local_state_transaction_commits_and_rolls_back",),
     }
     for path, test_names in required_tests.items():
         tests = (TAURI / path).read_text(encoding="utf-8")
