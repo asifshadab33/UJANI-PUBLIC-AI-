@@ -10,6 +10,7 @@ use std::{
     path::Path,
 };
 use tauri_plugin_dialog::DialogExt;
+use tokio_util::sync::CancellationToken;
 
 const MAX_FILES: usize = 10;
 const MAX_DIRECTORY_ENTRIES: usize = 5_000;
@@ -69,9 +70,16 @@ pub async fn process_selected_folder(
         return Err("Invalid local model identifier.".into());
     }
 
+    // Reserve the task ID before capability probes, opening the OS picker, or reading
+    // selected files. Duplicate/invalid IDs must be rejected before those side effects.
+    let registration = crate::register_active_task(&control, &task_id)?;
+    let task_token = registration.token.clone();
+    crate::ensure_task_not_cancelled(&task_token)?;
+
     // Require a live CPU plan before opening the native picker. If a local model
     // is available and requested, preflight the model-backed summary as well.
     let capability_snapshot = crate::get_capability_snapshot().await?;
+    crate::ensure_task_not_cancelled(&task_token)?;
     crate::require_local_operation(&capability_snapshot, "file.analyze_text", &mode)?;
     let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
     if ollama_available {
@@ -85,6 +93,7 @@ pub async fn process_selected_folder(
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
     let picker_app = app.clone();
+    let picker_token = task_token.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
         let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
@@ -92,7 +101,7 @@ pub async fn process_selected_folder(
         let path = folder
             .into_path()
             .map_err(|_| "The selected folder path is not a local filesystem path.".to_string())?;
-        collect_selected_folder(&path).map(Some)
+        collect_selected_folder(&path, &picker_token).map(Some)
     })
     .await
     .map_err(|error| format!("Folder selection worker failed: {error}"))??;
@@ -119,15 +128,15 @@ pub async fn process_selected_folder(
         receipt_fields.push(file.name.as_bytes());
         receipt_fields.push(file.content.as_bytes());
     }
+    crate::ensure_task_not_cancelled(&task_token)?;
     let receipt = crate::local_receipt_context(
         "folder.import",
         receipt_model,
         &receipt_fields,
     )?;
 
-    crate::run_managed_task(
+    crate::run_managed_task_registered(
         app,
-        &control,
         task_id,
         "Folder import",
         receipt,
@@ -184,12 +193,13 @@ pub async fn process_selected_folder(
                 total_bytes,
             })
         },
+        registration,
     )
     .await
 }
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
-fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
+fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<Vec<SelectedTextFile>, String> {
     let walked = crate::safe_fs::walk_directory(
         folder,
         crate::safe_fs::WalkOptions {
@@ -201,7 +211,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             file_filter: Some(is_supported_text_file),
         max_duration: None,
 },
-        &tokio_util::sync::CancellationToken::new(),
+        token,
     )?;
     if walked.truncated {
         return Err(format!("The selected folder contains more than {MAX_DIRECTORY_ENTRIES} entries; choose a smaller folder."));
@@ -211,6 +221,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
     for entry in walked.files {
+        crate::ensure_task_not_cancelled(token)?;
         // The walker returns canonical paths. Require a direct child and reopen it
         // through the root-bound helper: Unix pins each ancestor with openat and
         // O_NOFOLLOW; other platforms retain canonical containment plus final-link
@@ -259,6 +270,7 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
 #[cfg(test)]
 mod tests {
     use super::{collect_selected_folder, MAX_FILE_BYTES, MAX_TOTAL_BYTES};
+    use tokio_util::sync::CancellationToken;
     use std::{
         fs,
         path::PathBuf,
@@ -288,6 +300,15 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_task_is_rejected_before_folder_traversal() {
+        let folder = TestFolder::new();
+        fs::write(folder.0.join("safe.txt"), "content").unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+        assert!(collect_selected_folder(&folder.0, &token).is_err());
+    }
+
+    #[test]
     fn reads_only_supported_immediate_text_files_in_sorted_order() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("zeta.txt"), "last file").unwrap();
@@ -296,7 +317,7 @@ mod tests {
         fs::create_dir(folder.0.join("nested")).unwrap();
         fs::write(folder.0.join("nested").join("hidden.txt"), "not recursive").unwrap();
 
-        let files = collect_selected_folder(&folder.0).unwrap();
+        let files = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].name, "alpha.md");
         assert_eq!(files[1].name, "zeta.txt");
