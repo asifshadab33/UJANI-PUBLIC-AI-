@@ -58,43 +58,55 @@ pub(crate) fn load_existing_device_identity() -> Result<Option<DeviceIdentity>, 
 }
 
 fn load_or_create_signing_key(app: &AppHandle) -> Result<SigningKey, String> {
-    if let Some(identity) = load_existing_device_identity()? {
-        let public = ujani_core::sha256_hex(
-            &hex_to_public_bytes(&identity.public_key_hex)?,
-        );
-        if public != identity.device_id {
-            return Err("Stored device identity fingerprint is inconsistent.".into());
-        }
+    let existing = crate::security_store::with_local_state_lock(app, || {
         let entry = keyring::Entry::new(SERVICE, USER)
-            .map_err(|e| format!("OS credential vault unavailable: {e}"))?;
-        return signing_key_from_encoded(
-            entry.get_password().map_err(|e| format!("Could not read device identity from OS credential vault: {e}"))?,
-        );
+            .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
+        match entry.get_password() {
+            Ok(encoded) => Ok(Some(signing_key_from_encoded(encoded)?)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(format!(
+                "Could not read device identity from OS credential vault: {error}"
+            )),
+        }
+    })?;
+    if let Some(signing) = existing {
+        return Ok(signing);
     }
 
     crate::with_local_state_receipt(app, "device_identity.create", b"create-if-absent", || {
-        let entry = keyring::Entry::new(SERVICE, USER)
-            .map_err(|e| format!("OS credential vault unavailable: {e}"))?;
-        let key = match entry.get_password() {
-            Ok(encoded) => signing_key_from_encoded(encoded)?,
-            Err(keyring::Error::NoEntry) => {
-                let mut seed = Zeroizing::new([0_u8; 32]);
-                let mut random = OsRng;
-                random
-                    .try_fill_bytes(&mut *seed)
-                    .map_err(|_| "OS random source is unavailable.".to_string())?;
-                let key = SigningKey::from_bytes(&seed);
-                let encoded = Zeroizing::new(B64.encode(*seed));
-                entry.set_password(encoded.as_str())
-                    .map_err(|e| format!("Could not store device identity in OS credential vault: {e}"))?;
-                key
-            }
-            Err(e) => return Err(format!("Could not read device identity from OS credential vault: {e}")),
-        };
-        let public = key.verifying_key().to_bytes();
-        let output = serde_json::to_vec(&(ujani_core::sha256_hex(&public), hex(&public)))
-            .map_err(|e| format!("Could not encode device identity receipt metadata: {e}"))?;
-        Ok((key, output))
+        crate::security_store::with_local_state_lock(app, || {
+            let entry = keyring::Entry::new(SERVICE, USER)
+                .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
+            // Re-check under the cross-process lock: another app process may have
+            // created the identity after the initial read but before receipt reservation.
+            let signing = match entry.get_password() {
+                Ok(encoded) => signing_key_from_encoded(encoded)?,
+                Err(keyring::Error::NoEntry) => {
+                    let mut seed = Zeroizing::new([0_u8; 32]);
+                    let mut random = OsRng;
+                    random
+                        .try_fill_bytes(&mut *seed)
+                        .map_err(|_| "OS random source is unavailable.".to_string())?;
+                    let signing = SigningKey::from_bytes(&seed);
+                    let encoded = Zeroizing::new(B64.encode(*seed));
+                    entry.set_password(encoded.as_str()).map_err(|error| {
+                        format!("Could not store device identity in OS credential vault: {error}")
+                    })?;
+                    signing
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "Could not read device identity from OS credential vault: {error}"
+                    ));
+                }
+            };
+            let public = signing.verifying_key().to_bytes();
+            let output = serde_json::to_vec(&(ujani_core::sha256_hex(&public), hex(&public)))
+                .map_err(|error| {
+                    format!("Could not encode device identity receipt metadata: {error}")
+                })?;
+            Ok((signing, output))
+        })
     })
 }
 
@@ -147,21 +159,35 @@ pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, St
     let input = serde_json::to_vec(&current.device_id)
         .map_err(|e| format!("Could not encode device identity rotation metadata: {e}"))?;
     crate::with_local_state_receipt(&app, "device_identity.rotate", &input, || {
-        let entry = keyring::Entry::new(SERVICE, USER)
-            .map_err(|e| format!("OS credential vault unavailable: {e}"))?;
-        let mut seed = Zeroizing::new([0_u8; 32]);
-        let mut random = OsRng;
-        random
-            .try_fill_bytes(&mut *seed)
-            .map_err(|_| "OS random source is unavailable.".to_string())?;
-        let signing = SigningKey::from_bytes(&seed);
-        let encoded = Zeroizing::new(B64.encode(*seed));
-        entry.set_password(encoded.as_str())
-            .map_err(|e| format!("Could not rotate device identity in OS credential vault: {e}"))?;
-        let identity = identity_from_signing_key(&signing);
-        let output = serde_json::to_vec(&(identity.device_id.as_str(), identity.public_key_hex.as_str()))
-            .map_err(|e| format!("Could not encode rotated identity receipt metadata: {e}"))?;
-        Ok((identity, output))
+        crate::security_store::with_local_state_lock(&app, || {
+            let latest = load_existing_device_identity()?
+                .ok_or_else(|| "Device identity disappeared after confirmation.".to_string())?;
+            if latest.device_id != current.device_id {
+                return Err(
+                    "Device identity changed after confirmation; review the current fingerprint and try again."
+                        .into(),
+                );
+            }
+            let entry = keyring::Entry::new(SERVICE, USER)
+                .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
+            let mut seed = Zeroizing::new([0_u8; 32]);
+            let mut random = OsRng;
+            random
+                .try_fill_bytes(&mut *seed)
+                .map_err(|_| "OS random source is unavailable.".to_string())?;
+            let signing = SigningKey::from_bytes(&seed);
+            let encoded = Zeroizing::new(B64.encode(*seed));
+            entry.set_password(encoded.as_str()).map_err(|error| {
+                format!("Could not rotate device identity in OS credential vault: {error}")
+            })?;
+            let identity = identity_from_signing_key(&signing);
+            let output = serde_json::to_vec(&(
+                identity.device_id.as_str(),
+                identity.public_key_hex.as_str(),
+            ))
+            .map_err(|error| format!("Could not encode rotated identity receipt metadata: {error}"))?;
+            Ok((identity, output))
+        })
     })
 }
 
