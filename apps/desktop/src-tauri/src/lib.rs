@@ -575,7 +575,7 @@ async fn pull_ollama_model(
     let approved = native_consent::confirm_native(
         &app,
         "Approve model download",
-        format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry. This download may use network bandwidth and local disk space. No download starts unless you approve."),
+        format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its configured model registry. UJANI cannot independently verify the final model digest, exact download size, licence, or the storage directory and free space configured inside the Ollama service. Before approving, check the model source and licence and make sure the Ollama model store has enough free disk space. No download starts unless you approve."),
         registration.token.clone(),
         Duration::from_secs(120),
     ).await;
