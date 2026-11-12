@@ -940,7 +940,7 @@ mod local_model_evidence_tests {
         assert!(validate_local_model_metadata(
             "short-context",
             512 * 1024 * 1024,
-            &metadata(&["chat"], Some(4096)),
+            &metadata(&["chat"], Some(2048)),
             4096,
         ).is_err());
     }
