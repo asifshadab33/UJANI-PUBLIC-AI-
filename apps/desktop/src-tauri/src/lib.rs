@@ -1746,7 +1746,7 @@ fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec
 /// Decodes a non-empty PDF upload after enforcing the encoded and decoded 10 MiB bounds.
 fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
     let data = decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)?;
-    if !data.starts_with(b"%PDF-") {
+    if !task_engine::has_pdf_header(&data) {
         return Err("The selected file does not have a valid PDF signature.".into());
     }
     Ok(data)
@@ -1917,6 +1917,9 @@ mod pdf_upload_tests {
         assert!(decode_pdf_upload(&malformed).unwrap_err().contains("valid PDF signature"));
         let valid_header = STANDARD.encode(b"%PDF-1.7\n");
         assert_eq!(decode_pdf_upload(&valid_header).unwrap(), b"%PDF-1.7\n");
+        let mut offset_header = vec![0; 512];
+        offset_header.extend_from_slice(b"%PDF-1.7\n");
+        assert_eq!(decode_pdf_upload(&STANDARD.encode(&offset_header)).unwrap(), offset_header);
     }
 
     #[test]
