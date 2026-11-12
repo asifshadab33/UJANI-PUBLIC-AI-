@@ -120,7 +120,9 @@ fn find_installed_model<'a>(
     installed.iter().find(|entry| entry.name == model)
 }
 
-fn validate_local_model_evidence(
+/// Apply fail-closed checks to Ollama-reported metadata. This is not cryptographic
+/// model attestation; the memory-fit estimate is advisory and cannot guarantee runtime fit.
+fn validate_local_model_metadata(
     model: &str,
     size_bytes: u64,
     metadata: &ollama::OllamaModelMetadata,
@@ -891,7 +893,7 @@ mod pdf_worker_seccomp_tests {
 
 #[cfg(test)]
 mod local_model_evidence_tests {
-    use super::validate_local_model_evidence;
+    use super::validate_local_model_metadata;
     use crate::ollama::OllamaModelMetadata;
 
     fn metadata(capabilities: &[&str], context: Option<u64>) -> OllamaModelMetadata {
@@ -903,7 +905,7 @@ mod local_model_evidence_tests {
 
     #[test]
     fn accepts_runtime_reported_chat_model_that_fits_context_and_memory() {
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "small-chat",
             512 * 1024 * 1024,
             &metadata(&["chat"], Some(8192)),
@@ -913,13 +915,13 @@ mod local_model_evidence_tests {
 
     #[test]
     fn rejects_unknown_or_non_chat_capability() {
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "unknown",
             512 * 1024 * 1024,
             &metadata(&["unknown"], Some(8192)),
             4096,
         ).is_err());
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "no-chat",
             512 * 1024 * 1024,
             &metadata(&["embeddings"], Some(8192)),
@@ -929,13 +931,13 @@ mod local_model_evidence_tests {
 
     #[test]
     fn rejects_unknown_or_insufficient_context_capacity() {
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "unknown-context",
             512 * 1024 * 1024,
             &metadata(&["chat"], None),
             4096,
         ).is_err());
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "short-context",
             512 * 1024 * 1024,
             &metadata(&["chat"], Some(4096)),
@@ -945,19 +947,19 @@ mod local_model_evidence_tests {
 
     #[test]
     fn rejects_unknown_size_or_insufficient_available_memory() {
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "unknown-size",
             0,
             &metadata(&["chat"], Some(8192)),
             4096,
         ).is_err());
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "too-large",
             8 * 1024 * 1024 * 1024,
             &metadata(&["chat"], Some(8192)),
             4096,
         ).is_err());
-        assert!(validate_local_model_evidence(
+        assert!(validate_local_model_metadata(
             "unknown-ram",
             512 * 1024 * 1024,
             &metadata(&["chat"], Some(8192)),
