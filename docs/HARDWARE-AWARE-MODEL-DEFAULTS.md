@@ -13,7 +13,7 @@ The model recommendation uses measured total RAM and current available RAM. The 
 | Device memory | Starting choice | Starting context |
 |---|---|---:|
 | 4 GiB total or less | No local model; use native UJANI features | — |
-| 6 GiB total and at least 2.5 GiB available | Qwen3 0.6B | 2K |
+| 6 GiB total and at least 2.5 GiB available | Qwen3 0.6B | 4K |
 | 8 GiB total and at least 3.5 GiB available | Qwen3 1.7B | 4K |
 | 16 GiB total and at least 6 GiB available | Qwen3 4B | 4K |
 | 24 GiB+ total and at least 10 GiB available | Qwen3 8B | 4K |
