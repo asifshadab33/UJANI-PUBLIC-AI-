@@ -214,6 +214,32 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn handle_relative_open_rejects_selected_root_replaced_by_symlink() {
+        use super::open_regular_file_under_root;
+        use std::os::unix::fs::symlink;
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let parent = std::env::temp_dir().join(format!("ujani-safe-fs-root-swap-{id}"));
+        let selected = parent.join("selected");
+        let outside = parent.join("outside");
+        fs::create_dir_all(&selected).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(selected.join("data.txt"), b"inside").unwrap();
+        fs::write(outside.join("data.txt"), b"outside secret").unwrap();
+
+        // Model an attacker replacing the selected root after enumeration but
+        // before the importer reopens the canonical child path.
+        let canonical_root = fs::canonicalize(&selected).unwrap();
+        let target = canonical_root.join("data.txt");
+        fs::remove_dir_all(&selected).unwrap();
+        symlink(&outside, &selected).unwrap();
+
+        assert!(open_regular_file_under_root(&canonical_root, &target).is_err());
+        fs::remove_file(&selected).unwrap();
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn refuses_final_symlink_without_reading_its_target() {
         use std::os::unix::fs::symlink;
         let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
