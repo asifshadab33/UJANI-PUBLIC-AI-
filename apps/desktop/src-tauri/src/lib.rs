@@ -1166,9 +1166,9 @@ fn persist_receipt_or_warn(
         Err(recovery) => {
             let (slot, error) = *recovery;
             Some(if enqueue_pending_receipt(receipt, slot) {
-                format!("{label} completed. Its provenance receipt could not be stored yet and has been queued for retry: {error}")
+                format!("{label} operation ended; its provenance receipt could not be stored yet and has been queued for retry: {error}")
             } else {
-                format!("{label} completed, but receipt storage and the bounded retry queue are unavailable. Preserve this result before closing UJANI: {error}")
+                format!("{label} operation ended, but receipt storage and the bounded retry queue are unavailable. Preserve the operation result before closing UJANI: {error}")
             })
         },
     }
