@@ -73,14 +73,14 @@ fn load_or_create_signing_key(app: &AppHandle) -> Result<SigningKey, String> {
         return Ok(signing);
     }
 
-    crate::with_local_state_receipt(app, "device_identity.create", b"create-if-absent", || {
+    crate::with_local_state_receipt(app, "device_identity.get_or_create", b"get-or-create", || {
         crate::security_store::with_local_state_lock(app, || {
             let entry = keyring::Entry::new(SERVICE, USER)
                 .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
             // Re-check under the cross-process lock: another app process may have
             // created the identity after the initial read but before receipt reservation.
-            let signing = match entry.get_password() {
-                Ok(encoded) => signing_key_from_encoded(encoded)?,
+            let (signing, created) = match entry.get_password() {
+                Ok(encoded) => (signing_key_from_encoded(encoded)?, false),
                 Err(keyring::Error::NoEntry) => {
                     let mut seed = Zeroizing::new([0_u8; 32]);
                     let mut random = OsRng;
@@ -92,7 +92,7 @@ fn load_or_create_signing_key(app: &AppHandle) -> Result<SigningKey, String> {
                     entry.set_password(encoded.as_str()).map_err(|error| {
                         format!("Could not store device identity in OS credential vault: {error}")
                     })?;
-                    signing
+                    (signing, true)
                 }
                 Err(error) => {
                     return Err(format!(
@@ -101,10 +101,14 @@ fn load_or_create_signing_key(app: &AppHandle) -> Result<SigningKey, String> {
                 }
             };
             let public = signing.verifying_key().to_bytes();
-            let output = serde_json::to_vec(&(ujani_core::sha256_hex(&public), hex(&public)))
-                .map_err(|error| {
-                    format!("Could not encode device identity receipt metadata: {error}")
-                })?;
+            let output = serde_json::to_vec(&(
+                created,
+                ujani_core::sha256_hex(&public),
+                hex(&public),
+            ))
+            .map_err(|error| {
+                format!("Could not encode device identity receipt metadata: {error}")
+            })?;
             Ok((signing, output))
         })
     })
