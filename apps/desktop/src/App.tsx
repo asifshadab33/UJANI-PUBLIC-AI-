@@ -1110,6 +1110,13 @@ export default function App() {
           </button>
         </div>
         <p className="launcher-footnote" id="peer-mode-status">Worker and Partner are intentionally disabled until device enrollment, encrypted peer transport, task isolation and revocation are ready. This protects your files and device from untrusted peers.</p>
+        <details className="result" style={{ marginTop: "0.75rem" }}>
+          <summary><b>Worker and Partner mode — why these features are locked</b> <span className="muted">HIGH RISK · ADMINISTRATOR REVIEW REQUIRED</span></summary>
+          <p><b>Worker mode</b> is intended to delegate a bounded task to another trusted device. <b>Partner mode</b> is intended for collaboration between enrolled peers. Neither mode currently performs remote execution in this build.</p>
+          <p><b>Why locked:</b> enabling peer work before the complete trust chain exists could expose selected data or let an untrusted device consume resources or return unsafe results. The required foundations include device-owner consent, authenticated enrollment and revocation, encrypted transport, receiver-side policy checks, OS-enforced task isolation, resource quotas, cancellation and auditable receipts.</p>
+          <p><b>Administrator control:</b> a future administrator may configure approved peers, task classes, schedules and resource budgets only after those controls are implemented and independently tested. Administrator approval cannot replace the device owner's consent or bypass a missing security gate.</p>
+          <p><b>Current status:</b> routing and task-contract foundations are present; production peer transport, dispatch and execution are not. This setting is intentionally not overridable. Use local execution or explicitly approved Smart-mode BYOK cloud assistance instead.</p>
+        </details>
       </section>
       <div className="section-heading"><div><h2>Your device</h2><p>Read-only system information</p></div><span className="muted">No background compute</span></div>
       <div className="metrics">
