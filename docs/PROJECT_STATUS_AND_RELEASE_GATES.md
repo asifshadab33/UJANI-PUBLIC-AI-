@@ -1,12 +1,12 @@
 # UJANI project status and release gates
 
-**Project status: pre-alpha / prototype.** This file consolidates the verified implementation boundary and outstanding work across UJANI Public AI and UJANI Enterprise AI as of 10 November 2026. It is a project planning record, not a security certification.
+**Project status: pre-alpha / prototype.** This file consolidates the verified implementation boundary and outstanding work across UJANI Public AI and UJANI Enterprise AI as of 12 November 2026. It is a project planning record, not a security certification.
 
 ## Product architecture
 
 - **UJANI Public AI** is the personal-device application: local-first assistance, user-controlled local models, bounded local tools and explicitly approved BYOK cloud requests.
 - **UJANI Enterprise AI** is the organisation-controlled policy and fleet foundation: administrator approval, workload policy contracts and future organisation-level device/workload governance.
-- The two repositories remain independently governed. A future Personal-to-Enterprise bridge must use a separately versioned, interoperable protocol; the existing Public task-envelope and Enterprise administrator-approval formats are not wire-compatible.
+- The two repositories remain independently governed. A shared Personal-to-Enterprise task-contract v1 now exists in both repositories: versioned schemas, shared consent-binding/model-inventory vectors, strict validators and native Rust decoders/verifiers. It is a protocol boundary only; it does not provide authenticated transport, enrollment-to-key binding, atomic policy/consent/lease admission, dispatch or execution.
 
 ## Implemented foundations
 
@@ -28,9 +28,10 @@
 
 - Signed administrator approval and policy-validation foundations.
 - Ed25519 approval claims bound to workload/device/class/resource limits and expiry.
-- A local file-backed reservation ledger with OS advisory locking, snapshot checksum validation, backup/rename recovery, opaque lease capabilities, authenticated renewal/release and durable challenge replay claims. It is single-host and not a distributed transaction service.
-- Strict, versioned workload manifest input contract and JSON Schema, with validation tests.
-- The workload manifest is not an execution grant. Production identity enrollment, production-grade authenticated storage and a complete control plane remain future work.
+- A local file-backed reservation ledger with OS advisory locking, snapshot checksum validation, backup/rename recovery, opaque lease capabilities, authenticated renewal/release and durable challenge replay claims. It remains single-host and is not a distributed transaction service.
+- PostgreSQL migrations now define tenant-scoped base records, task-contract nonce/sequence storage and monotonic privacy-minimised device telemetry admission (migrations 0001–0003), with RLS, replay, rollback and concurrency tests. These are database primitives; there is no production SQLx repository or authenticated HTTP/device-agent adapter.
+- The durable device-trust registry supports signed administrative commands, owner consent, authenticated request checks and an optional external monotonic-snapshot-anchor interface. No production KMS/HSM/TPM anchor provider is wired in.
+- Native task-contract v1 parsing and verification is present. The verifier is not an execution grant. Production identity hosting, atomic repository transactions and a complete control plane remain future work.
 
 ## Critical release gates — not yet implemented or independently verified
 
@@ -44,10 +45,10 @@
 
 ### P1 — required for real distributed Personal-to-Enterprise execution
 
-1. **Interoperable protocol:** publish byte-exact canonical envelope and receipt schemas, cross-language test vectors, strict parser limits, version negotiation and compatibility policy.
+1. **Interoperable protocol:** v1 schemas, shared consent-binding/model-inventory vectors, strict Python validators and native Rust decoders/verifiers now exist in both repositories. Still required: freeze compatibility/version policy, exercise the same end-to-end fixtures across both implementations, and bind verification to authenticated identities before transport.
 2. **Identity and key lifecycle:** authenticate sender and organisation enrollment out of band; bind keys to sender, organisation, permitted audience and validity; support rotation, revocation and expiry.
 3. **Confidential transport:** authenticated TLS on every hop or equivalent end-to-end authenticated encryption for payloads and results. Signatures and digests alone do not provide confidentiality.
-4. **Durable replay protection:** persistent, transactional, restart-safe nonce/task-ID store; test concurrent duplicate requests and crash recovery.
+4. **Durable replay protection:** PostgreSQL tenant-scoped nonce claims and monotonic status/receipt sequence tables now exist with RLS and CI tests. The production service adapter must still bind verifier success to atomic replay claims and sequence updates; no authenticated intake service exists.
 5. **Receiver-side authorization:** verify signatures and exact payload digests before parsing/execution; re-evaluate current organisation policy, user consent, device status, scopes, quotas and resource limits immediately before dispatch.
 6. **Result provenance:** sign receipts; bind worker and organisation identity; verify task ID and input digest; hash exact returned output bytes and compare to the signed output digest before accepting results.
 7. **Authenticated transport/API:** build the Enterprise control-plane API, device agent, mutual authentication, authorization, audit logs, rate limiting, idempotency, failure recovery and tenant isolation.
@@ -55,7 +56,7 @@
 
 ### P1 — actual resource-aware execution
 
-1. Wire live, timestamped CPU/RAM/thermal/AC/battery/accelerator telemetry into scheduler snapshots. Reject stale or unverified measurements.
+1. A tenant-scoped PostgreSQL telemetry sample table and monotonic admission function now exist, including freshness, replay, consent, trust and sequence checks. No authenticated device agent/service adapter supplies signed samples yet; live telemetry is not connected to the scheduler.
 2. Verify GPU/NPU runtime, driver, device identity and usable VRAM; implement safe CPU fallback and tests on real hardware. Hardware presence alone is not proof of compatibility.
 3. Enforce atomic resource reservations, concurrency limits, release-on-cancel/failure, queue fairness, priorities and back-pressure. The current scheduler is a pure policy contract, not a dispatcher.
 4. Implement model-specific memory estimates using quantisation, context length, runtime and accelerator offload; keep estimates advisory until validated against measurements.
@@ -78,7 +79,7 @@
 - The core Public scheduler remains a policy contract: it does not collect live telemetry, dispatch tasks or guarantee capacity. The desktop's single-task / 1 GiB admission gate is process-local and is not a kernel or cross-process reservation.
 - Public AI has a local SQLite hash-chain receipt ledger covering successful local chat, explicitly approved BYOK chat, selected-text summaries, selected-document/PDF paths, local translation, successful `execute_document_workflow` runs and successful selected-folder imports (`process_selected_folder`). Model downloads also reserve and persist outcome receipts for success, failure, cancellation or timeout, while downstream registry host, transferred bytes and final model artifact digest remain unknown. A complete command-by-command coverage matrix and failure/cancellation audit remain outstanding. The ledger is unsigned and unanchored, so it is not an independent execution attestation.
 - Peer protocol v2 plus local device identity, native-confirmed trust/revocation and persistent nonce claims do not provide encrypted/authenticated network transport, remote dispatch, organisation-level identity, or remote execution.
-- Enterprise now has a file-backed, cross-process reservation/replay ledger with restart recovery tests. It remains single-host, unencrypted, and protected by an unkeyed checksum rather than a MAC/signature; a local writer can alter and recompute the checksum. It is not a production control-plane database or distributed lock service.
+- Enterprise retains a single-host file-backed reservation ledger, while PostgreSQL migrations now provide tenant-scoped replay/sequence and telemetry storage primitives. The durable device registry supports keyed integrity and an optional external monotonic anchor interface, but no production anchor provider or authenticated SQLx repository is integrated. These components do not form a production control-plane database or distributed transaction service.
 - A workload manifest validates requested input only; it does not authenticate a sender, authorize a workload or execute it.
 - Parser fuzz targets exist, but no completed fuzz campaign is claimed.
 - CI compilation and unit tests do not substitute for native desktop smoke tests, hardware tests or independent security testing.
@@ -162,7 +163,7 @@ Public references reviewed:
 
 **Enterprise AI**
 - The durable reservation ledger is a single-host prototype; it is not a distributed transactional service or rollback-resistant production trust store. Production KMS/HSM/TPM key custody and a separately hosted linearizable anti-rollback anchor remain missing.
-- P1 issue #20 remains the prerequisite for authenticated device enrollment, key rotation/revocation, tenant-scoped RBAC and authenticated lease APIs. Do not build privileged UI actions or dispatch on top of unauthenticated/local-only primitives.
+- Core signed device enrollment/administration, key-generation checks, revocation and owner-consent primitives now exist in the Rust trust layer. Production OIDC/tenant RBAC hosting, protected key-provider/anchor implementations, SQLx-backed atomic lease and audit transactions, and authenticated HTTP/device-agent endpoints remain missing. Do not enable privileged UI actions or dispatch on top of local primitives.
 - The opt-in read-only sensor, authenticated tenant event ingestion, durable event store, cross-endpoint correlation, fleet dashboard and installer profiles are not yet a production implementation.
 - Keep remote execution and autonomous containment disabled. Any future response action must be narrow, receiver-authorized, expiring, reversible, idempotent, approved and immutably audited.
 
@@ -171,7 +172,7 @@ Public references reviewed:
 1. **Release hardening first:** finish Public PR #117 review and manual desktop PDF/cancel/retry checks; resolve dependency advisories; verify signing, SBOM/provenance, update rollback and OS isolation. Keep PR #117 unmerged until required reviews and release gates pass.
 2. **Public product reliability:** audit all native commands against one capability/consent policy; close receipt coverage gaps; validate mobile and GUI navigation; publish verified installer artifacts and a truthful support matrix.
 3. **Public local-first differentiator:** implement measurable resource/energy telemetry and safe capability-aware routing; then deliver the local reminder/agenda MVP. Add provider adapters only with independent consent and minimal read-only scopes.
-4. **Enterprise trust foundation:** complete issue #20 authenticated enrollment, key lifecycle, anti-rollback storage and authenticated acquire/renew/release/cancel lease service; add adversarial tenant/replay/revocation tests.
+4. **Enterprise trust foundation:** integrate the merged signed device-trust registry and PostgreSQL migrations into a customer-hosted authenticated service; implement protected key/anchor providers and atomic acquire/renew/release/cancel lease plus audit transactions; add adversarial tenant/replay/revocation tests.
 5. **Enterprise operator experience:** build read-only inventory/health/fleet views and selected integration status; then customer-selectable install profiles with tested sizing and licensing disclosure.
 6. **Enterprise detection and response:** read-only sensor and event ingestion, deterministic explainable correlation and analyst alerts; only later consider separately reviewed approval-gated reversible actions.
 7. **Benchmark continuously:** compare install friction, idle CPU/RAM, model latency/quality, energy per task, crash rate, permission clarity and operator time-to-triage against the relevant open-source and commercial alternatives. Publish methodology and raw measurements; do not infer superiority from feature lists.
@@ -188,3 +189,12 @@ This review inspected the two repository backlogs, current pull-request metadata
 - Enterprise main SHA `d114556386d21583e28ad2b7d8e77666c7c23fbc` had passing CI, CodeQL and Rust dependency-audit runs. This verifies the policy workspace on hosted runners, not production control-plane or real worker behavior.
 - The repositories had no open pull requests at the time of the check. This means there are no PRs awaiting merge; it does not mean the product backlog or release gates are complete.
 - Android is the current Public AI mobile target. iOS is outside the current implementation scope.
+
+
+## 2026-11-12 verified integration delta
+
+**Public AI main baseline audited for this update:** `bf258605870017970044ea90d07cd19e3c855668`. Merged PR #214 adds validated-format, runtime-reported Ollama model digest evidence and a bounded advisory memory estimate; PR #217 adds a fail-closed release-evidence checklist (it validates evidence labels, not report authenticity); PR #218 adds the native task-contract v1 verifier and shared vectors; PR #221 corrects the execution-receipt coverage record. These merges do not establish cryptographic model attestation, a signed release or a complete manual test pass.
+
+**Enterprise AI main:** `c9395194c9afc95866496e4219ce681af7af43a0`. Merged PR #130 adds a read-only inventory metadata contract/view, #134 adds shared contract/schema validators, #136 adds PostgreSQL replay/sequence storage, #140 adds the native task-contract verifier, #141 corrects the operator readiness record, and #142 adds monotonic telemetry persistence/admission tests, runtime tenant-registry privilege restrictions and the durable device-trust registry with an external-anchor interface. Exact-head checks passed for these PRs before merge; no post-merge main workflow run was returned in this audit.
+
+**Still not complete:** Public PR #215 (sensitive-action receipt and device-identity hardening, including cross-process identity mutation locking), #223 (runtime-metadata local-model preflight) and #225 (bounded Ubuntu dependency retries plus the Windows junction regression) remain under exact-head validation. No physical-device credential-vault tests are claimed for #215. Public OS-enforced application sandboxing, complete PDF-worker validation, signed reproducible installers, physical-device installation tests and independent security testing remain release gates. Enterprise still lacks the production OIDC/HTTP service, SQLx repository, authenticated device agent, production external-anchor provider, atomic lease/audit transaction service and worker isolation. No remote execution or autonomous containment is enabled.
