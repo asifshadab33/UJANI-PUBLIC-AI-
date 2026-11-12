@@ -1982,7 +1982,7 @@ mod model_capability_selection_tests {
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
-                context_length_tokens: Some(ollama::NUM_CTX as u64),
+                context_length_tokens: Some(8192),
                 capabilities: vec!["chat".into()],
             }),
             ("vision-model".into(), OllamaModelMetadata {
