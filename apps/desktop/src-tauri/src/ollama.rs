@@ -70,7 +70,7 @@ const MAX_INSTALLED_MODELS: usize = 512;
 const MAX_MODEL_METADATA_INSPECTIONS: usize = 32;
 const MAX_MODEL_METADATA_CONCURRENCY: usize = 4;
 
-const NUM_CTX: u32 = 8192;
+pub const NUM_CTX: u32 = 8192;
 #[derive(Serialize)] struct ChatMsg<'a> { role: &'a str, content: &'a str }
 #[derive(Serialize)] struct ChatOptions { num_ctx: u32, temperature: f32 }
 #[derive(Serialize)] struct ChatBody<'a> { model: &'a str, messages: Vec<ChatMsg<'a>>, stream: bool, options: ChatOptions, keep_alive: &'a str }

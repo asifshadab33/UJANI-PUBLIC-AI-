@@ -7,6 +7,7 @@ use ujani_core::router::{evaluate_mode, ExecutionMode, RouteAction, RouteRequest
 use ujani_core::{analyze_text as core_analyze_text, inspect_image as core_inspect_image, FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, CapabilityRecord, CapabilityState};
 use super::ollama;
+use ujani_core::model_advisor::{recommend_local_model, InstalledModelSize};
 
 #[derive(Serialize)]
 pub struct AiTaskResult {
@@ -95,26 +96,66 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
     system.refresh_memory();
     let cpu_available = std::thread::available_parallelism().is_ok();
     let ollama_available = ollama::is_available().await;
+    let available_memory_mb = system.available_memory() / (1024 * 1024);
     plan_with_runtime_capabilities(
         operation_id,
-        system.available_memory() / (1024 * 1024),
+        available_memory_mb,
         cpu_available,
         ollama_available,
     )?;
     let installed = ollama::list_models().await?;
-    let installed_names: Vec<&str> = installed.iter().map(|entry| entry.name.as_str()).collect();
-    if !is_installed_model(model, &installed_names) {
-        return Err(format!(
-            "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
-        ));
-    }
+    let selected = find_installed_model(model, &installed).ok_or_else(|| format!(
+        "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
+    ))?;
+    let metadata = ollama::inspect_model_metadata(model).await?;
+    validate_local_model_metadata(model, selected.size, &metadata, available_memory_mb)?;
     Ok(())
 }
 
-/// Exact model-name matching prevents a stale or user-edited selection from being
-/// mistaken for a model already installed on this device.
-fn is_installed_model(model: &str, installed_names: &[&str]) -> bool {
-    installed_names.contains(&model)
+/// Match the selected model against exact names returned by the local Ollama inventory.
+fn find_installed_model<'a>(
+    model: &str,
+    installed: &'a [ollama::OllamaModel],
+) -> Option<&'a ollama::OllamaModel> {
+    installed.iter().find(|entry| entry.name == model)
+}
+
+/// Apply fail-closed checks to Ollama-reported metadata. This is not cryptographic
+/// model attestation; the memory-fit estimate is advisory and cannot guarantee runtime fit.
+fn validate_local_model_metadata(
+    model: &str,
+    size_bytes: u64,
+    metadata: &ollama::OllamaModelMetadata,
+    available_memory_mb: u64,
+) -> Result<(), String> {
+    if !metadata.capabilities.iter().any(|capability| capability == "chat") {
+        return Err(format!(
+            "Local model '{model}' does not report chat capability in Ollama metadata. UJANI will not infer capability from its name."
+        ));
+    }
+    let context_capacity = metadata.context_length_tokens.ok_or_else(|| {
+        format!("Local model '{model}' has unknown context capacity in Ollama metadata; select a model with reported context metadata.")
+    })?;
+    const CONFIGURED_CONTEXT_TOKENS: u64 = ollama::NUM_CTX as u64;
+    if context_capacity < CONFIGURED_CONTEXT_TOKENS {
+        return Err(format!(
+            "Local model '{model}' reports {context_capacity} context tokens, below UJANI's configured {CONFIGURED_CONTEXT_TOKENS}-token context."
+        ));
+    }
+    let recommendation = recommend_local_model(
+        &[InstalledModelSize { name: model.to_owned(), size_bytes }],
+        available_memory_mb,
+    );
+    let fit = recommendation.candidates.first().ok_or_else(|| {
+        format!("Local model '{model}' has no usable memory-fit evidence.")
+    })?;
+    if !fit.estimated_to_fit {
+        return Err(format!(
+            "Local model '{model}' is not recommended for the currently available RAM: {}",
+            fit.reason
+        ));
+    }
+    Ok(())
 }
 
 
@@ -662,7 +703,7 @@ fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Resu
 
 #[cfg(test)]
 mod runtime_preflight_tests {
-    use super::{clamp_utf8, fence_document, is_installed_model, plan_with_runtime_capabilities};
+    use super::{clamp_utf8, fence_document, find_installed_model, plan_with_runtime_capabilities};
 
     #[test]
     fn clamp_never_splits_utf8() {
@@ -695,10 +736,13 @@ mod runtime_preflight_tests {
 
     #[test]
     fn model_readiness_uses_exact_installed_model_names() {
-        let installed = ["qwen2.5:3b", "llama3.2:latest"];
-        assert!(is_installed_model("qwen2.5:3b", &installed));
-        assert!(!is_installed_model("qwen2.5", &installed));
-        assert!(!is_installed_model("qwen2.5:3b-evil", &installed));
+        let installed = vec![
+            crate::ollama::OllamaModel { name: "qwen2.5:3b".into(), size: 1, digest: None, details: None },
+            crate::ollama::OllamaModel { name: "llama3.2:latest".into(), size: 1, digest: None, details: None },
+        ];
+        assert!(find_installed_model("qwen2.5:3b", &installed).is_some());
+        assert!(find_installed_model("qwen2.5", &installed).is_none());
+        assert!(find_installed_model("qwen2.5:3b-evil", &installed).is_none());
     }
 }
 
@@ -844,5 +888,82 @@ mod pdf_worker_seccomp_tests {
             assert!(denied.contains(&libc::SYS_fork));
             assert!(denied.contains(&libc::SYS_vfork));
         }
+    }
+}
+
+#[cfg(test)]
+mod local_model_evidence_tests {
+    use super::validate_local_model_metadata;
+    use crate::ollama::OllamaModelMetadata;
+
+    fn metadata(capabilities: &[&str], context: Option<u64>) -> OllamaModelMetadata {
+        OllamaModelMetadata {
+            context_length_tokens: context,
+            capabilities: capabilities.iter().map(|value| (*value).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn accepts_runtime_reported_chat_model_that_fits_context_and_memory() {
+        assert!(validate_local_model_metadata(
+            "small-chat",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], Some(8192)),
+            4096,
+        ).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_or_non_chat_capability() {
+        assert!(validate_local_model_metadata(
+            "unknown",
+            512 * 1024 * 1024,
+            &metadata(&["unknown"], Some(8192)),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_metadata(
+            "no-chat",
+            512 * 1024 * 1024,
+            &metadata(&["embeddings"], Some(8192)),
+            4096,
+        ).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_or_insufficient_context_capacity() {
+        assert!(validate_local_model_metadata(
+            "unknown-context",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], None),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_metadata(
+            "short-context",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], Some(4096)),
+            4096,
+        ).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_size_or_insufficient_available_memory() {
+        assert!(validate_local_model_metadata(
+            "unknown-size",
+            0,
+            &metadata(&["chat"], Some(8192)),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_metadata(
+            "too-large",
+            8 * 1024 * 1024 * 1024,
+            &metadata(&["chat"], Some(8192)),
+            4096,
+        ).is_err());
+        assert!(validate_local_model_metadata(
+            "unknown-ram",
+            512 * 1024 * 1024,
+            &metadata(&["chat"], Some(8192)),
+            0,
+        ).is_err());
     }
 }
