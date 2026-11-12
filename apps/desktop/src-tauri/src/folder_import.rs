@@ -207,17 +207,19 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
         return Err(format!("The selected folder contains more than {MAX_DIRECTORY_ENTRIES} entries; choose a smaller folder."));
     }
 
+    let selected_root = walked.root.clone();
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
     for entry in walked.files {
-        // The walker returns canonical paths. Require the canonical file to remain an
-        // immediate child, closing the path-replacement race that could otherwise
-        // turn a selected direct child into a nested target before this reopen.
-        if entry.path.parent() != Some(walked.root.as_path()) {
+        // The walker returns canonical paths. Require a direct child and reopen it
+        // through the root-bound helper: Unix pins each ancestor with openat and
+        // O_NOFOLLOW; other platforms retain canonical containment plus final-link
+        // checks, without claiming to close the Windows ancestor replacement race.
+        if entry.path.parent() != Some(selected_root.as_path()) {
             return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
 
-        let handle = crate::safe_fs::open_regular_file(&entry.path)
+        let handle = crate::safe_fs::open_regular_file_under_root(&selected_root, &entry.path)
             .map_err(|error| format!("Cannot safely open selected file: {error}"))?;
         let metadata = handle.metadata()
             .map_err(|error| format!("Cannot inspect selected file handle: {error}"))?;
