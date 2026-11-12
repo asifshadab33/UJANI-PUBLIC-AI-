@@ -12,6 +12,7 @@ pub enum ExecutionPolicy {
     /// A remote subtask requires a separate, explicit approval.
     AskBeforeExternal,
     /// Permit only explicitly allow-listed remote subtasks under user-defined limits.
+    /// The caller must pass the trusted allowlist separately to `route_task`.
     AllowApprovedExternal,
 }
 
@@ -62,6 +63,7 @@ pub fn route_task(
     policy: &ExecutionPolicy,
     available_capabilities: &BTreeSet<String>,
     registered_operations: &BTreeSet<String>,
+    allowed_external_operations: &BTreeSet<String>,
 ) -> RoutingDecision {
     if task.task_id.trim().is_empty() || task.operation.trim().is_empty() {
         return RoutingDecision {
@@ -101,7 +103,7 @@ pub fn route_task(
                 reason: "external assistance requires explicit approval",
             }
         }
-        ExecutionPolicy::AskBeforeExternal | ExecutionPolicy::AllowApprovedExternal => {
+        ExecutionPolicy::AskBeforeExternal => {
             if task.user_approved_external {
                 RoutingDecision {
                     location: ExecutionLocation::External,
@@ -111,6 +113,24 @@ pub fn route_task(
                 RoutingDecision {
                     location: ExecutionLocation::NeedsApproval,
                     reason: "external assistance has not been approved",
+                }
+            }
+        }
+        ExecutionPolicy::AllowApprovedExternal => {
+            if !task.user_approved_external {
+                RoutingDecision {
+                    location: ExecutionLocation::NeedsApproval,
+                    reason: "external assistance has not been approved",
+                }
+            } else if !allowed_external_operations.contains(&task.operation) {
+                RoutingDecision {
+                    location: ExecutionLocation::Unsupported,
+                    reason: "operation is not on the trusted external allowlist",
+                }
+            } else {
+                RoutingDecision {
+                    location: ExecutionLocation::External,
+                    reason: "external subtask is approved and allow-listed",
                 }
             }
         }
@@ -141,29 +161,67 @@ mod tests {
     #[test]
     fn local_task_stays_local() {
         let (caps, ops) = registries();
-        let d = route_task(&task(false, false), &ExecutionPolicy::LocalOnly, &caps, &ops);
+        let d = route_task(&task(false, false), &ExecutionPolicy::LocalOnly, &caps, &ops, &BTreeSet::new());
         assert_eq!(d.location, ExecutionLocation::Local);
     }
 
     #[test]
     fn local_only_blocks_remote_subtask() {
         let (caps, ops) = registries();
-        let d = route_task(&task(true, true), &ExecutionPolicy::LocalOnly, &caps, &ops);
+        let d = route_task(&task(true, true), &ExecutionPolicy::LocalOnly, &caps, &ops, &BTreeSet::new());
         assert_eq!(d.location, ExecutionLocation::Unsupported);
     }
 
     #[test]
     fn ask_policy_requires_approval() {
         let (caps, ops) = registries();
-        let d = route_task(&task(true, false), &ExecutionPolicy::AskBeforeExternal, &caps, &ops);
+        let d = route_task(&task(true, false), &ExecutionPolicy::AskBeforeExternal, &caps, &ops, &BTreeSet::new());
         assert_eq!(d.location, ExecutionLocation::NeedsApproval);
     }
 
     #[test]
     fn approved_remote_subtask_can_be_routed() {
         let (caps, ops) = registries();
-        let d = route_task(&task(true, true), &ExecutionPolicy::AskBeforeExternal, &caps, &ops);
+        let d = route_task(&task(true, true), &ExecutionPolicy::AskBeforeExternal, &caps, &ops, &BTreeSet::new());
         assert_eq!(d.location, ExecutionLocation::External);
+    }
+
+    #[test]
+    fn allow_approved_external_requires_trusted_allowlist() {
+        let (caps, ops) = registries();
+        let request = task(true, true);
+        let denied = route_task(
+            &request,
+            &ExecutionPolicy::AllowApprovedExternal,
+            &caps,
+            &ops,
+            &BTreeSet::new(),
+        );
+        assert_eq!(denied.location, ExecutionLocation::Unsupported);
+
+        let allowed = BTreeSet::from(["pdf.extract_text".to_string()]);
+        let accepted = route_task(
+            &request,
+            &ExecutionPolicy::AllowApprovedExternal,
+            &caps,
+            &ops,
+            &allowed,
+        );
+        assert_eq!(accepted.location, ExecutionLocation::External);
+    }
+
+    #[test]
+    fn allow_approved_external_still_requires_per_task_consent() {
+        let (caps, ops) = registries();
+        let allowed = BTreeSet::from(["pdf.extract_text".to_string()]);
+        let denied = route_task(
+            &task(true, false),
+            &ExecutionPolicy::AllowApprovedExternal,
+            &caps,
+            &ops,
+            &allowed,
+        );
+        assert_eq!(denied.location, ExecutionLocation::NeedsApproval);
     }
 
     #[test]
@@ -171,7 +229,7 @@ mod tests {
         let (caps, _) = registries();
         let mut t = task(false, false);
         t.operation = "shell.run".into();
-        let d = route_task(&t, &ExecutionPolicy::LocalOnly, &caps, &BTreeSet::new());
+        let d = route_task(&t, &ExecutionPolicy::LocalOnly, &caps, &BTreeSet::new(), &BTreeSet::new());
         assert_eq!(d.location, ExecutionLocation::Unsupported);
     }
 }
