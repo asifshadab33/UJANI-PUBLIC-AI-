@@ -108,7 +108,7 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
         "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
     ))?;
     let metadata = ollama::inspect_model_metadata(model).await?;
-    validate_local_model_evidence(model, selected.size, &metadata, available_memory_mb)?;
+    validate_local_model_metadata(model, selected.size, &metadata, available_memory_mb)?;
     Ok(())
 }
 
@@ -128,11 +128,11 @@ fn validate_local_model_evidence(
 ) -> Result<(), String> {
     if !metadata.capabilities.iter().any(|capability| capability == "chat") {
         return Err(format!(
-            "Local model '{model}' has no verified chat capability. UJANI will not infer capability from its name."
+            "Local model '{model}' does not report chat capability in Ollama metadata. UJANI will not infer capability from its name."
         ));
     }
     let context_capacity = metadata.context_length_tokens.ok_or_else(|| {
-        format!("Local model '{model}' has unknown context capacity; select a model with verified context metadata.")
+        format!("Local model '{model}' has unknown context capacity in Ollama metadata; select a model with reported context metadata.")
     })?;
     const CONFIGURED_CONTEXT_TOKENS: u64 = 8192;
     if context_capacity < CONFIGURED_CONTEXT_TOKENS {
@@ -902,7 +902,7 @@ mod local_model_evidence_tests {
     }
 
     #[test]
-    fn accepts_only_verified_chat_model_that_fits_context_and_memory() {
+    fn accepts_runtime_reported_chat_model_that_fits_context_and_memory() {
         assert!(validate_local_model_evidence(
             "small-chat",
             512 * 1024 * 1024,
