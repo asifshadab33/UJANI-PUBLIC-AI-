@@ -74,6 +74,23 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
     Ok(db)
 }
 
+fn with_immediate_state_transaction<T, F>(
+    db: &mut Connection,
+    execute: F,
+) -> Result<T, String>
+where
+    F: FnOnce(&Transaction<'_>) -> Result<T, String>,
+{
+    let transaction = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not acquire local state mutation lock: {error}"))?;
+    let value = execute(&transaction)?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit local state mutation lock: {error}"))?;
+    Ok(value)
+}
+
 /// Serialize short local-state mutations across processes using SQLite's immediate writer lock.
 /// The callback must not open another write transaction on this database.
 pub(crate) fn with_local_state_lock<T, F>(app: &AppHandle, execute: F) -> Result<T, String>
@@ -81,14 +98,7 @@ where
     F: FnOnce() -> Result<T, String>,
 {
     let mut db = open(app)?;
-    let transaction = db
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| format!("Could not acquire local state mutation lock: {error}"))?;
-    let value = execute()?;
-    transaction
-        .commit()
-        .map_err(|error| format!("Could not commit local state mutation lock: {error}"))?;
-    Ok(value)
+    with_immediate_state_transaction(&mut db, |_| execute())
 }
 
 fn initialize(db: &Connection) -> Result<(), String> {
@@ -1140,6 +1150,39 @@ mod tests {
             network_activity: ujani_core::NetworkActivity::unknown(),
             outcome: None,
         }
+    }
+
+    #[test]
+    fn immediate_local_state_transaction_commits_and_rolls_back() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE lock_test(value INTEGER NOT NULL);")
+            .unwrap();
+
+        let committed = with_immediate_state_transaction(&mut db, |transaction| {
+            transaction
+                .execute("INSERT INTO lock_test(value) VALUES(1)", [])
+                .map_err(|error| error.to_string())?;
+            Ok(1)
+        })
+        .unwrap();
+        assert_eq!(committed, 1);
+
+        let failed = with_immediate_state_transaction(&mut db, |transaction| {
+            transaction
+                .execute("INSERT INTO lock_test(value) VALUES(2)", [])
+                .map_err(|error| error.to_string())?;
+            Err("simulated local-state failure".to_string())
+        });
+        assert!(failed.is_err());
+
+        let values: Vec<i64> = db
+            .prepare("SELECT value FROM lock_test ORDER BY value")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(values, vec![1]);
     }
 
     #[test]
