@@ -24,6 +24,7 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
+use rand::{rngs::OsRng, RngCore};
 use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 
@@ -88,7 +89,7 @@ fn evaluate_task_route(
 
 
 #[derive(Serialize)]
-struct CapabilitySnapshot {
+pub(crate) struct CapabilitySnapshot {
     capabilities: Vec<CapabilityRecord>,
     operations: Vec<OperationDescriptor>,
     available_memory_mb: u64,
@@ -201,6 +202,29 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         available_memory_mb: system.available_memory() / (1024 * 1024),
     })
 }
+
+/// Enforce the shared local capability plan before a sensitive local inference begins.
+/// A successful plan is only a preflight; the managed-task resource reservation still follows.
+pub(crate) fn require_local_operation(
+    snapshot: &CapabilitySnapshot,
+    operation_id: &str,
+    mode: &str,
+) -> Result<(), String> {
+    let plan = plan_local_task(
+        operation_id,
+        mode,
+        snapshot.available_memory_mb,
+        &snapshot.capabilities,
+    );
+    if !plan.accepted {
+        return Err(format!(
+            "UJANI local-first policy blocked this operation: {}",
+            plan.reason
+        ));
+    }
+    Ok(())
+}
+
 
 /// Returns the bounded, built-in tool catalogue. Listing metadata never executes a tool or grants permissions.
 #[tauri::command]
@@ -467,8 +491,7 @@ async fn execute_cloud_ai_task(
  emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.status().remaining_tokens), 5);
  emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
  let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter, || budget.mark_dispatched());
- let mut receipt_warning = None;
- let result = tokio::select! {
+  let result = tokio::select! {
   // If cancellation is already pending, do not poll the gateway or mark the budget dispatched.
   biased;
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
@@ -479,28 +502,32 @@ async fn execute_cloud_ai_task(
    }
   }
  };
- if let Ok(output) = &result {
-  let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-   .map_err(|e| e.to_string())?.as_millis() as u64;
-  let receipt = ExecutionReceipt {
-   schema_version: 2,
-   task_id: task_id.clone(),
-   operation_id: "cloud.ai.generate".into(),
-   location: ReceiptExecutionLocation::ExternalProvider,
-   adapter_id: "byok.cloud-gateway".into(),
-   adapter_version: env!("CARGO_PKG_VERSION").into(),
-   model_id: Some(receipt_model_id),
-   model_version: Some("provider-reported-unverified".into()),
-   input_sha256: input_digest,
-   output_sha256: sha256_hex(output.text.as_bytes()),
-   started_at_unix_ms,
-   completed_at_unix_ms,
-   user_approval_id: Some(approval_id),
-   network_activity: network_activity.clone(),
-   outcome: None,
-  };
-  receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
- }
+ let outcome = execution_outcome(&result, "95-second");
+ let output_sha256 = match &result {
+  Ok(output) => sha256_hex(output.text.as_bytes()),
+  Err(_) => outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", outcome),
+ };
+ let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .unwrap_or_default().as_millis().max(started_at_unix_ms as u128)
+  .min(u64::MAX as u128) as u64;
+ let receipt = ExecutionReceipt {
+  schema_version: 3,
+  task_id: task_id.clone(),
+  operation_id: "cloud.ai.generate".into(),
+  location: ReceiptExecutionLocation::ExternalProvider,
+  adapter_id: "byok.cloud-gateway".into(),
+  adapter_version: env!("CARGO_PKG_VERSION").into(),
+  model_id: Some(receipt_model_id),
+  model_version: Some("provider-reported-unverified".into()),
+  input_sha256: input_digest,
+  output_sha256,
+  started_at_unix_ms,
+  completed_at_unix_ms,
+  user_approval_id: Some(approval_id),
+  network_activity: network_activity.clone(),
+  outcome: Some(outcome),
+ };
+ let receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  match &result {
   Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
@@ -947,6 +974,188 @@ async fn flush_pending_receipts(app: &AppHandle) {
 }
 
 /// Persists a receipt or returns a warning while preserving the completed task result.
+fn execution_outcome<T>(result: &Result<T, String>, timeout_marker: &str) -> ExecutionOutcome {
+    match result {
+        Ok(_) => ExecutionOutcome::Completed,
+        Err(error)
+            if error.to_ascii_lowercase().contains("cancelled")
+                || error.to_ascii_lowercase().contains("canceled") =>
+        {
+            ExecutionOutcome::Cancelled
+        }
+        Err(error)
+            if error
+                .to_ascii_lowercase()
+                .contains(&timeout_marker.to_ascii_lowercase()) =>
+        {
+            ExecutionOutcome::TimedOut
+        }
+        Err(_) => ExecutionOutcome::Failed,
+    }
+}
+
+/// Failure receipts hash a stable outcome label, never the error text or task content.
+fn outcome_receipt_digest(domain: &str, outcome: ExecutionOutcome) -> String {
+    sha256_hex(format!("{domain}:{outcome:?}").as_bytes())
+}
+
+#[cfg(test)]
+mod receipt_outcome_tests {
+    use super::{execution_outcome, outcome_receipt_digest};
+    use ujani_core::{ExecutionOutcome, ExecutionReceipt, NetworkActivity, ReceiptExecutionLocation};
+
+    #[test]
+    fn managed_task_outcomes_are_classified_for_receipts() {
+        assert_eq!(
+            execution_outcome::<()>(&Ok(()), "budget"),
+            ExecutionOutcome::Completed
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("Task cancelled by user.".into()), "budget"),
+            ExecutionOutcome::Cancelled
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("Task canceled by user.".into()), "budget"),
+            ExecutionOutcome::Cancelled
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("operation exceeded 95-second budget".into()), "95-second"),
+            ExecutionOutcome::TimedOut
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("provider unavailable".into()), "95-second"),
+            ExecutionOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn failed_receipt_digest_does_not_include_error_text() {
+        let first = outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", ExecutionOutcome::Failed);
+        let second = outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", ExecutionOutcome::Failed);
+        let cancelled = outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", ExecutionOutcome::Cancelled);
+        assert_eq!(first, second);
+        assert_ne!(first, cancelled);
+        assert_eq!(first.len(), 64);
+    }
+
+    #[test]
+    fn schema_three_failure_and_cancellation_receipts_validate() {
+        for outcome in [
+            ExecutionOutcome::Failed,
+            ExecutionOutcome::Cancelled,
+            ExecutionOutcome::TimedOut,
+        ] {
+            let receipt = ExecutionReceipt {
+                schema_version: 3,
+                task_id: "receipt-outcome-test".into(),
+                operation_id: "document.summarize".into(),
+                location: ReceiptExecutionLocation::LocalUnverified,
+                adapter_id: "ollama.local".into(),
+                adapter_version: env!("CARGO_PKG_VERSION").into(),
+                model_id: Some("test-model".into()),
+                model_version: Some("unknown".into()),
+                input_sha256: "a".repeat(64),
+                output_sha256: outcome_receipt_digest("UJANI-LOCAL-TASK-OUTCOME-V1", outcome),
+                started_at_unix_ms: 100,
+                completed_at_unix_ms: 101,
+                user_approval_id: None,
+                network_activity: NetworkActivity::unknown(),
+                outcome: Some(outcome),
+            };
+            ujani_core::validate_receipt(&receipt).unwrap();
+        }
+    }
+}
+
+/// Execute one local persistent-state mutation only after reserving its audit slot.
+/// The callback must use a transaction and return metadata bytes, never source content.
+pub(crate) fn with_local_state_receipt<T, F>(
+    app: &AppHandle,
+    operation_id: &'static str,
+    input_metadata: &[u8],
+    execute: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<(T, Vec<u8>), String>,
+{
+    if input_metadata.len() > 16 * 1024 {
+        return Err("Local state audit metadata exceeds its size limit.".into());
+    }
+    let started_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    let mut operation_nonce = [0u8; 16];
+    let mut random = OsRng;
+    random
+        .try_fill_bytes(&mut operation_nonce)
+        .map_err(|_| "The OS random source is unavailable; no state change was started.".to_string())?;
+    let task_id = format!(
+        "state-{}",
+        operation_nonce
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let receipt_slot = security_store::reserve_execution_receipt_slot(app, &task_id)?;
+    if let Some(warning) = receipt_slot.archive_warning() {
+        emit_task_progress(app, &task_id, "receipt_archive_warning", warning, 3);
+    }
+    let execution = execute();
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let (outcome, output_sha256) = match &execution {
+        Ok((_, output_metadata)) => (
+            ExecutionOutcome::Completed,
+            sha256_hex(output_metadata),
+        ),
+        // Never persist error text: it may contain paths, provider details or other
+        // sensitive diagnostics. The stable outcome digest records only failure state.
+        Err(_) => (
+            ExecutionOutcome::Failed,
+            outcome_receipt_digest("UJANI-LOCAL-STATE-OUTCOME-V1", ExecutionOutcome::Failed),
+        ),
+    };
+    let receipt = ExecutionReceipt {
+        schema_version: 3,
+        task_id,
+        operation_id: operation_id.into(),
+        location: ReceiptExecutionLocation::DeterministicTool,
+        adapter_id: "ujani.local-state".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: None,
+        model_version: None,
+        input_sha256: sha256_hex(input_metadata),
+        output_sha256,
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        user_approval_id: None,
+        network_activity: NetworkActivity::unknown(),
+        outcome: Some(outcome),
+    };
+    let receipt_warning = persist_receipt_or_warn(operation_id, receipt_slot, receipt);
+    match execution {
+        Ok((value, _)) => {
+            if let Some(warning) = receipt_warning {
+                return Err(format!("The local state change was committed, but its execution receipt needs attention: {warning}"));
+            }
+            Ok(value)
+        }
+        Err(error) => {
+            if let Some(warning) = receipt_warning {
+                Err(format!("{error}; failure receipt also needs attention: {warning}"))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
 fn persist_receipt_or_warn(
     label: &str,
     slot: security_store::ReceiptSlotReservation,
@@ -957,9 +1166,9 @@ fn persist_receipt_or_warn(
         Err(recovery) => {
             let (slot, error) = *recovery;
             Some(if enqueue_pending_receipt(receipt, slot) {
-                format!("{label} completed. Its provenance receipt could not be stored yet and has been queued for retry: {error}")
+                format!("{label} operation ended; its provenance receipt could not be stored yet and has been queued for retry: {error}")
             } else {
-                format!("{label} completed, but receipt storage and the bounded retry queue are unavailable. Preserve this result before closing UJANI: {error}")
+                format!("{label} operation ended, but receipt storage and the bounded retry queue are unavailable. Preserve the operation result before closing UJANI: {error}")
             })
         },
     }
@@ -1065,37 +1274,45 @@ where
         future,
     ).await;
     drop(registration);
-    let mut receipt_warning = None;
-    if let Ok(value) = &result {
-        let output_bytes = serde_json::to_vec(value)
-            .map_err(|e| format!("Could not encode local task result for provenance: {e}"))?;
-        let completed_at_unix_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_millis() as u64;
-        let location = match ollama::accelerator_observation().await.ok() {
+    let outcome = execution_outcome(&result, "240-second");
+    let output_sha256 = match &result {
+        Ok(value) => serde_json::to_vec(value)
+            .map(|bytes| sha256_hex(&bytes))
+            .unwrap_or_else(|_| outcome_receipt_digest("UJANI-LOCAL-OUTPUT-SERIALIZATION-FAILED-V1", outcome)),
+        Err(_) => outcome_receipt_digest("UJANI-LOCAL-TASK-OUTCOME-V1", outcome),
+    };
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let location = if outcome == ExecutionOutcome::Completed {
+        match ollama::accelerator_observation().await.ok() {
             Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
             _ => ReceiptExecutionLocation::LocalUnverified,
-        };
-        let receipt = ExecutionReceipt {
-            schema_version: 2,
-            task_id: task_id.clone(),
-            operation_id: receipt_context.operation_id.into(),
-            location,
-            adapter_id: "ollama.local".into(),
-            adapter_version: env!("CARGO_PKG_VERSION").into(),
-            model_id: Some(receipt_context.model_id),
-            model_version: Some("unknown".into()),
-            input_sha256: receipt_context.input_sha256,
-            output_sha256: sha256_hex(&output_bytes),
-            started_at_unix_ms,
-            completed_at_unix_ms,
-            user_approval_id: None,
-            network_activity,
-            outcome: None,
-        };
-        receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
-    }
+        }
+    } else {
+        ReceiptExecutionLocation::LocalUnverified
+    };
+    let receipt = ExecutionReceipt {
+        schema_version: 3,
+        task_id: task_id.clone(),
+        operation_id: receipt_context.operation_id.into(),
+        location,
+        adapter_id: "ollama.local".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: Some(receipt_context.model_id),
+        model_version: Some("unknown".into()),
+        input_sha256: receipt_context.input_sha256,
+        output_sha256,
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        user_approval_id: None,
+        network_activity,
+        outcome: Some(outcome),
+    };
+    let receipt_warning = persist_receipt_or_warn(label, receipt_slot, receipt);
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", &format!("{label}: completed."), 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", &format!("{label}: cancelled."), 0),
@@ -1104,6 +1321,74 @@ where
     }
     if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
+}
+
+#[cfg(test)]
+mod local_operation_policy_tests {
+    use super::*;
+
+    fn snapshot(ollama_available: bool, pdf_available: bool) -> CapabilitySnapshot {
+        CapabilitySnapshot {
+            capabilities: vec![
+                CapabilityRecord {
+                    id: "cpu".into(),
+                    category: "compute".into(),
+                    state: CapabilityState::Available,
+                    source: "test".into(),
+                    detail: "test CPU".into(),
+                },
+                CapabilityRecord {
+                    id: "ollama.local".into(),
+                    category: "model_runtime".into(),
+                    state: if ollama_available {
+                        CapabilityState::Available
+                    } else {
+                        CapabilityState::Unavailable
+                    },
+                    source: "test".into(),
+                    detail: "test Ollama".into(),
+                },
+                CapabilityRecord {
+                    id: "pdf.text_extraction".into(),
+                    category: "document".into(),
+                    state: if pdf_available {
+                        CapabilityState::Available
+                    } else {
+                        CapabilityState::Unavailable
+                    },
+                    source: "test".into(),
+                    detail: "test PDF parser".into(),
+                },
+            ],
+            operations: registered_operations(),
+            available_memory_mb: 4096,
+        }
+    }
+
+    #[test]
+    fn summary_and_translation_fail_closed_without_local_ollama() {
+        let unavailable = snapshot(false, true);
+        assert!(require_local_operation(&unavailable, "document.summarize", "smart").is_err());
+        assert!(require_local_operation(&unavailable, "translate.text", "fortress").is_err());
+        assert!(require_local_operation(&unavailable, "file.analyze_text", "smart").is_ok());
+    }
+
+    #[test]
+    fn pdf_pipeline_requires_parser_and_local_model_capabilities() {
+        let no_parser = snapshot(true, false);
+        assert!(require_local_operation(&no_parser, "pdf.extract_and_summarize", "smart").is_err());
+        let no_model = snapshot(false, true);
+        assert!(require_local_operation(&no_model, "pdf.extract_and_summarize", "smart").is_err());
+        let ready = snapshot(true, true);
+        assert!(require_local_operation(&ready, "pdf.extract_and_summarize", "smart").is_ok());
+    }
+
+    #[test]
+    fn worker_and_partner_are_not_scheduled_by_the_local_policy() {
+        let ready = snapshot(true, true);
+        assert!(require_local_operation(&ready, "document.summarize", "worker").is_err());
+        assert!(require_local_operation(&ready, "document.summarize", "partner").is_err());
+    }
 }
 
 #[cfg(test)]
@@ -1402,6 +1687,9 @@ async fn summarize_selected_text(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "document.summarize", &mode)?;
+
     let receipt = local_receipt_context(
         "document.summarize",
         &model,
@@ -1425,6 +1713,9 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "document.summarize", &mode)?;
+
     let language = translation_language.as_deref().unwrap_or("");
     let receipt = local_receipt_context(
         "document.summarize",
@@ -1683,6 +1974,9 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "pdf.extract_and_summarize", &mode)?;
+
     // Register before decoding so the user can cancel the native preparation phase.
     let registration = register_active_task(&control, &task_id)?;
     emit_task_progress(&app, &task_id, "preparing", "Preparing the selected PDF upload…", 5);
@@ -1714,6 +2008,9 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    let snapshot = get_capability_snapshot().await?;
+    require_local_operation(&snapshot, "translate.text", &mode)?;
+
     let receipt = local_receipt_context(
         "translate.text",
         &model,
@@ -1982,7 +2279,7 @@ mod model_capability_selection_tests {
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
-                context_length_tokens: Some(8192),
+                context_length_tokens: Some(ollama::NUM_CTX as u64),
                 capabilities: vec!["chat".into()],
             }),
             ("vision-model".into(), OllamaModelMetadata {
