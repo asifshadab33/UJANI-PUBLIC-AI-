@@ -1239,7 +1239,7 @@ export default function App() {
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
             </div>
-            <ModelCatalogue />
+            <ModelCatalogue totalMemoryMb={device?.total_memory_mb} availableMemoryMb={device?.available_memory_mb ?? inventoryAvailableMemoryMb} os={device?.os} onChooseModel={(model) => { setModelPullName(model); setModelPullError(""); }} />
             <div className="install-guide">
               <b>Install a local model from UJANI</b>
               <p>Enter an Ollama library model name. UJANI sends the name to your local Ollama service at 127.0.0.1 only; the model files are downloaded by Ollama from its configured registry. Large models can take substantial time, bandwidth and disk space.</p>
