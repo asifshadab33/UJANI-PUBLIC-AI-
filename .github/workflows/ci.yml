@@ -35,6 +35,8 @@ jobs:
         run: bash scripts/check-doc-claims.sh
       - name: Check native IPC command inventory parity
         run: python3 scripts/check_native_command_inventory.py
+      - name: Test native IPC inventory parser
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - name: Check sensitive command receipt wiring
         run: python3 scripts/check_sensitive_command_receipts.py
       - name: Validate model/runtime inventory v1 schema
