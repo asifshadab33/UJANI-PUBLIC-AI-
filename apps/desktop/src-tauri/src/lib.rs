@@ -1745,7 +1745,11 @@ fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec
 
 /// Decodes a non-empty PDF upload after enforcing the encoded and decoded 10 MiB bounds.
 fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
-    decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)
+    let data = decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)?;
+    if !data.starts_with(b"%PDF-") {
+        return Err("The selected file does not have a valid PDF signature.".into());
+    }
+    Ok(data)
 }
 
 const MAX_CONCURRENT_PDF_DECODERS: usize = 1;
@@ -1905,6 +1909,14 @@ mod pdf_upload_tests {
         assert!(decode_bounded_pdf_payload("", 8).is_err());
         assert!(decode_bounded_pdf_payload("not base64!", 8).is_err());
         assert!(decode_bounded_pdf_payload(&STANDARD.encode(b"x"), 0).is_err());
+    }
+
+    #[test]
+    fn pdf_upload_decoder_rejects_non_pdf_content_before_worker_start() {
+        let malformed = STANDARD.encode(b"not a PDF document");
+        assert!(decode_pdf_upload(&malformed).unwrap_err().contains("valid PDF signature"));
+        let valid_header = STANDARD.encode(b"%PDF-1.7\n");
+        assert_eq!(decode_pdf_upload(&valid_header).unwrap(), b"%PDF-1.7\n");
     }
 
     #[test]
