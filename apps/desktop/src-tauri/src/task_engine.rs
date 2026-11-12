@@ -104,15 +104,20 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
         ollama_available,
     )?;
     let installed = ollama::list_models().await?;
-    let selected = installed
-        .iter()
-        .find(|entry| entry.name == model)
-        .ok_or_else(|| format!(
-            "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
-        ))?;
+    let selected = find_installed_model(model, &installed).ok_or_else(|| format!(
+        "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
+    ))?;
     let metadata = ollama::inspect_model_metadata(model).await?;
     validate_local_model_evidence(model, selected.size, &metadata, available_memory_mb)?;
     Ok(())
+}
+
+/// Match the selected model against exact names returned by the local Ollama inventory.
+fn find_installed_model<'a>(
+    model: &str,
+    installed: &'a [ollama::OllamaModel],
+) -> Option<&'a ollama::OllamaModel> {
+    installed.iter().find(|entry| entry.name == model)
 }
 
 fn validate_local_model_evidence(
@@ -696,7 +701,7 @@ fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Resu
 
 #[cfg(test)]
 mod runtime_preflight_tests {
-    use super::{clamp_utf8, fence_document, is_installed_model, plan_with_runtime_capabilities};
+    use super::{clamp_utf8, fence_document, find_installed_model, plan_with_runtime_capabilities};
 
     #[test]
     fn clamp_never_splits_utf8() {
@@ -729,10 +734,13 @@ mod runtime_preflight_tests {
 
     #[test]
     fn model_readiness_uses_exact_installed_model_names() {
-        let installed = ["qwen2.5:3b", "llama3.2:latest"];
-        assert!(is_installed_model("qwen2.5:3b", &installed));
-        assert!(!is_installed_model("qwen2.5", &installed));
-        assert!(!is_installed_model("qwen2.5:3b-evil", &installed));
+        let installed = vec![
+            crate::ollama::OllamaModel { name: "qwen2.5:3b".into(), size: 1, details: None },
+            crate::ollama::OllamaModel { name: "llama3.2:latest".into(), size: 1, details: None },
+        ];
+        assert!(find_installed_model("qwen2.5:3b", &installed).is_some());
+        assert!(find_installed_model("qwen2.5", &installed).is_none());
+        assert!(find_installed_model("qwen2.5:3b-evil", &installed).is_none());
     }
 }
 
