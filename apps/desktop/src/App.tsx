@@ -8,6 +8,7 @@ import EverydayTools from "./EverydayTools";
 import EverydayWritingActions from "./EverydayWritingActions";
 import IntegrationDirectory from "./IntegrationDirectory";
 import SecurityCentre from "./SecurityCentre";
+import ModelCatalogue from "./ModelCatalogue";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
@@ -1238,6 +1239,7 @@ export default function App() {
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
             </div>
+            <ModelCatalogue />
             <div className="install-guide">
               <b>Install a local model from UJANI</b>
               <p>Enter an Ollama library model name. UJANI sends the name to your local Ollama service at 127.0.0.1 only; the model files are downloaded by Ollama from its configured registry. Large models can take substantial time, bandwidth and disk space.</p>
