@@ -1102,13 +1102,25 @@ where
     if let Some(warning) = receipt_slot.archive_warning() {
         emit_task_progress(app, &task_id, "receipt_archive_warning", warning, 3);
     }
-    let (value, output_metadata) = execute()?;
+    let execution = execute();
     let completed_at_unix_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
         .max(started_at_unix_ms as u128)
         .min(u64::MAX as u128) as u64;
+    let (outcome, output_sha256) = match &execution {
+        Ok((_, output_metadata)) => (
+            ExecutionOutcome::Completed,
+            sha256_hex(output_metadata),
+        ),
+        // Never persist error text: it may contain paths, provider details or other
+        // sensitive diagnostics. The stable outcome digest records only failure state.
+        Err(_) => (
+            ExecutionOutcome::Failed,
+            outcome_receipt_digest("UJANI-LOCAL-STATE-OUTCOME-V1", ExecutionOutcome::Failed),
+        ),
+    };
     let receipt = ExecutionReceipt {
         schema_version: 3,
         task_id,
@@ -1119,17 +1131,29 @@ where
         model_id: None,
         model_version: None,
         input_sha256: sha256_hex(input_metadata),
-        output_sha256: sha256_hex(&output_metadata),
+        output_sha256,
         started_at_unix_ms,
         completed_at_unix_ms,
         user_approval_id: None,
         network_activity: NetworkActivity::unknown(),
-        outcome: Some(ExecutionOutcome::Completed),
+        outcome: Some(outcome),
     };
-    if let Some(warning) = persist_receipt_or_warn(operation_id, receipt_slot, receipt) {
-        return Err(format!("The local state change was committed, but its execution receipt needs attention: {warning}"));
+    let receipt_warning = persist_receipt_or_warn(operation_id, receipt_slot, receipt);
+    match execution {
+        Ok((value, _)) => {
+            if let Some(warning) = receipt_warning {
+                return Err(format!("The local state change was committed, but its execution receipt needs attention: {warning}"));
+            }
+            Ok(value)
+        }
+        Err(error) => {
+            if let Some(warning) = receipt_warning {
+                Err(format!("{error}; failure receipt also needs attention: {warning}"))
+            } else {
+                Err(error)
+            }
+        }
     }
-    Ok(value)
 }
 
 fn persist_receipt_or_warn(
