@@ -224,3 +224,6 @@ pub use resource_scheduler::{plan_local_schedule, LocalPlacement, ResourceSnapsh
 pub mod execution_receipt;
 pub use execution_receipt::{sha256_hex, validate_receipt, ExecutionLocation as ReceiptExecutionLocation, ExecutionOutcome, ExecutionReceipt, NetworkActivity, NetworkObservation, ReceiptError};
 pub use execution_receipt::validate_model_identifier;
+
+/// Strict native decoder and verifier for the optional Public-to-Enterprise v1 protocol boundary.
+pub mod personal_enterprise_contract;
