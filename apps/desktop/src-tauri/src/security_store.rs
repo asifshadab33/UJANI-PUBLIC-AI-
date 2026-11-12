@@ -74,6 +74,23 @@ fn open(app: &AppHandle) -> Result<Connection, String> {
     Ok(db)
 }
 
+/// Serialize short local-state mutations across processes using SQLite's immediate writer lock.
+/// The callback must not open another write transaction on this database.
+pub(crate) fn with_local_state_lock<T, F>(app: &AppHandle, execute: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let mut db = open(app)?;
+    let transaction = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not acquire local state mutation lock: {error}"))?;
+    let value = execute()?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit local state mutation lock: {error}"))?;
+    Ok(value)
+}
+
 fn initialize(db: &Connection) -> Result<(), String> {
     db.execute_batch(
         "PRAGMA foreign_keys=ON;
