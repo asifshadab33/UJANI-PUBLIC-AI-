@@ -30,7 +30,7 @@ function recommendation(total?: number, available?: number, os?: string) {
     return { model: "qwen3:1.7b", title: "Recommended candidate: Qwen3 1.7B", reason: "This device reports at least 8 GiB total RAM and 3.5 GiB available RAM. Start with a 4K context and one inference at a time." };
   }
   if (totalRam >= 6144 && freeRam >= 2560) {
-    return { model: "qwen3:0.6b", title: "Recommended candidate: Qwen3 0.6B", reason: "This device reports at least 6 GiB total RAM and 2.5 GiB available RAM. This is the lightest general-purpose chat candidate; start with a 2K context." };
+    return { model: "qwen3:0.6b", title: "Recommended candidate: Qwen3 0.6B", reason: "This device reports at least 6 GiB total RAM and 2.5 GiB available RAM. This is the lightest general-purpose chat candidate; start with a 4K context." };
   }
   return { model: null, title: "Recommended default: no local model", reason: "Available memory is below UJANI's conservative starting threshold. Keep model installation optional and use native OS-powered features." };
 }
