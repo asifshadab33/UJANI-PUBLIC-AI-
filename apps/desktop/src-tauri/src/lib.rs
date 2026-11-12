@@ -1745,7 +1745,11 @@ fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec
 
 /// Decodes a non-empty PDF upload after enforcing the encoded and decoded 10 MiB bounds.
 fn decode_pdf_upload(data_base64: &str) -> Result<Vec<u8>, String> {
-    decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)
+    let data = decode_bounded_pdf_payload(data_base64, MAX_PDF_UPLOAD_BYTES)?;
+    if !task_engine::has_pdf_header(&data) {
+        return Err("The selected file does not have a valid PDF signature.".into());
+    }
+    Ok(data)
 }
 
 const MAX_CONCURRENT_PDF_DECODERS: usize = 1;
@@ -1908,6 +1912,17 @@ mod pdf_upload_tests {
     }
 
     #[test]
+    fn pdf_upload_decoder_rejects_non_pdf_content_before_worker_start() {
+        let malformed = STANDARD.encode(b"not a PDF document");
+        assert!(decode_pdf_upload(&malformed).unwrap_err().contains("valid PDF signature"));
+        let valid_header = STANDARD.encode(b"%PDF-1.7\n");
+        assert_eq!(decode_pdf_upload(&valid_header).unwrap(), b"%PDF-1.7\n");
+        let mut offset_header = vec![0; 512];
+        offset_header.extend_from_slice(b"%PDF-1.7\n");
+        assert_eq!(decode_pdf_upload(&STANDARD.encode(&offset_header)).unwrap(), offset_header);
+    }
+
+    #[test]
     fn pdf_upload_decoder_rejects_encoded_payloads_over_the_predecode_bound() {
         let too_large = "A".repeat(16);
         assert!(decode_bounded_pdf_payload(&too_large, 8).is_err());
@@ -1945,7 +1960,9 @@ mod pdf_upload_tests {
     fn maximum_upload_decode_runs_on_blocking_pool_not_async_executor_thread() {
         use std::thread;
         let caller = thread::current().id();
-        let payload = STANDARD.encode(vec![0x5a; MAX_PDF_UPLOAD_BYTES]);
+        let mut maximum_pdf = vec![0x5a; MAX_PDF_UPLOAD_BYTES];
+        maximum_pdf[..5].copy_from_slice(b"%PDF-");
+        let payload = STANDARD.encode(maximum_pdf);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

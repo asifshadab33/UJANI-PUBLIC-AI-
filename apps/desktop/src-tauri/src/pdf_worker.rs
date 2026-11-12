@@ -4,9 +4,15 @@ const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const OUTPUT_TRUNCATED_MARKER: &[u8] = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
 
+/// Accept a PDF header only within the first 1 KiB, matching the native upload gate.
+fn has_pdf_header(data: &[u8]) -> bool {
+    let prefix = &data[..data.len().min(1024)];
+    prefix.windows(5).any(|window| window == b"%PDF-")
+}
+
 /// Extracts text from a validated PDF while enforcing the worker's input-size ceiling.
 fn extract_pdf_text(data: &[u8]) -> Result<String, ()> {
-    if data.len() > MAX_INPUT_BYTES || !data.starts_with(b"%PDF-") {
+    if data.len() > MAX_INPUT_BYTES || !has_pdf_header(data) {
         return Err(());
     }
     pdf_extract::extract_text_from_mem(data).map_err(|_| ())
@@ -49,9 +55,13 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_output, extract_pdf_text, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
+    use super::{bounded_output, extract_pdf_text, has_pdf_header, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES};
 
     fn minimal_pdf_with_text() -> Vec<u8> {
+        minimal_pdf_with_text_with_prefix(&[])
+    }
+
+    fn minimal_pdf_with_text_with_prefix(prefix: &[u8]) -> Vec<u8> {
         let stream = b"BT /F1 12 Tf 72 200 Td (UJANI worker test) Tj ET\n";
         let mut content = format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes();
         content.extend_from_slice(stream);
@@ -63,7 +73,8 @@ mod tests {
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
             content,
         ];
-        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut pdf = prefix.to_vec();
+        pdf.extend_from_slice(b"%PDF-1.4\n");
         let mut offsets = Vec::new();
         for (index, object) in objects.iter().enumerate() {
             offsets.push(pdf.len());
@@ -84,6 +95,20 @@ mod tests {
     fn extracts_text_from_a_valid_minimal_pdf() {
         let output = extract_pdf_text(&minimal_pdf_with_text()).unwrap();
         assert!(output.contains("UJANI worker test"));
+    }
+
+    #[test]
+    fn accepts_pdf_header_within_first_kib_and_rejects_later_header() {
+        let pdf = minimal_pdf_with_text();
+        assert!(has_pdf_header(&pdf));
+        assert!(extract_pdf_text(&pdf).unwrap().contains("UJANI worker test"));
+
+        let offset_header = minimal_pdf_with_text_with_prefix(&vec![b' '; 512]);
+        assert!(has_pdf_header(&offset_header));
+        // Header preflight accepts this offset, but parser compatibility is separate.
+        let too_late = minimal_pdf_with_text_with_prefix(&vec![b' '; 1024]);
+        assert!(!has_pdf_header(&too_late));
+        assert!(extract_pdf_text(&too_late).is_err());
     }
 
     #[test]
