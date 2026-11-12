@@ -1305,6 +1305,19 @@ export default function App() {
           </div>
           <div className="model-box" id="document-workspace">
             <div className="section-heading"><div><h2><HardDrive size={18}/> Local file & image tools</h2><p>Only files explicitly selected by you are processed.</p></div><span className="muted">IN-MEMORY</span></div>
+            <div className="install-guide" aria-labelledby="media-capability-title">
+              <b id="media-capability-title">What this computer can do — and when online AI is needed</b>
+              <p><strong>Documents:</strong> UJANI can inspect selected text files, extract text from ordinary PDFs (within the stated limits), search/analyse that text and summarise it with your local Ollama model. Scanned PDFs, complex layouts and very large documents are not fully supported locally.</p>
+              <p><strong>Images:</strong> UJANI can read basic image metadata and dimensions. It does not currently perform OCR, describe image contents or answer visual questions.</p>
+              <p><strong>Audio and video:</strong> UJANI does not currently transcribe audio, understand speech, identify scenes or summarise video locally.</p>
+              <p><strong>Online AI option:</strong> For scanned/complex documents, image understanding, OCR, audio transcription or video analysis, open an online AI service below and upload the file there yourself. UJANI does not upload these files automatically, and its text-only provider gateway cannot transmit media attachments.</p>
+              <div className="external-ai-links" aria-label="Open an online AI service">
+                <a href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">Open ChatGPT ↗</a>
+                <a href="https://gemini.google.com/" target="_blank" rel="noopener noreferrer">Open Gemini ↗</a>
+                <a href="https://claude.ai/" target="_blank" rel="noopener noreferrer">Open Claude ↗</a>
+              </div>
+              <small>External services have their own privacy, retention and billing terms. Review them before uploading confidential or personal files. Your file stays on this computer unless you choose and upload it to an external service.</small>
+            </div>
             <label className="consent-row"><input type="checkbox" checked={translateSummary} onChange={(event) => { setTranslateSummary(event.target.checked); setFileTranslatedSummary(""); }}/> Also translate document summaries into {targetLanguage} using the same local model</label>
             <label className="model-select">Summary translation language
               <select value={targetLanguage} onChange={(event) => { setTargetLanguage(event.target.value); setFileTranslatedSummary(""); }}>
