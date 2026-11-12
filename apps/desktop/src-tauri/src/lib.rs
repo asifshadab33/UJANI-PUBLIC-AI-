@@ -1110,6 +1110,7 @@ mod model_inventory_recommendation_tests {
         let models = vec![ollama::OllamaModel {
             name: "small-chat".into(),
             size: 512 * 1024 * 1024,
+            digest: None,
             details: None,
         }];
         let metadata = HashMap::from([(
@@ -1968,9 +1969,9 @@ mod model_capability_selection_tests {
     #[test]
     fn automatic_chat_recommendation_excludes_unknown_and_non_chat_models() {
         let models = vec![
-            OllamaModel { name: "chat-model".into(), size: 1_000, details: None },
-            OllamaModel { name: "vision-model".into(), size: 2_000, details: None },
-            OllamaModel { name: "unknown-model".into(), size: 3_000, details: None },
+            OllamaModel { name: "chat-model".into(), size: 1_000, digest: None, details: None },
+            OllamaModel { name: "vision-model".into(), size: 2_000, digest: None, details: None },
+            OllamaModel { name: "unknown-model".into(), size: 3_000, digest: None, details: None },
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
@@ -1992,7 +1993,7 @@ mod model_capability_selection_tests {
     #[test]
     fn automatic_chat_recommendation_is_empty_when_capability_evidence_is_unknown() {
         let models = vec![
-            OllamaModel { name: "legacy-model".into(), size: 1_000, details: None },
+            OllamaModel { name: "legacy-model".into(), size: 1_000, digest: None, details: None },
         ];
         assert!(chat_capable_model_sizes(&models, &HashMap::new()).is_empty());
     }

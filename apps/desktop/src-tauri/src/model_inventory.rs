@@ -1,5 +1,6 @@
 //! Versioned, privacy-minimised inventory assembled from OS and loopback Ollama evidence.
 use crate::ollama::{AcceleratorObservation, OllamaModel, OllamaModelMetadata};
+use ujani_core::model_advisor::estimate_model_working_memory_mb;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -78,6 +79,7 @@ struct InventoryModel {
     availability: &'static str,
     size_bytes: Option<u64>,
     context_length_tokens: Option<u64>,
+    estimated_min_memory_mb: Option<u64>,
     capabilities: Vec<String>,
     evidence: InventoryEvidence,
 }
@@ -132,6 +134,17 @@ fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
             Some(trimmed.chars().take(max_chars).collect())
         }
     })
+}
+
+/// Accept only an Ollama SHA-256 digest as a model version identifier.
+/// Unknown or malformed runtime metadata stays unknown rather than being guessed.
+fn normalized_model_digest(digest: Option<&str>) -> Option<String> {
+    let digest = digest?;
+    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(hex.to_ascii_lowercase())
 }
 
 /// Normalizes OS memory readings once for both model-fit advice and inventory output.
@@ -218,11 +231,14 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
                     model.details.as_ref().and_then(|details| details.family.clone()),
                     96,
                 ),
-                version: None,
+                version: normalized_model_digest(model.digest.as_deref()),
                 availability: "installed",
                 size_bytes: (model.size > 0).then_some(model.size),
                 context_length_tokens: model_metadata
                     .and_then(|item| item.context_length_tokens),
+                // A bounded advisory estimate from the shared core heuristic; never runtime evidence.
+                estimated_min_memory_mb: estimate_model_working_memory_mb(model.size)
+                    .filter(|estimate| *estimate <= 16_777_216),
                 capabilities,
                 evidence,
             }
@@ -278,6 +294,7 @@ mod tests {
         OllamaModel {
             name: name.into(),
             size,
+            digest: None,
             details: Some(OllamaModelDetails {
                 format: Some("gguf".into()),
                 family: Some("llama".into()),
@@ -286,6 +303,15 @@ mod tests {
                 quantization_level: Some("Q4_K_M".into()),
             }),
         }
+    }
+
+    #[test]
+    fn model_version_requires_a_valid_sha256_digest() {
+        let valid = format!("sha256:{}", "B".repeat(64));
+        assert_eq!(normalized_model_digest(Some(&valid)), Some("b".repeat(64)));
+        assert_eq!(normalized_model_digest(Some("sha256:short")), None);
+        assert_eq!(normalized_model_digest(Some("not-a-digest")), None);
+        assert_eq!(normalized_model_digest(None), None);
     }
 
     #[test]
@@ -312,6 +338,7 @@ mod tests {
         assert_eq!(inventory.runtimes[0].evidence.confidence, "unknown");
         assert_eq!(inventory.models[0].capabilities, vec!["unknown".to_string()]);
         assert_eq!(inventory.models[0].context_length_tokens, None);
+        assert_eq!(inventory.models[0].estimated_min_memory_mb, Some(514));
         assert_eq!(inventory.hardware.storage_free_mb, None);
         assert_eq!(inventory.hardware.accelerators[0].evidence.confidence, "unknown");
         assert_eq!(inventory.hardware.accelerators[1].kind, "npu");
@@ -320,6 +347,26 @@ mod tests {
         assert!(!inventory.privacy.contains_user_files);
         assert!(!inventory.privacy.contains_local_paths);
         assert!(!inventory.privacy.contains_credentials);
+    }
+
+    #[test]
+    fn unbounded_model_size_does_not_emit_an_unsafe_memory_estimate() {
+        let models = [model("huge", u64::MAX)];
+        let metadata = HashMap::new();
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        });
+        assert_eq!(inventory.models[0].estimated_min_memory_mb, None);
     }
 
     #[test]
@@ -402,7 +449,8 @@ mod tests {
 
     #[test]
     fn inventory_preserves_only_runtime_reported_capabilities_and_context() {
-        let model = model("qwen2.5:3b", 2_000_000);
+        let mut model = model("qwen2.5:3b", 2_000_000);
+        model.digest = Some(format!("sha256:{}", "A".repeat(64)));
         let models = [model.clone()];
         let metadata = HashMap::from([(
             model.name.clone(),
@@ -431,7 +479,9 @@ mod tests {
         });
 
         assert_eq!(inventory.runtimes[0].version.as_deref(), Some("0.5.12"));
+        assert_eq!(inventory.models[0].version.as_deref(), Some("a".repeat(64).as_str()));
         assert_eq!(inventory.models[0].context_length_tokens, Some(32_768));
+        assert_eq!(inventory.models[0].estimated_min_memory_mb, Some(516));
         assert_eq!(
             inventory.models[0].capabilities,
             vec!["chat".to_string(), "vision".to_string(), "tool_use".to_string()]
