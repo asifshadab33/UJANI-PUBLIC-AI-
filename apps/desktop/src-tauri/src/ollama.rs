@@ -70,7 +70,7 @@ const MAX_INSTALLED_MODELS: usize = 512;
 const MAX_MODEL_METADATA_INSPECTIONS: usize = 32;
 const MAX_MODEL_METADATA_CONCURRENCY: usize = 4;
 
-pub const NUM_CTX: u32 = 8192;
+pub const NUM_CTX: u32 = 4096;
 #[derive(Serialize)] struct ChatMsg<'a> { role: &'a str, content: &'a str }
 #[derive(Serialize)] struct ChatOptions { num_ctx: u32, temperature: f32 }
 #[derive(Serialize)] struct ChatBody<'a> { model: &'a str, messages: Vec<ChatMsg<'a>>, stream: bool, options: ChatOptions, keep_alive: &'a str }
@@ -652,6 +652,13 @@ mod tests {
         assert_eq!(body.messages[0].role, "user");
         let invalid = Turn { role: "system", content: "not permitted as a turn" };
         assert!(build_chat_body("llama3.2", None, &[invalid], true).is_err());
+    }
+
+    #[test]
+    fn chat_body_uses_conservative_four_thousand_token_context() {
+        let turn = Turn { role: "user", content: "hello" };
+        let body = build_chat_body("qwen3:0.6b", None, &[turn], false).unwrap();
+        assert_eq!(body.options.num_ctx, 4096);
     }
 
     #[test]
