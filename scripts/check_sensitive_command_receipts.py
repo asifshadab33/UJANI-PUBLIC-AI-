@@ -90,7 +90,7 @@ REQUIRED_MARKERS = {
         "reserve_execution_receipt_slot",
         "outcome: Some(outcome)",
     ),
-    ("folder_import.rs", "process_selected_folder"): ("run_managed_task(",),
+    ("folder_import.rs", "process_selected_folder"): ("run_managed_task_registered(",),
     ("search_cache.rs", "set_local_search_cache_settings"): ("with_local_state_receipt",),
     ("search_cache.rs", "clear_local_search_cache"): ("with_local_state_receipt",),
     ("history.rs", "set_task_history_enabled"): ("with_local_state_receipt",),
