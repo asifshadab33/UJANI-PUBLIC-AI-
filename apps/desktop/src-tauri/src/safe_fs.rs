@@ -190,6 +190,7 @@ mod windows_handle {
 
     const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
     const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    const FILE_TRAVERSE: u32 = 0x0000_0020;
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const SYNCHRONIZE: u32 = 0x0010_0000;
@@ -258,7 +259,7 @@ mod windows_handle {
         };
         let mut handle = ptr::null_mut::<c_void>();
         let access = if directory {
-            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+            FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
         } else {
             FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE
         };
@@ -325,7 +326,7 @@ mod windows_handle {
 
         let drive_root = format!("\\\\?\\{}:\\", drive as char);
         let mut directory = OpenOptions::new()
-            .read(true)
+            .access_mode(FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(drive_root)?;
         verify_directory_handle(&directory)?;
