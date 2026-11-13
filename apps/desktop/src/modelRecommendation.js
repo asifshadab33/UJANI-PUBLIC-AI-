@@ -30,6 +30,14 @@ export function recommendDefaultModel(totalMemoryMb, availableMemoryMb, os) {
     };
   }
 
+  if (!["windows", "linux", "mac", "darwin"].some((name) => platform.includes(name))) {
+    return {
+      model: null,
+      title: "No verified desktop model runtime recommendation",
+      reason: "UJANI does not assume Ollama support on this operating system. Use built-in UJANI features and choose a model only after the exact runtime and platform have been validated.",
+    };
+  }
+
   if (totalMemoryMb < 6144) {
     return {
       model: null,
