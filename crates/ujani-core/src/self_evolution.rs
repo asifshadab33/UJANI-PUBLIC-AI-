@@ -464,12 +464,14 @@ mod tests {
             Err(ProposalValidationError::InvalidLineRange)
         );
         let mut proposal = valid_proposal();
-        proposal.changes = (0..=MAX_PROPOSAL_CHANGES).map(|index| ProposedChange {
-            path: format!("apps/desktop/src/Component{index}.tsx"),
-            operation: ProposedChangeKind::Add,
-            summary: "Add a scoped component.".into(),
-            patch_sha256: "c".repeat(64),
-        }).collect();
+        proposal.changes = (0..=MAX_PROPOSAL_CHANGES)
+            .map(|index| ProposedChange {
+                path: format!("apps/desktop/src/Component{index}.tsx"),
+                operation: ProposedChangeKind::Add,
+                summary: "Add a scoped component.".into(),
+                patch_sha256: "c".repeat(64),
+            })
+            .collect();
         assert_eq!(validate(&proposal, &approved_scope()), Err(ProposalValidationError::TooManyChanges));
     }
 }
