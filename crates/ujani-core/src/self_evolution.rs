@@ -14,24 +14,13 @@ pub const MAX_PROPOSAL_CHANGES: usize = 128;
 
 const PROTECTED_PATHS: &[&str] = &[
     ".github/workflows",
+    "scripts",
     "Cargo.toml",
     "Cargo.lock",
     "apps/desktop/package.json",
     "apps/desktop/package-lock.json",
-    "apps/desktop/src-tauri/Cargo.toml",
-    "apps/desktop/src-tauri/Cargo.lock",
-    "apps/desktop/src-tauri/src/lib.rs",
-    "apps/desktop/src-tauri/src/native_consent.rs",
-    "apps/desktop/src-tauri/src/device_identity.rs",
-    "apps/desktop/src-tauri/src/security_providers.rs",
-    "apps/desktop/src-tauri/src/security_store.rs",
-    "apps/desktop/src-tauri/src/safe_fs.rs",
-    "crates/ujani-core/src/lib.rs",
-    "crates/ujani-core/src/router.rs",
-    "crates/ujani-core/src/policy_gate.rs",
-    "crates/ujani-core/src/safety_policy.rs",
-    "crates/ujani-core/src/peer_protocol.rs",
-    "crates/ujani-core/src/self_evolution.rs",
+    "apps/desktop/src-tauri",
+    "crates/ujani-core",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
