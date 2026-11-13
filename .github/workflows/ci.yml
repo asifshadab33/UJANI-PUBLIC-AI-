@@ -179,6 +179,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+      - name: Test hardware-aware model recommendation boundaries
+        working-directory: apps/desktop
+        run: npm run test:model-recommendation
       - name: Test explicit local model-selection preference
         working-directory: apps/desktop
         run: npm run test:model-selection
