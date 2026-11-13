@@ -197,7 +197,6 @@ mod windows_handle {
     }
 
     const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
-    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
     const FILE_TRAVERSE: u32 = 0x0000_0020;
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
@@ -267,7 +266,7 @@ mod windows_handle {
         };
         let mut handle = ptr::null_mut::<c_void>();
         let access = if directory {
-            FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+            FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
         } else {
             FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE
         };
@@ -351,7 +350,7 @@ mod windows_handle {
         }
 
         let mut directory = OpenOptions::new()
-            .access_mode(FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+            .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
             .share_mode(FILE_SHARE_READ_WRITE_DELETE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(drive_root)?;
@@ -932,6 +931,25 @@ mod selected_root_open_boundary_tests {
         fs::write(selected.join("ordinary.txt"), b"ordinary").unwrap();
         assert!(open_regular_file_under_root(&root_link, &path_through_link).is_err());
 
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn opens_selected_file_with_traverse_only_directory_handles() {
+        use super::windows_handle::{open_directory_path_no_reparse, open_relative_path_from_directory};
+        use std::io::Read;
+        let parent = temp_root("traverse-without-list");
+        let selected = parent.join("selected");
+        fs::create_dir_all(&selected).unwrap();
+        fs::write(selected.join("data.txt"), b"traverse-only").unwrap();
+
+        let root = fs::canonicalize(&selected).unwrap();
+        let pinned = open_directory_path_no_reparse(&root).unwrap();
+        let mut opened = open_relative_path_from_directory(pinned, Path::new("data.txt")).unwrap();
+        let mut contents = Vec::new();
+        opened.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents, b"traverse-only");
         fs::remove_dir_all(parent).unwrap();
     }
 
