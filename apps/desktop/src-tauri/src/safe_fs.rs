@@ -327,6 +327,7 @@ mod windows_handle {
         let drive_root = format!("\\\\?\\{}:\\", drive as char);
         let mut directory = OpenOptions::new()
             .access_mode(FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(drive_root)?;
         verify_directory_handle(&directory)?;
