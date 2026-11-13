@@ -2,16 +2,24 @@
  * Conservative desktop model onboarding advice.
  * This function is pure: it never installs, downloads, selects or runs a model.
  */
-export function recommendDefaultModel(totalMemoryMb, availableMemoryMb, os) {
+export const MODEL_RECOMMENDATION_MAX_SAMPLE_AGE_MS = 5 * 60 * 1000;
+const MAX_FUTURE_SAMPLE_SKEW_MS = 30 * 1000;
+
+export function recommendDefaultModel(totalMemoryMb, availableMemoryMb, os, sampledAtUnixMs, nowUnixMs) {
   const noRecommendation = {
     model: null,
     title: "No model download recommended yet",
-    reason: "UJANI cannot verify this device's operating system and available memory. You can still use UJANI's built-in features and choose a model later.",
+    reason: "UJANI needs a fresh hardware sample (no older than five minutes) before recommending a model. Refresh local model advice; you can still choose a model manually.",
   };
 
   if (
     !Number.isFinite(totalMemoryMb) ||
     !Number.isFinite(availableMemoryMb) ||
+    !Number.isFinite(sampledAtUnixMs) ||
+    !Number.isFinite(nowUnixMs) ||
+    sampledAtUnixMs <= 0 ||
+    sampledAtUnixMs > nowUnixMs + MAX_FUTURE_SAMPLE_SKEW_MS ||
+    nowUnixMs - sampledAtUnixMs > MODEL_RECOMMENDATION_MAX_SAMPLE_AGE_MS ||
     totalMemoryMb <= 0 ||
     availableMemoryMb <= 0 ||
     availableMemoryMb > totalMemoryMb ||
