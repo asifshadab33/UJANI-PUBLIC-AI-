@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "test:model-selection": "node --test src/modelSelectionPreference.test.js",
     "build:pdf-worker": "node scripts/build-pdf-worker.mjs",
-    "build:pdf-worker:dev": "node scripts/build-pdf-worker.mjs --debug"
+    "build:pdf-worker:dev": "node scripts/build-pdf-worker.mjs --debug",
+    "test:model-recommendation": "node --test src/modelRecommendation.test.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

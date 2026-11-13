@@ -548,6 +548,20 @@ async fn execute_cloud_ai_task(
  result.map(|output| output.text)
 }
 
+/// Model pulls remain fail-closed until UJANI can verify the exact upstream
+/// artifact and the storage directory/free space used by the Ollama daemon.
+fn model_download_preflight_ready() -> bool {
+    false
+}
+
+#[cfg(test)]
+mod model_download_preflight_tests {
+    #[test]
+    fn managed_model_downloads_stay_disabled_without_artifact_and_storage_evidence() {
+        assert!(!super::model_download_preflight_ready());
+    }
+}
+
 /// Explicitly downloads a named model through the local Ollama service only.
 #[tauri::command]
 async fn pull_ollama_model(
@@ -557,6 +571,9 @@ async fn pull_ollama_model(
     model: String,
     mode: String,
 ) -> Result<(), String> {
+    if !model_download_preflight_ready() {
+        return Err("UJANI-managed model downloads are temporarily disabled because UJANI cannot verify the exact registry artifact digest, licence, download size, or the Ollama daemon's actual model-store path and free space. You may install a model directly through your trusted Ollama interface after checking its source, licence and available storage, then refresh UJANI's model inventory.".into());
+    }
     if mode == "fortress" {
         return Err("Fortress mode blocks model downloads because they require internet access.".into());
     }
@@ -575,7 +592,7 @@ async fn pull_ollama_model(
     let approved = native_consent::confirm_native(
         &app,
         "Approve model download",
-        format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its model registry. This download may use network bandwidth and local disk space. No download starts unless you approve."),
+        format!("Download {model} from the internet via the local Ollama service?\n\nOllama will contact its configured model registry. UJANI cannot independently verify the final model digest, exact download size, licence, or the storage directory and free space configured inside the Ollama service. Before approving, check the model source and licence and make sure the Ollama model store has enough free disk space. No download starts unless you approve."),
         registration.token.clone(),
         Duration::from_secs(120),
     ).await;
@@ -2304,7 +2321,7 @@ mod model_capability_selection_tests {
                 capabilities: vec!["vision".into()],
             }),
             ("short-context-chat".into(), OllamaModelMetadata {
-                context_length_tokens: Some(4_096),
+                context_length_tokens: Some(2_048),
                 capabilities: vec!["chat".into()],
             }),
             ("unknown-context-chat".into(), OllamaModelMetadata {

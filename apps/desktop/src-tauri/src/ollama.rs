@@ -7,6 +7,13 @@ use tokio_util::sync::CancellationToken;
 
 const BASE_URL: &str = "http://127.0.0.1:11434";
 const MAX_PROMPT_BYTES: usize = 32 * 1024;
+// Ollama does not expose a stable, model-independent token-count endpoint.
+// Use a conservative UTF-8 byte upper bound plus explicit chat-template and
+// per-message reserves; byte-fallback tokenizers cannot emit more text tokens
+// than input bytes. Keep the turn count bounded so framing overhead is bounded.
+const CHAT_TEMPLATE_RESERVE_TOKENS: usize = 512;
+const CHAT_MESSAGE_OVERHEAD_TOKENS: usize = 16;
+const MAX_CHAT_TURNS: usize = 32;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ATTEMPTS: u8 = 3;
 
@@ -70,7 +77,7 @@ const MAX_INSTALLED_MODELS: usize = 512;
 const MAX_MODEL_METADATA_INSPECTIONS: usize = 32;
 const MAX_MODEL_METADATA_CONCURRENCY: usize = 4;
 
-pub const NUM_CTX: u32 = 8192;
+pub const NUM_CTX: u32 = 4096;
 #[derive(Serialize)] struct ChatMsg<'a> { role: &'a str, content: &'a str }
 #[derive(Serialize)] struct ChatOptions { num_ctx: u32, temperature: f32 }
 #[derive(Serialize)] struct ChatBody<'a> { model: &'a str, messages: Vec<ChatMsg<'a>>, stream: bool, options: ChatOptions, keep_alive: &'a str }
@@ -307,6 +314,12 @@ pub async fn inspect_models(models: &[OllamaModel]) -> HashMap<String, OllamaMod
     inspected
 }
 
+fn conservative_context_text_budget(message_count: usize) -> Option<usize> {
+    let message_overhead = message_count.checked_mul(CHAT_MESSAGE_OVERHEAD_TOKENS)?;
+    let reserved = CHAT_TEMPLATE_RESERVE_TOKENS.checked_add(message_overhead)?;
+    (NUM_CTX as usize).checked_sub(reserved)
+}
+
 fn build_chat_body<'a>(
     model: &'a str,
     system: Option<&'a str>,
@@ -316,15 +329,27 @@ fn build_chat_body<'a>(
     if !valid_model(model) {
         return Err("Invalid local model identifier.".into());
     }
+    if turns.is_empty() || turns.len() > MAX_CHAT_TURNS {
+        return Err(format!("Chat must contain between 1 and {MAX_CHAT_TURNS} turns."));
+    }
     let total = turns
         .iter()
         .try_fold(system.map_or(0usize, str::len), |n, turn| n.checked_add(turn.content.len()))
         .ok_or_else(|| "Prompt size overflow.".to_string())?;
-    if turns.is_empty() || total == 0 {
+    if total == 0 {
         return Err("Prompt cannot be empty.".into());
     }
     if total > MAX_PROMPT_BYTES {
         return Err("Prompt exceeds the 32 KiB local limit.".into());
+    }
+    let message_count = turns.len() + usize::from(system.is_some());
+    let context_text_budget = conservative_context_text_budget(message_count)
+        .ok_or_else(|| "Could not calculate the safe local context budget.".to_string())?;
+    if total > context_text_budget {
+        return Err(format!(
+            "Combined system message, conversation history and new input exceed the safe {}-token context budget. Shorten the conversation and try again.",
+            NUM_CTX
+        ));
     }
     let mut messages = Vec::with_capacity(turns.len() + usize::from(system.is_some()));
     if let Some(content) = system {
@@ -652,6 +677,53 @@ mod tests {
         assert_eq!(body.messages[0].role, "user");
         let invalid = Turn { role: "system", content: "not permitted as a turn" };
         assert!(build_chat_body("llama3.2", None, &[invalid], true).is_err());
+    }
+
+    #[test]
+    fn chat_body_rejects_text_that_exceeds_the_conservative_context_budget() {
+        let oversized = "a".repeat(NUM_CTX as usize);
+        let turn = Turn { role: "user", content: &oversized };
+        let error = build_chat_body("qwen3:0.6b", None, &[turn], false)
+            .err()
+            .expect("oversized context must be rejected");
+        assert!(error.contains("safe 4096-token context budget"));
+        assert!(oversized.len() < MAX_PROMPT_BYTES);
+    }
+
+    #[test]
+    fn chat_body_counts_system_and_history_together_in_the_context_budget() {
+        let system = "s".repeat(2_000);
+        let history = "h".repeat(2_000);
+        let turn = Turn { role: "user", content: &history };
+        let error = build_chat_body("qwen3:0.6b", Some(&system), &[turn], false)
+            .err()
+            .expect("combined system and history must be rejected");
+        assert!(error.contains("safe 4096-token context budget"));
+    }
+
+    #[test]
+    fn chat_body_counts_multibyte_text_by_utf8_bytes() {
+        let multibyte = "界".repeat(1_200);
+        let turn = Turn { role: "user", content: &multibyte };
+        assert!(build_chat_body("qwen3:0.6b", None, &[turn], false).is_err());
+    }
+
+    #[test]
+    fn chat_body_bounds_the_number_of_turns() {
+        let turns: Vec<_> = (0..=MAX_CHAT_TURNS)
+            .map(|_| Turn { role: "user", content: "x" })
+            .collect();
+        let error = build_chat_body("qwen3:0.6b", None, &turns, false)
+            .err()
+            .expect("too many turns must be rejected");
+        assert!(error.contains("between 1 and 32 turns"));
+    }
+
+    #[test]
+    fn chat_body_uses_conservative_four_thousand_token_context() {
+        let turn = Turn { role: "user", content: "hello" };
+        let body = build_chat_body("qwen3:0.6b", None, &[turn], false).unwrap();
+        assert_eq!(body.options.num_ctx, 4096);
     }
 
     #[test]
