@@ -170,7 +170,8 @@ mod windows_handle {
 
     #[link(name = "ntdll")]
     extern "system" {
-        fn NtCreateFile(
+        #[link_name = "NtCreateFile"]
+        fn nt_create_file(
             file_handle: *mut *mut c_void,
             desired_access: u32,
             object_attributes: *mut ObjectAttributes,
@@ -183,7 +184,8 @@ mod windows_handle {
             ea_buffer: *mut c_void,
             ea_length: u32,
         ) -> i32;
-        fn RtlNtStatusToDosError(status: i32) -> u32;
+        #[link_name = "RtlNtStatusToDosError"]
+        fn rtl_nt_status_to_dos_error(status: i32) -> u32;
     }
 
     const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
@@ -272,7 +274,7 @@ mod windows_handle {
         // and UNICODE_STRING point to owned, correctly sized storage; NtCreateFile
         // returns a new handle which is transferred to std::fs::File below.
         let status = unsafe {
-            NtCreateFile(
+            nt_create_file(
                 &mut handle,
                 access,
                 &mut attributes,
@@ -288,14 +290,11 @@ mod windows_handle {
         };
         if status < 0 {
             // SAFETY: RtlNtStatusToDosError accepts every NTSTATUS value.
-            let win32_error = unsafe { RtlNtStatusToDosError(status) };
+            let win32_error = unsafe { rtl_nt_status_to_dos_error(status) };
             return Err(io::Error::from_raw_os_error(win32_error as i32));
         }
         if handle.is_null() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Windows returned an empty file handle.",
-            ));
+            return Err(io::Error::other("Windows returned an empty file handle."));
         }
 
         // SAFETY: NtCreateFile succeeded and ownership of this fresh handle is
