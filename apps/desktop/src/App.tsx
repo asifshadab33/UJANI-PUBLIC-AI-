@@ -9,6 +9,7 @@ import EverydayWritingActions from "./EverydayWritingActions";
 import IntegrationDirectory from "./IntegrationDirectory";
 import SecurityCentre from "./SecurityCentre";
 import ModelCatalogue from "./ModelCatalogue";
+import { MODEL_SELECTION_STORAGE_KEY, readModelSelectionPreference } from "./modelSelectionPreference.js";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
@@ -74,32 +75,7 @@ const CLOUD_PROVIDER_PRESETS = [
   { id: "custom", label: "Custom OpenAI-compatible API", endpoint: "", model: "" }
 ] as const;
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-const MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v2";
-const LEGACY_MODEL_SELECTION_STORAGE_KEY = "ujani.public.model-selection.v1";
 type ModelSelectionMode = "auto" | "manual";
-function readModelSelectionPreference(): { mode: ModelSelectionMode; model: string } {
-  const isValid = (value: unknown): value is { mode: ModelSelectionMode; model: string } =>
-    Boolean(value && typeof value === "object"
-      && ((value as { mode?: unknown }).mode === "auto" || (value as { mode?: unknown }).mode === "manual")
-      && typeof (value as { model?: unknown }).model === "string"
-      && (value as { model: string }).model.length <= 128);
-  if (typeof window === "undefined") return { mode: "auto", model: "" };
-  try {
-    const current = JSON.parse(window.localStorage.getItem(MODEL_SELECTION_STORAGE_KEY) || "null");
-    if (isValid(current)) return current;
-
-    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_MODEL_SELECTION_STORAGE_KEY) || "null");
-    if (isValid(legacy)) {
-      // v1 used manual/empty as its fresh-install default. Preserve real manual
-      // choices, but migrate that old implicit default to the approved auto policy.
-      if (legacy.mode === "manual" && legacy.model === "") return { mode: "auto", model: "" };
-      return legacy;
-    }
-  } catch {
-    // Storage may be unavailable or contain an older/corrupt value; use safe defaults.
-  }
-  return { mode: "auto", model: "" };
-}
 
 /// Read a selected file using the browser's native encoder rather than expanding
 /// binary bytes into millions of JSON numbers for Tauri IPC.
@@ -174,9 +150,10 @@ export default function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [ollamaError, setOllamaError] = useState("");
   const [ollamaBusy, setOllamaBusy] = useState(false);
-  const [modelSelectionMode, setModelSelectionMode] = useState<ModelSelectionMode>(() => readModelSelectionPreference().mode);
-  const [ollamaModel, setOllamaModel] = useState(() => readModelSelectionPreference().model);
-  const [autoSelectionInitialized, setAutoSelectionInitialized] = useState(() => Boolean(readModelSelectionPreference().model));
+  const [initialModelSelection] = useState(readModelSelectionPreference);
+  const [modelSelectionMode, setModelSelectionMode] = useState<ModelSelectionMode>(initialModelSelection.mode);
+  const [ollamaModel, setOllamaModel] = useState(initialModelSelection.model);
+  const [autoSelectionInitialized, setAutoSelectionInitialized] = useState(Boolean(initialModelSelection.model));
   const [modelPullName, setModelPullName] = useState("llama3.2");
   const [modelPullBusy, setModelPullBusy] = useState(false);
   const [activeModelPullTaskId, setActiveModelPullTaskId] = useState<string | null>(null);
@@ -250,9 +227,9 @@ export default function App() {
     }
   }, [modelSelectionMode, ollamaModel]);
 
-  // Automatic mode uses the native inventory result: a model must have runtime-reported
-  // chat capability and fit the conservative RAM estimate. Unknown capabilities are not
-  // silently treated as chat-capable; the user can still make an explicit manual choice.
+  // Automatic mode runs only after the user selects it. Fresh installs start with no
+  // selected model; the user must choose an installed model or explicitly choose Automatic.
+  // Unknown capabilities are never silently treated as chat-capable.
   useEffect(() => {
     if (modelSelectionMode !== "auto" || !isTauri() || !ollamaStatus?.available || autoSelectionInitialized) return;
     const recommended = ollamaStatus.recommendation.recommended_model;

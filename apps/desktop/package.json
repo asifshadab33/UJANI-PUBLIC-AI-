@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "test:model-selection": "node --test src/modelSelectionPreference.test.js",
     "build:pdf-worker": "node scripts/build-pdf-worker.mjs",
     "build:pdf-worker:dev": "node scripts/build-pdf-worker.mjs --debug"
   },
