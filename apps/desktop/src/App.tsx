@@ -1223,7 +1223,7 @@ export default function App() {
               {recommendationError && <p className="error" role="alert">Model advice unavailable: {recommendationError}</p>}
               <button className="model-run" onClick={refreshModelRecommendation} disabled={recommendationBusy}>{recommendationBusy?"Checking model advice…":"Refresh model advice"}</button>
             </div>
-            <ModelCatalogue totalMemoryMb={device?.total_memory_mb} availableMemoryMb={inventoryAvailableMemoryMb ?? undefined} os={device?.os} onChooseModel={(model) => { setModelPullName(model); setModelPullError(""); }} />
+            <ModelCatalogue totalMemoryMb={device?.total_memory_mb} availableMemoryMb={inventoryAvailableMemoryMb ?? undefined} sampledAtUnixMs={ollamaStatus?.inventory.generated_at_unix_ms} os={device?.os} onChooseModel={(model) => { setModelPullName(model); setModelPullError(""); }} />
             <div className="install-guide">
               <b>Prepare a local model through Ollama</b>
               <p>UJANI-managed model downloads are temporarily disabled until UJANI can verify the exact upstream artifact digest, licence, download size and the Ollama daemon's actual model-store location and free space. This prevents an unverified download from filling a device's disk or installing an unexpected artifact.</p>
