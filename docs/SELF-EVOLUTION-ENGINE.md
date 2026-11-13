@@ -44,6 +44,10 @@ Changes to these areas require a separate human-led security engineering process
 - No ambient filesystem, shell, credential-store, network or process privileges.
 - Explicit capability manifests, scoped data access, resource budgets and revocation.
 
+## 2A. Host-owned authority envelope
+
+The model-authored proposal body is limited to a schema version, summary, findings and proposed file changes. It must not choose or contain the repository, source revision, approved write scope, proposal ID, model identity, permissions, reviewer decisions or signing authority. Trusted UJANI host code binds the response to the user-selected source checkout and device-owner-approved scope, generates the proposal ID, and records model/provider/version and approval metadata separately. Unknown authority-bearing fields are rejected rather than accepted from the model.
+
 ## 3. Proposed lifecycle
 
 1. **Request:** user explicitly starts an analysis or improvement task and selects the repository/version and permitted scope.
