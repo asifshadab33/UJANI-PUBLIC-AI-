@@ -988,6 +988,7 @@ mod selected_root_open_boundary_tests {
         let root = fs::canonicalize(&selected).unwrap();
         let pinned_root = open_directory_path_no_reparse(&root).unwrap();
 
+        fs::remove_file(nested.join("inside.txt")).unwrap();
         fs::remove_dir(&nested).unwrap();
         let output = Command::new("cmd")
             .args(["/C", "mklink", "/J"])
