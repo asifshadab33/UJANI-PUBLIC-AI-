@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn chat_body_counts_multibyte_text_by_utf8_bytes() {
-        let multibyte = "界".repeat(1_100);
+        let multibyte = "界".repeat(1_200);
         let turn = Turn { role: "user", content: &multibyte };
         assert!(build_chat_body("qwen3:0.6b", None, &[turn], false).is_err());
     }
