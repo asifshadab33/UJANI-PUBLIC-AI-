@@ -335,7 +335,7 @@ mod tests {
         let error = collect_selected_folder_with_budget(
             &folder.0,
             &CancellationToken::new(),
-            Duration::from_millis(0),
+            std::time::Duration::from_millis(0),
         )
         .unwrap_err();
         assert!(error.contains("scan-time limit"));
