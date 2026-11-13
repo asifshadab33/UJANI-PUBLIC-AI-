@@ -127,10 +127,282 @@ pub(crate) fn open_regular_file_under_root(
     ))
 }
 
-/// Non-Unix fallback retains final-component no-follow checks and verifies the
-/// canonical path is inside the selected root. Windows handle-relative traversal
-/// remains a separate hardening task; this fallback does not claim to close its race.
-#[cfg(not(unix))]
+#[cfg(windows)]
+mod windows_handle {
+    use super::{is_reparse_point, OpenOptions};
+    use std::{
+        ffi::{c_void, OsStr},
+        io,
+        mem::size_of,
+        os::windows::{
+            ffi::OsStrExt,
+            fs::OpenOptionsExt,
+            io::{AsRawHandle, FromRawHandle},
+        },
+        path::{Component, Path, Prefix},
+        ptr,
+    };
+
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *mut u16,
+    }
+
+    #[repr(C)]
+    struct ObjectAttributes {
+        length: u32,
+        root_directory: *mut c_void,
+        object_name: *mut UnicodeString,
+        attributes: u32,
+        security_descriptor: *mut c_void,
+        security_quality_of_service: *mut c_void,
+    }
+
+    // IO_STATUS_BLOCK is pointer-aligned on 64-bit Windows; repr(C) supplies
+    // the required padding between Status and Information.
+    #[repr(C)]
+    struct IoStatusBlock {
+        status: i32,
+        information: usize,
+    }
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtCreateFile(
+            file_handle: *mut *mut c_void,
+            desired_access: u32,
+            object_attributes: *mut ObjectAttributes,
+            io_status_block: *mut IoStatusBlock,
+            allocation_size: *mut i64,
+            file_attributes: u32,
+            share_access: u32,
+            create_disposition: u32,
+            create_options: u32,
+            ea_buffer: *mut c_void,
+            ea_length: u32,
+        ) -> i32;
+        fn RtlNtStatusToDosError(status: i32) -> u32;
+    }
+
+    const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    const FILE_READ_DATA: u32 = 0x0000_0001;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const FILE_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
+    const FILE_OPEN: u32 = 0x0000_0001;
+    const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
+    const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
+    const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
+    const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    fn invalid_path(message: &'static str) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidInput, message)
+    }
+
+    fn verify_directory_handle(handle: &std::fs::File) -> io::Result<()> {
+        let metadata = handle.metadata()?;
+        if !metadata.is_dir() || is_reparse_point(&metadata) {
+            return Err(invalid_path(
+                "A selected directory component is not a real directory.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Opens one child relative to an already-open directory handle. Each child is
+    /// opened as the reparse point itself, never by following its target.
+    fn open_relative_component(
+        parent: &std::fs::File,
+        name: &OsStr,
+        directory: bool,
+    ) -> io::Result<std::fs::File> {
+        let mut wide: Vec<u16> = name.encode_wide().collect();
+        if wide.is_empty()
+            || wide.iter().any(|unit| {
+                *unit == 0
+                    || *unit == b'/' as u16
+                    || *unit == b'\\' as u16
+                    || *unit == b':' as u16
+            })
+        {
+            return Err(invalid_path("Invalid Windows path component."));
+        }
+        let byte_length = wide
+            .len()
+            .checked_mul(size_of::<u16>())
+            .and_then(|length| u16::try_from(length).ok())
+            .ok_or_else(|| invalid_path("Windows path component is too long."))?;
+        let mut object_name = UnicodeString {
+            length: byte_length,
+            maximum_length: byte_length,
+            buffer: wide.as_mut_ptr(),
+        };
+        let mut attributes = ObjectAttributes {
+            length: size_of::<ObjectAttributes>() as u32,
+            root_directory: parent.as_raw_handle() as *mut c_void,
+            object_name: &mut object_name,
+            attributes: OBJ_CASE_INSENSITIVE,
+            security_descriptor: ptr::null_mut(),
+            security_quality_of_service: ptr::null_mut(),
+        };
+        let mut io_status = IoStatusBlock {
+            status: 0,
+            information: 0,
+        };
+        let mut handle = ptr::null_mut::<c_void>();
+        let access = if directory {
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+        } else {
+            FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+        };
+        let options = FILE_SYNCHRONOUS_IO_NONALERT
+            | FILE_OPEN_REPARSE_POINT
+            | if directory {
+                FILE_DIRECTORY_FILE
+            } else {
+                FILE_NON_DIRECTORY_FILE
+            };
+
+        // SAFETY: the parent handle remains live for the call; OBJECT_ATTRIBUTES
+        // and UNICODE_STRING point to owned, correctly sized storage; NtCreateFile
+        // returns a new handle which is transferred to std::fs::File below.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                access,
+                &mut attributes,
+                &mut io_status,
+                ptr::null_mut(),
+                0,
+                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_OPEN,
+                options,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if status < 0 {
+            // SAFETY: RtlNtStatusToDosError accepts every NTSTATUS value.
+            let win32_error = unsafe { RtlNtStatusToDosError(status) };
+            return Err(io::Error::from_raw_os_error(win32_error as i32));
+        }
+        if handle.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Windows returned an empty file handle.",
+            ));
+        }
+
+        // SAFETY: NtCreateFile succeeded and ownership of this fresh handle is
+        // transferred exactly once to std::fs::File.
+        Ok(unsafe { std::fs::File::from_raw_handle(handle) })
+    }
+
+    /// Opens the canonical selected root from its local drive root, pinning every
+    /// ancestor by handle and rejecting any reparse point encountered on the way.
+    /// UNC/network roots and non-drive device namespaces are rejected fail-closed.
+    pub(super) fn open_directory_path_no_reparse(path: &Path) -> io::Result<std::fs::File> {
+        let mut components = path.components();
+        let drive = match components.next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "Only local drive paths are supported for safe folder access.",
+                    ));
+                }
+            },
+            _ => return Err(invalid_path("Selected root must be an absolute drive path.")),
+        };
+        if !matches!(components.next(), Some(Component::RootDir)) {
+            return Err(invalid_path("Selected root must be an absolute drive path."));
+        }
+
+        let drive_root = format!("\\\\?\\{}:\\", drive as char);
+        let mut directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(drive_root)?;
+        verify_directory_handle(&directory)?;
+
+        for component in components {
+            let name = match component {
+                Component::Normal(name) => name,
+                _ => return Err(invalid_path("Non-normal Windows path component rejected.")),
+            };
+            let child = open_relative_component(&directory, name, true)?;
+            verify_directory_handle(&child)?;
+            directory = child;
+        }
+        Ok(directory)
+    }
+
+    /// Resolves a relative path only through pinned directory handles. No path-based
+    /// canonicalization or reopening occurs after the selected root is pinned.
+    pub(super) fn open_relative_path_from_directory(
+        mut directory: std::fs::File,
+        relative: &Path,
+    ) -> io::Result<std::fs::File> {
+        let mut components = relative.components().peekable();
+        while let Some(component) = components.next() {
+            let name = match component {
+                Component::Normal(name) => name,
+                _ => return Err(invalid_path("Non-normal relative path component rejected.")),
+            };
+            let final_component = components.peek().is_none();
+            let opened = open_relative_component(&directory, name, !final_component)?;
+            if final_component {
+                let metadata = opened.metadata()?;
+                if !metadata.is_file() || is_reparse_point(&metadata) {
+                    return Err(invalid_path(
+                        "Selected path is not a regular non-reparse file.",
+                    ));
+                }
+                return Ok(opened);
+            }
+            verify_directory_handle(&opened)?;
+            directory = opened;
+        }
+        Err(invalid_path("Selected path does not name a file."))
+    }
+
+    pub(super) fn open_regular_file_under_root(
+        root: &Path,
+        path: &Path,
+    ) -> io::Result<std::fs::File> {
+        if !root.is_absolute() || !path.is_absolute() {
+            return Err(invalid_path(
+                "Selected root and file path must be absolute.",
+            ));
+        }
+        let relative = path.strip_prefix(root).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "File path is outside selected root.",
+            )
+        })?;
+        let directory = open_directory_path_no_reparse(root)?;
+        open_relative_path_from_directory(directory, relative)
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn open_regular_file_under_root(
+    root: &Path,
+    path: &Path,
+) -> io::Result<std::fs::File> {
+    windows_handle::open_regular_file_under_root(root, path)
+}
+
+/// Non-Unix/non-Windows fallback retains final-component no-follow checks and verifies
+/// canonical containment. Windows uses native handle-relative traversal above.
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn open_regular_file_under_root(
     root: &Path,
     path: &Path,
@@ -664,7 +936,7 @@ mod selected_root_open_boundary_tests {
         );
 
         let root = fs::canonicalize(&selected).unwrap();
-        let target = junction.join("secret.txt");
+        let target = root.join("nested").join("secret.txt");
         assert!(
             open_regular_file_under_root(&root, &target).is_err(),
             "a path traversing a junction outside the selected root must be rejected"
@@ -672,4 +944,79 @@ mod selected_root_open_boundary_tests {
         fs::remove_dir(&junction).unwrap();
         fs::remove_dir_all(base).unwrap();
     }
+    #[cfg(windows)]
+    #[test]
+    fn rejects_ancestor_junction_replacement_after_selected_root_is_pinned() {
+        use super::windows_handle::{open_directory_path_no_reparse, open_relative_path_from_directory};
+        use std::{process::Command, time::{SystemTime, UNIX_EPOCH}};
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base = std::env::temp_dir().join(format!("ujani-safe-fs-pinned-root-{id}"));
+        let selected = base.join("selected");
+        let outside = base.join("outside");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"outside secret").unwrap();
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+
+        let root = fs::canonicalize(&selected).unwrap();
+        let pinned_root = open_directory_path_no_reparse(&root).unwrap();
+
+        fs::remove_dir(&nested).unwrap();
+        let output = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&nested)
+            .arg(&outside)
+            .output()
+            .expect("Windows cmd must be available to create a test junction");
+        assert!(
+            output.status.success(),
+            "could not create test junction: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let relative = Path::new("nested").join("secret.txt");
+        assert!(
+            open_relative_path_from_directory(pinned_root, &relative).is_err(),
+            "a child junction installed after root selection must not redirect a handle-relative open"
+        );
+        fs::remove_dir(&nested).unwrap();
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_selected_root_replaced_by_junction_after_canonicalization() {
+        use std::{process::Command, time::{SystemTime, UNIX_EPOCH}};
+        let id = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base = std::env::temp_dir().join(format!("ujani-safe-fs-root-junction-{id}"));
+        let selected = base.join("selected");
+        let outside = base.join("outside");
+        fs::create_dir_all(&selected).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"outside secret").unwrap();
+
+        let root = fs::canonicalize(&selected).unwrap();
+        fs::remove_dir(&selected).unwrap();
+        let output = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&selected)
+            .arg(&outside)
+            .output()
+            .expect("Windows cmd must be available to create a test junction");
+        assert!(
+            output.status.success(),
+            "could not create test junction: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let target = root.join("secret.txt");
+        assert!(
+            open_regular_file_under_root(&root, &target).is_err(),
+            "a selected root replaced by a junction must be rejected"
+        );
+        fs::remove_dir(&selected).unwrap();
+        fs::remove_dir_all(base).unwrap();
+    }
+
 }
