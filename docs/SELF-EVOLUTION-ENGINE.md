@@ -9,6 +9,18 @@ Allow a user-selected, compatible AI model to inspect UJANI's upgradeable applic
 
 The engine is a development and maintenance capability, not a self-modifying unrestricted agent. It must not execute model-generated shell commands, grant itself permissions, bypass review, or rewrite its own enforcement boundary.
 
+## 1A. Source availability and installed-app boundary
+
+A normal installed Public AI build must not be assumed to contain a writable source checkout. The MVP is proposal-only: it can validate a bounded proposal contract, but it does not yet modify the running application.
+
+For a later implementation:
+- A user may explicitly select a trusted local source checkout for source-level analysis. The engine reads only manifest-approved source paths and writes only to a separate scratch branch/worktree.
+- Without a source checkout, the installed application may only use a future, separately reviewed extension/module API. Do not attempt to rewrite compiled Rust/Tauri binaries or patch arbitrary installed files.
+- Generated patches are proposals, not signed application releases. An end-user device does not hold official UJANI release-signing keys.
+- A personal custom build may be built and signed only through a separate user-controlled development/signing workflow. Official product releases remain subject to the maintainers' independent review and trusted release pipeline.
+- If no supported extension ABI or trusted source checkout is available, UJANI must explain that the requested change can be proposed but cannot be installed by the running app.
+
+
 ## 2. Trust zones
 
 ### Protected core (not autonomously writable)
