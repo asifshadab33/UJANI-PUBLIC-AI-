@@ -12,4 +12,6 @@ export function recommendDefaultModel(
   totalMemoryMb: number | undefined,
   availableMemoryMb: number | undefined,
   os: string | undefined,
+  sampledAtUnixMs: number | undefined,
+  nowUnixMs: number,
 ): DefaultModelRecommendation;
