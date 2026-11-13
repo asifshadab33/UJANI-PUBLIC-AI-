@@ -5,7 +5,7 @@ import { MODEL_RECOMMENDATION_MAX_SAMPLE_AGE_MS, recommendDefaultModel } from ".
 const FRESH_SAMPLE_MS = 1_000_000;
 const FRESH_NOW_MS = 1_000_000;
 const recommend = (total, available, os) =>
-  recommend(total, available, os, FRESH_SAMPLE_MS, FRESH_NOW_MS);
+  recommendDefaultModel(total, available, os, FRESH_SAMPLE_MS, FRESH_NOW_MS);
 
 test("unknown, invalid or inconsistent memory evidence fails closed", () => {
   for (const [total, available, os] of [
