@@ -241,8 +241,9 @@ fn collect_selected_folder_with_budget(
         crate::ensure_task_not_cancelled(token)?;
         // The walker returns canonical paths. Require a direct child and reopen it
         // through the root-bound helper: Unix pins each ancestor with openat and
-        // O_NOFOLLOW; other platforms retain canonical containment plus final-link
-        // checks, without claiming to close the Windows ancestor replacement race.
+        // O_NOFOLLOW; Windows pins each ancestor with handle-relative NtCreateFile
+        // and FILE_OPEN_REPARSE_POINT. Other platforms retain canonical containment
+        // plus final-link checks and do not claim equivalent race protection.
         if entry.path.parent() != Some(selected_root.as_path()) {
             return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
