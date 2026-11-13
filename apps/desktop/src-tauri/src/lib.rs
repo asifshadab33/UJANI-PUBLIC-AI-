@@ -2321,7 +2321,7 @@ mod model_capability_selection_tests {
                 capabilities: vec!["vision".into()],
             }),
             ("short-context-chat".into(), OllamaModelMetadata {
-                context_length_tokens: Some(4_096),
+                context_length_tokens: Some(2_048),
                 capabilities: vec!["chat".into()],
             }),
             ("unknown-context-chat".into(), OllamaModelMetadata {
