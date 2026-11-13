@@ -57,6 +57,26 @@ def _validate_strict_json_decoder() -> None:
             continue
         raise AssertionError(f"ambiguous/non-JSON input unexpectedly accepted: {ambiguous}")
 
+    # Exercise duplicate top-level message keys for every shared v1 message type.
+    # This prevents a parser from accepting one message kind less strictly than another.
+    for message_type, message in _sample_messages().items():
+        encoded = json.dumps(message, separators=(",", ":"))
+        marker = '"message_type":' + json.dumps(message_type)
+        assert marker in encoded, f"sample missing message type marker: {message_type}"
+        duplicate = encoded.replace(
+            marker,
+            marker + ',"message_type":' + json.dumps(message_type),
+            1,
+        )
+        try:
+            _strict_json_loads(duplicate)
+        except ValueError as error:
+            assert "duplicate JSON object key: message_type" in str(error)
+        else:
+            raise AssertionError(
+                f"duplicate message_type key unexpectedly accepted for {message_type}"
+            )
+
 
 def _canonical_consent_binding_bytes(envelope: dict[str, Any]) -> bytes:
     """Return the restricted v1 JCS preimage with signature and self-digest removed."""
