@@ -4,12 +4,13 @@ import { recommendDefaultModel } from "./modelRecommendation.js";
 type ModelCatalogueProps = {
   totalMemoryMb?: number;
   availableMemoryMb?: number;
+  sampledAtUnixMs?: number;
   os?: string;
   onChooseModel?: (model: string) => void;
 };
 
-export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, os, onChooseModel }: ModelCatalogueProps) {
-  const choice = recommendDefaultModel(totalMemoryMb, availableMemoryMb, os);
+export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, sampledAtUnixMs, os, onChooseModel }: ModelCatalogueProps) {
+  const choice = recommendDefaultModel(totalMemoryMb, availableMemoryMb, os, sampledAtUnixMs, Date.now());
   return (
     <section className="install-guide" aria-labelledby="local-model-catalogue-title">
       <b id="local-model-catalogue-title">Understand local AI models before choosing</b>
@@ -22,7 +23,7 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, os, o
             Use {choice.model} as my manual Ollama setup choice
           </button>
         )}
-        <small className="muted">This is a conservative starting recommendation, not a performance guarantee. UJANI-managed downloads are currently disabled until exact artifact and Ollama storage preflight can be verified. Selecting a candidate only fills its name for manual setup; it does not download or select it for inference.</small>
+        <small className="muted">This is a conservative starting recommendation, not a performance guarantee. Available-memory evidence older than five minutes is ignored. UJANI-managed downloads are currently disabled until exact artifact and Ollama storage preflight can be verified. Selecting a candidate only fills its name for manual setup; it does not download or select it for inference.</small>
       </div>
       <p>These are optional model candidates. Exact artifact, quantisation, publisher, licence, digest, download size and disk-space requirements must be verified before any manual installation.</p>
       <div className="model-catalogue-list">
