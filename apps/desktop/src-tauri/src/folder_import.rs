@@ -89,6 +89,10 @@ pub async fn process_selected_folder(
             &mode,
         )?;
     }
+    // Capability/model preflight can yield while the user cancels the task.
+    // Re-check immediately before opening the native picker so a cancelled
+    // operation cannot initiate another user-visible side effect.
+    crate::ensure_task_not_cancelled(&task_token)?;
 
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
