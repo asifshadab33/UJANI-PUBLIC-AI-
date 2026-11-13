@@ -3,14 +3,47 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import jsonschema
 from pathlib import Path
 
-SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas/model-runtime-inventory-v1.schema.json"
+ROOT = Path(__file__).resolve().parents[1]
+SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v1.schema.json"
+
+
+EXPECTED_SHARED_ARTIFACTS = {
+    "schemas/model-runtime-inventory-v1.schema.json": "8ff1a1dbbabd58636a3ef40e55b5c44168776522",
+    "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
+    "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
+    "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
+}
+
+
+def _git_blob_sha1(path: Path) -> str:
+    data = path.read_bytes()
+    header = f"blob {len(data)}\\0".encode("ascii")
+    return hashlib.sha1(header + data).hexdigest()
+
+
+def validate_shared_contract_manifest() -> None:
+    """Fail CI if either repository drifts from the shared v1 contract artifacts."""
+    manifest_path = ROOT / "schemas/shared-contract-manifest-v1.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest.get("manifest_version") == 1
+    assert manifest.get("hash_algorithm") == "git_blob_sha1"
+    assert manifest.get("artifacts") == EXPECTED_SHARED_ARTIFACTS
+    for relative_path, expected_sha in EXPECTED_SHARED_ARTIFACTS.items():
+        artifact = ROOT / relative_path
+        actual_sha = _git_blob_sha1(artifact)
+        assert actual_sha == expected_sha, (
+            f"shared contract drift in {relative_path}: "
+            f"expected {expected_sha}, got {actual_sha}"
+        )
 
 
 def main() -> None:
+    validate_shared_contract_manifest()
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "urn:ujani:model-runtime-inventory:v1"
