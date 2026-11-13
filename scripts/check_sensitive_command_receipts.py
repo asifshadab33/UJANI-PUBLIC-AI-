@@ -136,12 +136,16 @@ REQUIRED_MARKERS = {
 }
 
 
-def require_ordered_markers(path: str, name: str, body: str, markers: tuple[str, ...]) -> None:
+def require_ordered_markers(
+    path: str, name: str, body: str, markers: tuple[str, ...]
+) -> None:
     cursor = 0
     for marker in markers:
         position = body.find(marker, cursor)
         if position < 0:
-            raise SystemExit(f"{path}:{name} has missing or out-of-order safety marker: {marker}")
+            raise SystemExit(
+                f"{path}:{name} has missing or out-of-order safety marker: {marker}"
+            )
         cursor = position + len(marker)
 
 
@@ -169,7 +173,9 @@ def main() -> None:
             )
 
     for (path, name), markers in REQUIRED_ORDERED_MARKERS.items():
-        require_ordered_markers(path, name, function_body(path, name), markers)
+        require_ordered_markers(
+            path, name, function_body(path, name), markers
+        )
 
     required_tests = {
         "lib.rs": (
