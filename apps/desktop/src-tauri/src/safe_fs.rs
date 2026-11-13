@@ -143,6 +143,10 @@ mod windows_handle {
         ptr,
     };
 
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetDriveTypeW, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOVABLE,
+    };
+
     #[repr(C)]
     struct UnicodeString {
         length: u16,
@@ -325,6 +329,20 @@ mod windows_handle {
         }
 
         let drive_root = format!("\\\\?\\{}:\\", drive as char);
+        let drive_type_path = format!("{}:\\", drive as char);
+        let drive_type_wide: Vec<u16> = drive_type_path
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: drive_type_wide is NUL-terminated and remains alive for the call.
+        let drive_type = unsafe { GetDriveTypeW(drive_type_wide.as_ptr()) };
+        if !matches!(drive_type, DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_RAMDISK) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Safe folder access is limited to local fixed, removable or RAM drives.",
+            ));
+        }
+
         let mut directory = OpenOptions::new()
             .access_mode(FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
             .share_mode(FILE_SHARE_READ_WRITE_DELETE)
