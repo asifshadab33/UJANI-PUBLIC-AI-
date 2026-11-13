@@ -33,7 +33,10 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, os, o
               <span> · {model.planning_ram_gib.minimum} GiB minimum planning guide / {model.planning_ram_gib.recommended} GiB recommended guide</span>
             </summary>
             <p>{model.purpose}</p>
+            <p><b>Publisher / family:</b> {model.publisher} · {model.family}</p>
+            <p><b>Runtime artifact:</b> {model.runtime_artifact}</p>
             <p><b>Useful for:</b> {model.tasks.join(", ").replace(/_/g, " ")}.</p>
+            <p><b>Candidate platforms:</b> Windows, macOS and Linux with a compatible, installed Ollama desktop runtime. Android and iOS are not supported by this desktop profile; UJANI must verify the exact runtime and architecture before recommending installation.</p>
             <p><b>Limitations:</b> {model.limitations.join(" ")}</p>
             <p><b>Storage:</b> Exact download and installed sizes depend on the verified quantised artifact and will be shown before download.</p>
             <p><b>Licence:</b> {model.license}</p>
