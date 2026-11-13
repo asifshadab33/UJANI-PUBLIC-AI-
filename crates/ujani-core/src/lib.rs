@@ -2,8 +2,9 @@
 
 #![forbid(unsafe_code)]
 
-pub mod self_evolution;
 //! This crate intentionally does not execute tools, inspect hardware, or make network calls.
+
+pub mod self_evolution;
 
 use std::collections::BTreeSet;
 
