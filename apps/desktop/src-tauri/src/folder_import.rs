@@ -8,6 +8,7 @@ use serde::Serialize;
 use std::{
     io::Read,
     path::Path,
+    time::Duration,
 };
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
@@ -16,6 +17,7 @@ const MAX_FILES: usize = 10;
 const MAX_DIRECTORY_ENTRIES: usize = 5_000;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
+const MAX_FOLDER_SCAN_DURATION: Duration = Duration::from_secs(15);
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
@@ -204,6 +206,15 @@ pub async fn process_selected_folder(
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
 fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<Vec<SelectedTextFile>, String> {
+    collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)
+}
+
+fn collect_selected_folder_with_budget(
+    folder: &Path,
+    token: &CancellationToken,
+    max_duration: Duration,
+) -> Result<Vec<SelectedTextFile>, String> {
+    crate::ensure_task_not_cancelled(token)?;
     let walked = crate::safe_fs::walk_directory(
         folder,
         crate::safe_fs::WalkOptions {
@@ -213,12 +224,12 @@ fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<V
             links: crate::safe_fs::LinkPolicy::Reject,
             errors: crate::safe_fs::WalkErrorPolicy::Reject,
             file_filter: Some(is_supported_text_file),
-        max_duration: None,
+        max_duration: Some(max_duration),
 },
         token,
     )?;
     if walked.truncated {
-        return Err(format!("The selected folder contains more than {MAX_DIRECTORY_ENTRIES} entries; choose a smaller folder."));
+        return Err(format!("The selected folder exceeds the {MAX_DIRECTORY_ENTRIES}-entry or scan-time limit; choose a smaller folder or retry."));
     }
 
     let selected_root = walked.root.clone();
@@ -273,7 +284,7 @@ fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<V
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_selected_folder, MAX_FILE_BYTES, MAX_TOTAL_BYTES};
+    use super::{collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES, MAX_TOTAL_BYTES};
     use tokio_util::sync::CancellationToken;
     use std::{
         fs,
@@ -310,6 +321,18 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
         assert!(collect_selected_folder(&folder.0, &token).is_err());
+    }
+
+    #[test]
+    fn rejects_folder_scan_when_time_budget_expires() {
+        let folder = TestFolder::new();
+        fs::write(folder.0.join("safe.txt"), "content").unwrap();
+        let error = collect_selected_folder_with_budget(
+            &folder.0,
+            &CancellationToken::new(),
+            Duration::from_millis(0),
+        ).unwrap_err();
+        assert!(error.contains("scan-time limit"));
     }
 
     #[test]
