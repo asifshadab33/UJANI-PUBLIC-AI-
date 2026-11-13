@@ -44,6 +44,12 @@ test("mobile platforms never receive a desktop Ollama recommendation", () => {
   }
 });
 
+test("unknown desktop platforms never receive an unverified Ollama recommendation", () => {
+  for (const os of ["FreeBSD", "ChromeOS", "Plan9", "Unknown OS"]) {
+    assert.equal(recommendDefaultModel(32768, 16384, os).model, null);
+  }
+});
+
 test("higher profile thresholds take precedence when all evidence is sufficient", () => {
   assert.equal(recommendDefaultModel(32768, 16384, "Linux").model, "qwen3:8b");
 });
