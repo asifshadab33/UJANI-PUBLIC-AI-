@@ -72,6 +72,30 @@ REQUIRED_POLICY_MARKERS = {
         '"file.analyze_text"',
         '"document.summarize"',
     ),
+    ("folder_import.rs", "collect_selected_folder"): (
+        "collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)",
+    ),
+    ("folder_import.rs", "collect_selected_folder_with_budget"): (
+        "crate::ensure_task_not_cancelled(token)?;",
+        "crate::safe_fs::walk_directory(",
+        "max_duration: Some(max_duration)",
+        "if walked.truncated",
+        "crate::ensure_task_not_cancelled(token)?;",
+        "crate::safe_fs::open_regular_file_under_root",
+    ),
+}
+
+REQUIRED_ORDERED_MARKERS = {
+    ("folder_import.rs", "process_selected_folder"): (
+        "crate::register_active_task(&control, &task_id)?;",
+        "crate::get_capability_snapshot().await?;",
+        "crate::ensure_task_not_cancelled(&task_token)?;",
+        "let picker_token = task_token.clone();",
+        "blocking_pick_folder()",
+        "collect_selected_folder(&path, &picker_token)",
+        "crate::ensure_task_not_cancelled(&task_token)?;",
+        "crate::run_managed_task_registered(",
+    ),
 }
 
 REQUIRED_MARKERS = {
@@ -112,6 +136,15 @@ REQUIRED_MARKERS = {
 }
 
 
+def require_ordered_markers(path: str, name: str, body: str, markers: tuple[str, ...]) -> None:
+    cursor = 0
+    for marker in markers:
+        position = body.find(marker, cursor)
+        if position < 0:
+            raise SystemExit(f"{path}:{name} has missing or out-of-order safety marker: {marker}")
+        cursor = position + len(marker)
+
+
 def main() -> None:
     for (path, name), markers in REQUIRED_MARKERS.items():
         body = function_body(path, name)
@@ -134,6 +167,9 @@ def main() -> None:
             raise SystemExit(
                 f"{path}:{name} is missing local policy preflight: " + ", ".join(missing)
             )
+
+    for (path, name), markers in REQUIRED_ORDERED_MARKERS.items():
+        require_ordered_markers(path, name, function_body(path, name), markers)
 
     required_tests = {
         "lib.rs": (
