@@ -8,13 +8,16 @@ use serde::Serialize;
 use std::{
     io::Read,
     path::Path,
+    time::Duration,
 };
 use tauri_plugin_dialog::DialogExt;
+use tokio_util::sync::CancellationToken;
 
 const MAX_FILES: usize = 10;
 const MAX_DIRECTORY_ENTRIES: usize = 5_000;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
+const MAX_FOLDER_SCAN_DURATION: Duration = Duration::from_secs(15);
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
@@ -69,9 +72,16 @@ pub async fn process_selected_folder(
         return Err("Invalid local model identifier.".into());
     }
 
+    // Reserve the task ID before capability probes, opening the OS picker, or reading
+    // selected files. Duplicate/invalid IDs must be rejected before those side effects.
+    let registration = crate::register_active_task(&control, &task_id)?;
+    let task_token = registration.token.clone();
+    crate::ensure_task_not_cancelled(&task_token)?;
+
     // Require a live CPU plan before opening the native picker. If a local model
     // is available and requested, preflight the model-backed summary as well.
     let capability_snapshot = crate::get_capability_snapshot().await?;
+    crate::ensure_task_not_cancelled(&task_token)?;
     crate::require_local_operation(&capability_snapshot, "file.analyze_text", &mode)?;
     let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
     if ollama_available {
@@ -81,10 +91,15 @@ pub async fn process_selected_folder(
             &mode,
         )?;
     }
+    // Capability/model preflight can yield while the user cancels the task.
+    // Re-check immediately before opening the native picker so a cancelled
+    // operation cannot initiate another user-visible side effect.
+    crate::ensure_task_not_cancelled(&task_token)?;
 
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
     let picker_app = app.clone();
+    let picker_token = task_token.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
         let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
@@ -92,7 +107,7 @@ pub async fn process_selected_folder(
         let path = folder
             .into_path()
             .map_err(|_| "The selected folder path is not a local filesystem path.".to_string())?;
-        collect_selected_folder(&path).map(Some)
+        collect_selected_folder(&path, &picker_token).map(Some)
     })
     .await
     .map_err(|error| format!("Folder selection worker failed: {error}"))??;
@@ -119,15 +134,15 @@ pub async fn process_selected_folder(
         receipt_fields.push(file.name.as_bytes());
         receipt_fields.push(file.content.as_bytes());
     }
+    crate::ensure_task_not_cancelled(&task_token)?;
     let receipt = crate::local_receipt_context(
         "folder.import",
         receipt_model,
         &receipt_fields,
     )?;
 
-    crate::run_managed_task(
+    crate::run_managed_task_registered(
         app,
-        &control,
         task_id,
         "Folder import",
         receipt,
@@ -184,12 +199,22 @@ pub async fn process_selected_folder(
                 total_bytes,
             })
         },
+        registration,
     )
     .await
 }
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
-fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, String> {
+fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<Vec<SelectedTextFile>, String> {
+    collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)
+}
+
+fn collect_selected_folder_with_budget(
+    folder: &Path,
+    token: &CancellationToken,
+    max_duration: Duration,
+) -> Result<Vec<SelectedTextFile>, String> {
+    crate::ensure_task_not_cancelled(token)?;
     let walked = crate::safe_fs::walk_directory(
         folder,
         crate::safe_fs::WalkOptions {
@@ -199,18 +224,21 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
             links: crate::safe_fs::LinkPolicy::Reject,
             errors: crate::safe_fs::WalkErrorPolicy::Reject,
             file_filter: Some(is_supported_text_file),
-        max_duration: None,
-},
-        &tokio_util::sync::CancellationToken::new(),
+            max_duration: Some(max_duration),
+        },
+        token,
     )?;
     if walked.truncated {
-        return Err(format!("The selected folder contains more than {MAX_DIRECTORY_ENTRIES} entries; choose a smaller folder."));
+        return Err(format!(
+            "The selected folder exceeds the {MAX_DIRECTORY_ENTRIES}-entry or scan-time limit; choose a smaller folder or retry."
+        ));
     }
 
     let selected_root = walked.root.clone();
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
     for entry in walked.files {
+        crate::ensure_task_not_cancelled(token)?;
         // The walker returns canonical paths. Require a direct child and reopen it
         // through the root-bound helper: Unix pins each ancestor with openat and
         // O_NOFOLLOW; other platforms retain canonical containment plus final-link
@@ -258,7 +286,11 @@ fn collect_selected_folder(folder: &Path) -> Result<Vec<SelectedTextFile>, Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_selected_folder, MAX_FILE_BYTES, MAX_TOTAL_BYTES};
+    use super::{
+        collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
+        MAX_TOTAL_BYTES,
+    };
+    use tokio_util::sync::CancellationToken;
     use std::{
         fs,
         path::PathBuf,
@@ -288,6 +320,28 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_task_is_rejected_before_folder_traversal() {
+        let folder = TestFolder::new();
+        fs::write(folder.0.join("safe.txt"), "content").unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+        assert!(collect_selected_folder(&folder.0, &token).is_err());
+    }
+
+    #[test]
+    fn rejects_folder_scan_when_time_budget_expires() {
+        let folder = TestFolder::new();
+        fs::write(folder.0.join("safe.txt"), "content").unwrap();
+        let error = collect_selected_folder_with_budget(
+            &folder.0,
+            &CancellationToken::new(),
+            std::time::Duration::from_millis(0),
+        )
+        .unwrap_err();
+        assert!(error.contains("scan-time limit"));
+    }
+
+    #[test]
     fn reads_only_supported_immediate_text_files_in_sorted_order() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("zeta.txt"), "last file").unwrap();
@@ -296,7 +350,7 @@ mod tests {
         fs::create_dir(folder.0.join("nested")).unwrap();
         fs::write(folder.0.join("nested").join("hidden.txt"), "not recursive").unwrap();
 
-        let files = collect_selected_folder(&folder.0).unwrap();
+        let files = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].name, "alpha.md");
         assert_eq!(files[1].name, "zeta.txt");
@@ -308,14 +362,14 @@ mod tests {
         for index in 0..11 {
             fs::write(folder.0.join(format!("file-{index}.txt")), "hello").unwrap();
         }
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("more than 10"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("more than 10"));
     }
 
     #[test]
     fn rejects_oversized_file() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("large.txt"), vec![b'x'; MAX_FILE_BYTES + 1]).unwrap();
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("256 KiB"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("256 KiB"));
     }
 
     #[test]
@@ -326,14 +380,14 @@ mod tests {
             fs::write(folder.0.join(format!("file-{index}.txt")), &payload).unwrap();
         }
         assert!(MAX_TOTAL_BYTES < payload.len() * 5);
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("1 MiB"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("1 MiB"));
     }
 
     #[test]
     fn rejects_non_utf8_text() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("invalid.txt"), [0xff, 0xfe, 0xfd]).unwrap();
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("UTF-8"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("UTF-8"));
     }
 
     #[cfg(unix)]
@@ -343,7 +397,7 @@ mod tests {
         let link = folder.0.with_extension("link");
         std::os::unix::fs::symlink(&folder.0, &link).unwrap();
 
-        let error = collect_selected_folder(&link).unwrap_err();
+        let error = collect_selected_folder(&link, &CancellationToken::new()).unwrap_err();
         assert!(error.contains("symbolic link") || error.contains("reparse point"));
         let _ = fs::remove_file(link);
     }
@@ -355,7 +409,7 @@ mod tests {
         let outside = folder.0.with_extension("outside.txt");
         fs::write(&outside, "outside").unwrap();
         std::os::unix::fs::symlink(&outside, folder.0.join("escape.txt")).unwrap();
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("symbolic link"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("symbolic link"));
         let _ = fs::remove_file(outside);
     }
 }

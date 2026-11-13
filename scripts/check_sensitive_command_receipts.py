@@ -72,6 +72,30 @@ REQUIRED_POLICY_MARKERS = {
         '"file.analyze_text"',
         '"document.summarize"',
     ),
+    ("folder_import.rs", "collect_selected_folder"): (
+        "collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)",
+    ),
+    ("folder_import.rs", "collect_selected_folder_with_budget"): (
+        "crate::ensure_task_not_cancelled(token)?;",
+        "crate::safe_fs::walk_directory(",
+        "max_duration: Some(max_duration)",
+        "if walked.truncated",
+        "crate::ensure_task_not_cancelled(token)?;",
+        "crate::safe_fs::open_regular_file_under_root",
+    ),
+}
+
+REQUIRED_ORDERED_MARKERS = {
+    ("folder_import.rs", "process_selected_folder"): (
+        "crate::register_active_task(&control, &task_id)?;",
+        "crate::get_capability_snapshot().await?;",
+        "crate::ensure_task_not_cancelled(&task_token)?;",
+        "let picker_token = task_token.clone();",
+        "blocking_pick_folder()",
+        "collect_selected_folder(&path, &picker_token)",
+        "crate::ensure_task_not_cancelled(&task_token)?;",
+        "crate::run_managed_task_registered(",
+    ),
 }
 
 REQUIRED_MARKERS = {
@@ -90,7 +114,7 @@ REQUIRED_MARKERS = {
         "reserve_execution_receipt_slot",
         "outcome: Some(outcome)",
     ),
-    ("folder_import.rs", "process_selected_folder"): ("run_managed_task(",),
+    ("folder_import.rs", "process_selected_folder"): ("run_managed_task_registered(",),
     ("search_cache.rs", "set_local_search_cache_settings"): ("with_local_state_receipt",),
     ("search_cache.rs", "clear_local_search_cache"): ("with_local_state_receipt",),
     ("history.rs", "set_task_history_enabled"): ("with_local_state_receipt",),
@@ -110,6 +134,19 @@ REQUIRED_MARKERS = {
         "latest.device_id != current.device_id",
     ),
 }
+
+
+def require_ordered_markers(
+    path: str, name: str, body: str, markers: tuple[str, ...]
+) -> None:
+    cursor = 0
+    for marker in markers:
+        position = body.find(marker, cursor)
+        if position < 0:
+            raise SystemExit(
+                f"{path}:{name} has missing or out-of-order safety marker: {marker}"
+            )
+        cursor = position + len(marker)
 
 
 def main() -> None:
@@ -134,6 +171,11 @@ def main() -> None:
             raise SystemExit(
                 f"{path}:{name} is missing local policy preflight: " + ", ".join(missing)
             )
+
+    for (path, name), markers in REQUIRED_ORDERED_MARKERS.items():
+        require_ordered_markers(
+            path, name, function_body(path, name), markers
+        )
 
     required_tests = {
         "lib.rs": (
