@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "summary": "Improve an accessible label in a non-core interface module.",
+  "findings": [
+    {
+      "category": "accessibility",
+      "severity": "low",
+      "path": "apps/desktop/src/LocalFinder.tsx",
+      "line_start": 10,
+      "line_end": 15,
+      "description": "The result label is not explicit.",
+      "recommendation": "Add an accessible label."
+    }
+  ],
+  "changes": [
+    {
+      "path": "apps/desktop/src/LocalFinder.tsx",
+      "operation": "modify",
+      "summary": "Add an accessible label to the result control.",
+      "patch_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}

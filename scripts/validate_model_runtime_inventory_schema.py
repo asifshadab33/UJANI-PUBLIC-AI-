@@ -44,6 +44,44 @@ def validate_shared_contract_manifest() -> None:
         )
 
 
+def validate_self_evolution_schema() -> None:
+    schema_path = Path(__file__).resolve().parents[1] / "schemas/self-evolution-proposal-v1.schema.json"
+    fixture_path = Path(__file__).resolve().parents[1] / "schemas/test-vectors/self-evolution-proposal-v1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator.check_schema(schema)
+    assert schema["$id"] == "urn:ujani:self-evolution-proposal:v1"
+    assert schema["properties"]["schema_version"]["const"] == 1
+    validator = jsonschema.Draft202012Validator(schema)
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    validator.validate(fixture)
+
+    # The schema is a structural contract, not an authorization grant.
+    # The model must not be able to supply a repository, source revision,
+    # proposal ID or writable scope; trusted host code binds those values.
+    invalid_path = copy.deepcopy(fixture)
+    invalid_path["changes"][0]["path"] = "../outside.rs"
+    assert list(validator.iter_errors(invalid_path))
+
+    invalid_digest = copy.deepcopy(fixture)
+    invalid_digest["changes"][0]["patch_sha256"] = "not-a-digest"
+    assert list(validator.iter_errors(invalid_digest))
+
+    incomplete_line_range = copy.deepcopy(fixture)
+    incomplete_line_range["findings"][0].pop("line_end")
+    assert list(validator.iter_errors(incomplete_line_range))
+
+    unknown_field = copy.deepcopy(fixture)
+    unknown_field["changes"][0]["unreviewed_permission"] = "shell"
+    assert list(validator.iter_errors(unknown_field))
+
+    # Authority-bearing fields are supplied only by the trusted host envelope.
+    for forbidden_field in ("proposal_id", "target", "scope"):
+        model_claim = copy.deepcopy(fixture)
+        model_claim[forbidden_field] = "model-must-not-authorize-this"
+        assert list(validator.iter_errors(model_claim))
+    print("Self-evolution proposal v1 schema and fixture checks passed.")
+
+
 def main() -> None:
     validate_shared_contract_manifest()
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -86,6 +124,8 @@ def main() -> None:
     unknown_model_field["models"][0]["unrecognised_capability_claim"] = True
     assert list(validator.iter_errors(unknown_model_field))
     print("Model/runtime inventory v1 schema and shared fixture checks passed.")
+
+    validate_self_evolution_schema()
 
     from validate_personal_enterprise_task_contract import main as validate_task_contract
     validate_task_contract()

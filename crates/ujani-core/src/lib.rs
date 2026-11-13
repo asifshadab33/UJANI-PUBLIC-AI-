@@ -1,7 +1,10 @@
 //! Minimal, side-effect-free foundations for UJANI Public AI.
 
 #![forbid(unsafe_code)]
+
 //! This crate intentionally does not execute tools, inspect hardware, or make network calls.
+
+pub mod self_evolution;
 
 use std::collections::BTreeSet;
 
