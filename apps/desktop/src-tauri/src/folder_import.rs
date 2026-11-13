@@ -224,12 +224,14 @@ fn collect_selected_folder_with_budget(
             links: crate::safe_fs::LinkPolicy::Reject,
             errors: crate::safe_fs::WalkErrorPolicy::Reject,
             file_filter: Some(is_supported_text_file),
-        max_duration: Some(max_duration),
-},
+            max_duration: Some(max_duration),
+        },
         token,
     )?;
     if walked.truncated {
-        return Err(format!("The selected folder exceeds the {MAX_DIRECTORY_ENTRIES}-entry or scan-time limit; choose a smaller folder or retry."));
+        return Err(format!(
+            "The selected folder exceeds the {MAX_DIRECTORY_ENTRIES}-entry or scan-time limit; choose a smaller folder or retry."
+        ));
     }
 
     let selected_root = walked.root.clone();
@@ -284,7 +286,10 @@ fn collect_selected_folder_with_budget(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES, MAX_TOTAL_BYTES};
+    use super::{
+        collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
+        MAX_TOTAL_BYTES,
+    };
     use tokio_util::sync::CancellationToken;
     use std::{
         fs,
@@ -331,7 +336,8 @@ mod tests {
             &folder.0,
             &CancellationToken::new(),
             Duration::from_millis(0),
-        ).unwrap_err();
+        )
+        .unwrap_err();
         assert!(error.contains("scan-time limit"));
     }
 
