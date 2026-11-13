@@ -329,14 +329,14 @@ mod tests {
         for index in 0..11 {
             fs::write(folder.0.join(format!("file-{index}.txt")), "hello").unwrap();
         }
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("more than 10"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("more than 10"));
     }
 
     #[test]
     fn rejects_oversized_file() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("large.txt"), vec![b'x'; MAX_FILE_BYTES + 1]).unwrap();
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("256 KiB"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("256 KiB"));
     }
 
     #[test]
@@ -347,14 +347,14 @@ mod tests {
             fs::write(folder.0.join(format!("file-{index}.txt")), &payload).unwrap();
         }
         assert!(MAX_TOTAL_BYTES < payload.len() * 5);
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("1 MiB"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("1 MiB"));
     }
 
     #[test]
     fn rejects_non_utf8_text() {
         let folder = TestFolder::new();
         fs::write(folder.0.join("invalid.txt"), [0xff, 0xfe, 0xfd]).unwrap();
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("UTF-8"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("UTF-8"));
     }
 
     #[cfg(unix)]
@@ -364,7 +364,7 @@ mod tests {
         let link = folder.0.with_extension("link");
         std::os::unix::fs::symlink(&folder.0, &link).unwrap();
 
-        let error = collect_selected_folder(&link).unwrap_err();
+        let error = collect_selected_folder(&link, &CancellationToken::new()).unwrap_err();
         assert!(error.contains("symbolic link") || error.contains("reparse point"));
         let _ = fs::remove_file(link);
     }
@@ -376,7 +376,7 @@ mod tests {
         let outside = folder.0.with_extension("outside.txt");
         fs::write(&outside, "outside").unwrap();
         std::os::unix::fs::symlink(&outside, folder.0.join("escape.txt")).unwrap();
-        assert!(collect_selected_folder(&folder.0).unwrap_err().contains("symbolic link"));
+        assert!(collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap_err().contains("symbolic link"));
         let _ = fs::remove_file(outside);
     }
 }
