@@ -683,7 +683,9 @@ mod tests {
     fn chat_body_rejects_text_that_exceeds_the_conservative_context_budget() {
         let oversized = "a".repeat(NUM_CTX as usize);
         let turn = Turn { role: "user", content: &oversized };
-        let error = build_chat_body("qwen3:0.6b", None, &[turn], false).unwrap_err();
+        let error = build_chat_body("qwen3:0.6b", None, &[turn], false)
+            .err()
+            .expect("oversized context must be rejected");
         assert!(error.contains("safe 4096-token context budget"));
         assert!(oversized.len() < MAX_PROMPT_BYTES);
     }
@@ -693,7 +695,9 @@ mod tests {
         let system = "s".repeat(2_000);
         let history = "h".repeat(2_000);
         let turn = Turn { role: "user", content: &history };
-        let error = build_chat_body("qwen3:0.6b", Some(&system), &[turn], false).unwrap_err();
+        let error = build_chat_body("qwen3:0.6b", Some(&system), &[turn], false)
+            .err()
+            .expect("combined system and history must be rejected");
         assert!(error.contains("safe 4096-token context budget"));
     }
 
@@ -709,7 +713,9 @@ mod tests {
         let turns: Vec<_> = (0..=MAX_CHAT_TURNS)
             .map(|_| Turn { role: "user", content: "x" })
             .collect();
-        let error = build_chat_body("qwen3:0.6b", None, &turns, false).unwrap_err();
+        let error = build_chat_body("qwen3:0.6b", None, &turns, false)
+            .err()
+            .expect("too many turns must be rejected");
         assert!(error.contains("between 1 and 32 turns"));
     }
 
