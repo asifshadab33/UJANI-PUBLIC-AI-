@@ -143,9 +143,13 @@ mod windows_handle {
         ptr,
     };
 
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetDriveTypeW, DRIVE_FIXED, DRIVE_RAMDISK, DRIVE_REMOVABLE,
-    };
+    use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+
+    // GetDriveTypeW values from the Windows SDK (WinBase.h). windows-sys 0.61
+    // exposes the function in Storage::FileSystem but not these WinBase constants.
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_RAMDISK: u32 = 6;
 
     #[repr(C)]
     struct UnicodeString {
@@ -336,7 +340,10 @@ mod windows_handle {
             .collect();
         // SAFETY: drive_type_wide is NUL-terminated and remains alive for the call.
         let drive_type = unsafe { GetDriveTypeW(drive_type_wide.as_ptr()) };
-        if !matches!(drive_type, DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_RAMDISK) {
+        if drive_type != DRIVE_FIXED
+            && drive_type != DRIVE_REMOVABLE
+            && drive_type != DRIVE_RAMDISK
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Safe folder access is limited to local fixed, removable or RAM drives.",
