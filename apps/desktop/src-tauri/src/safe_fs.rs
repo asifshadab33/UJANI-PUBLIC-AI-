@@ -510,7 +510,7 @@ pub(crate) fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::open_regular_file;
+    use super::open_regular_file_under_root;
     #[cfg(unix)]
     use super::is_reparse_point;
     use std::{fs, io::Read, time::{SystemTime, UNIX_EPOCH}};
@@ -522,11 +522,14 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let file = root.join("data.txt");
         fs::write(&file, b"local data").unwrap();
-        let mut handle = open_regular_file(&file).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let canonical_file = canonical_root.join("data.txt");
+        let mut handle =
+            open_regular_file_under_root(&canonical_root, &canonical_file).unwrap();
         let mut contents = Vec::new();
         handle.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"local data");
-        assert!(open_regular_file(&root).is_err());
+        assert!(open_regular_file_under_root(&canonical_root, &canonical_root).is_err());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -597,7 +600,8 @@ mod tests {
         let link = root.join("link.txt");
         fs::write(&target, b"secret").unwrap();
         symlink(&target, &link).unwrap();
-        assert!(open_regular_file(&link).is_err());
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        assert!(open_regular_file_under_root(&canonical_root, &canonical_root.join("link.txt")).is_err());
         assert!(is_reparse_point(&fs::symlink_metadata(&link).unwrap()));
         let _ = fs::remove_dir_all(root);
     }
