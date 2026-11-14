@@ -38,7 +38,7 @@ REQUIRED_POLICY_MARKERS = {
     ),
     ("lib.rs", "execute_cloud_ai_task"): (
         "ujani_core::policy_gate::parse_data_class",
-        "ujani_core::policy_gate::evaluate_external_transfer",
+        "ujani_core::policy_gate::evaluate_registered_external_transfer",
         "cloud_gateway::validate_request",
         "native_consent::confirm_native",
         "reserve_cloud_tokens",
@@ -90,7 +90,7 @@ REQUIRED_POLICY_MARKERS = {
 REQUIRED_ORDERED_MARKERS = {
     ("lib.rs", "execute_cloud_ai_task"): (
         "ujani_core::policy_gate::parse_data_class",
-        "ujani_core::policy_gate::evaluate_external_transfer",
+        "ujani_core::policy_gate::evaluate_registered_external_transfer",
         "cloud_gateway::validate_request",
         "native_consent::confirm_native",
         "reserve_cloud_tokens",
@@ -254,6 +254,7 @@ def main() -> None:
     policy_gate_tests = (ROOT / "crates/ujani-core/src/policy_gate.rs").read_text(encoding="utf-8")
     for test_name in (
         "data_classification_parser_rejects_unknown_and_unclassified_values",
+        "external_transfer_requires_a_registered_operation",
         "external_transfer_requires_approval_and_blocks_sensitive_classes",
     ):
         if test_name not in policy_gate_tests:
