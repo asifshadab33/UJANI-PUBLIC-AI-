@@ -81,8 +81,54 @@ pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
   ExecutionTarget::LocalTool|ExecutionTarget::LocalModel if r.external_transfer=>return deny("local target cannot silently declare external transfer"),
   _=>{}
  }
- GateResult{decision:GateDecision::Allow,reason:"policy checks passed; dispatch must still enforce isolation, quotas, egress and cancellation",requires_isolation:true}
+ let requires_isolation = matches!(r.target, ExecutionTarget::EnterpriseWorker | ExecutionTarget::CloudProvider);
+ GateResult {
+  decision: GateDecision::Allow,
+  reason: if requires_isolation {
+   "policy checks passed; external dispatch must still enforce isolation, quotas, egress and cancellation"
+  } else {
+   "local policy checks passed; native execution must still enforce capability, resource, cancellation and receipt controls"
+  },
+  requires_isolation,
+ }
 }
+/// Evaluate the shared gate for one trusted local operation before local planning.
+/// The workload intent is fixed to ordinary productivity here; this is not an
+/// AI abuse classifier. Local operations never request external data transfer.
+pub fn evaluate_local_registered_operation(operation_id: &str, available_memory_mb: u64) -> GateResult {
+ let operation = crate::capability::registered_operations()
+  .into_iter()
+  .find(|candidate| candidate.id == operation_id);
+ let operation_registered = operation.is_some();
+ let target = match operation.as_ref() {
+  Some(value) if value.required_capabilities.iter().any(|capability| capability == "ollama.local") => ExecutionTarget::LocalModel,
+  _ => ExecutionTarget::LocalTool,
+ };
+ let requested_memory_mb = operation
+  .as_ref()
+  .map(|value| value.minimum_available_memory_mb.max(1))
+  .unwrap_or(1);
+ let request = ExecutionRequest {
+  task_id: "local-policy-preflight".into(),
+  operation_id: operation_id.into(),
+  target,
+  intent: WorkloadIntent::OrdinaryProductivity,
+  authorization_verified: false,
+  data_class: DataClass::Public,
+  external_transfer: false,
+  user_approved_transfer: false,
+  admin_approved_worker: false,
+  owner_opted_in: false,
+  operation_registered,
+  policy_version: 1,
+  max_runtime_seconds: 240,
+  requested_runtime_seconds: 240,
+  max_memory_mb: available_memory_mb,
+  requested_memory_mb,
+ };
+ evaluate_execution(&request)
+}
+
 #[cfg(test)] mod tests {
  use super::*;
  fn req(target:ExecutionTarget)->ExecutionRequest{ExecutionRequest{task_id:"t-1".into(),operation_id:"document.summarize".into(),target,intent:WorkloadIntent::OrdinaryProductivity,authorization_verified:false,data_class:DataClass::Public,external_transfer:false,user_approved_transfer:false,admin_approved_worker:true,owner_opted_in:true,operation_registered:true,policy_version:1,max_runtime_seconds:60,requested_runtime_seconds:30,max_memory_mb:1024,requested_memory_mb:512}}
@@ -93,6 +139,15 @@ pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
  #[test] fn worker_requires_admin_and_owner_consent(){let mut r=req(ExecutionTarget::EnterpriseWorker);r.owner_opted_in=false;assert_eq!(evaluate_execution(&r).decision,GateDecision::Deny);}
  #[test] fn unknown_intent_reviewed_on_every_route(){let mut r=req(ExecutionTarget::LocalTool);r.intent=WorkloadIntent::Unknown;assert_eq!(evaluate_execution(&r).decision,GateDecision::RequireReview);}
  #[test] fn budgets_fail_closed(){let mut r=req(ExecutionTarget::LocalTool);r.requested_memory_mb=2048;assert_eq!(evaluate_execution(&r).decision,GateDecision::Deny);}
+ #[test] fn local_registered_operation_uses_shared_gate_and_resource_budget() {
+  let accepted = evaluate_local_registered_operation("document.summarize", 4096);
+  assert_eq!(accepted.decision, GateDecision::Allow);
+  assert!(!accepted.requires_isolation);
+  let low_memory = evaluate_local_registered_operation("document.summarize", 512);
+  assert_eq!(low_memory.decision, GateDecision::Deny);
+  let unknown = evaluate_local_registered_operation("shell.execute", 4096);
+  assert_eq!(unknown.decision, GateDecision::Deny);
+ }
 }
 
 #[cfg(test)]
