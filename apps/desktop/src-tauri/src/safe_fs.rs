@@ -724,9 +724,10 @@ pub(crate) fn walk_directory(
             if options.file_filter.is_some_and(|filter| !filter(&path)) {
                 continue;
             }
-            // Open the final path without following links before canonicalizing it.
-            // This closes the final-component symlink/reparse race at the file boundary.
-            let handle = match open_regular_file(&path) {
+            // Reopen from the selected root with handle-relative, no-follow traversal.
+            // A final-component no-follow open is insufficient if an ancestor is replaced
+            // after enumeration; pin every component again before trusting file metadata.
+            let handle = match open_regular_file_under_root(&root, &path) {
                 Ok(handle) => handle,
                 Err(error) if options.errors == WalkErrorPolicy::Reject || options.links == LinkPolicy::Reject => {
                     return Err(format!("Cannot safely open selected file: {error}"));
