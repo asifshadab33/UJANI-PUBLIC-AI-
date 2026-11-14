@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Require an explicit security-audit disposition for every registered native IPC command.
+"""Check native IPC inventory completeness and selected security-wiring invariants.
 
-This checks inventory completeness and required metadata only. It does not prove
-that a policy gate is enforced, a receipt is durable, or a denial precedes side effects.
+These static checks catch regressions in known command paths. They do not prove
+runtime enforcement, durable receipt integrity, sandbox effectiveness or absence
+of alternate call paths; those still require code review and platform testing.
 """
 from __future__ import annotations
 
@@ -13,6 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "apps/desktop/src-tauri/src/lib.rs"
 MANIFEST = ROOT / "docs/native-command-security-map.json"
+CORE_CAPABILITY = ROOT / "crates/ujani-core/src/capability.rs"
+CORE_POLICY_GATE = ROOT / "crates/ujani-core/src/policy_gate.rs"
+CORE_TASK_GRAPH = ROOT / "crates/ujani-core/src/task_graph.rs"
+APP_SOURCE = ROOT / "apps/desktop/src/App.tsx"
+FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
 
 
 def find_matching_delimiter(source: str, opening_index: int, opening: str, closing: str) -> int:
@@ -174,6 +180,18 @@ def registered_commands(source: str) -> tuple[list[str], list[str]]:
     return default, command_tokens(source[peer_opening + 1:peer_end])
 
 
+def require_tokens(path: Path, tokens: tuple[str, ...], errors: list[str], label: str) -> str:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        errors.append(f"{label}: could not read {path}: {error}")
+        return ""
+    for token in tokens:
+        if token not in source:
+            errors.append(f"{label}: missing source invariant {token!r}")
+    return source
+
+
 def main() -> int:
     source = SOURCE.read_text(encoding="utf-8")
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -209,6 +227,58 @@ def main() -> int:
                     errors.append(f"{group_name}:{name}: missing non-empty {field}")
             if entry.get("receipt") == "required-but-disabled" and "disabled" not in entry.get("status", ""):
                 errors.append(f"{group_name}:{name}: disabled mutation must say so in status")
+    # The shared local policy evaluator must remain on both ordinary local
+    # operation planning and every node in a local task graph.
+    require_tokens(
+        CORE_CAPABILITY,
+        ("evaluate_local_registered_operation(", "policy.decision != crate::policy_gate::GateDecision::Allow"),
+        errors,
+        "local capability planner",
+    )
+    require_tokens(
+        CORE_TASK_GRAPH,
+        ("evaluate_local_registered_operation(", "Shared local execution policy blocked node"),
+        errors,
+        "local task-graph planner",
+    )
+    require_tokens(
+        CORE_POLICY_GATE,
+        ("pub fn evaluate_local_registered_operation(", "external_transfer: false", "max_runtime_seconds: 240"),
+        errors,
+        "shared local policy gate",
+    )
+
+    # Mock/demo commands must remain development-only at both UI and native IPC
+    # boundaries; release builds must not silently substitute word-count output.
+    if lib_source_count := source.count("debug_demo_commands_enabled()"):
+        if lib_source_count < 4:
+            errors.append("debug demo commands: expected native release guards for model inventory, mock inference and word-count demo")
+    else:
+        errors.append("debug demo commands: native build-profile guard is missing")
+    app_source = require_tokens(
+        APP_SOURCE,
+        ("if (!import.meta.env.DEV)", "import.meta.env.DEV && <div className=\"controls\">", "Run word-count demo"),
+        errors,
+        "development-only demo UI",
+    )
+
+    # Keep the model pull fail-closed until registry artifact and daemon-store
+    # evidence are available. A future enablement must replace this invariant.
+    if not re.search(r"fn model_download_preflight_ready\\(\\)\\s*->\\s*bool\\s*\\{\\s*false\\s*\\}", source):
+        errors.append("model download: fail-closed preflight must remain false until artifact/store verification is implemented")
+    if "evaluate_registered_external_transfer" not in source or '"cloud.ai.generate"' not in source:
+        errors.append("cloud dispatch: registered external-transfer policy must remain on the native dispatch path")
+
+    # Folder selection must be registered/cancellable before opening the native picker.
+    folder_source = require_tokens(
+        FOLDER_IMPORT,
+        ("register_active_task", "blocking_pick_folder", "ensure_task_not_cancelled"),
+        errors,
+        "folder import cancellation",
+    )
+    if folder_source and folder_source.find("register_active_task") > folder_source.find("blocking_pick_folder"):
+        errors.append("folder import: task registration must precede the native folder picker")
+
     if errors:
         print("Native command security-map check FAILED:")
         for error in errors:
@@ -218,7 +288,7 @@ def main() -> int:
         "Native command security-map check passed: "
         f"{len(default)} default commands and {len(peer)} peer-preview commands have explicit audit mappings."
     )
-    print("This is mapping completeness only; it is not a security sign-off or proof of runtime enforcement.")
+    print("Selected source-wiring checks passed; this is not a security sign-off or proof of runtime enforcement.")
     return 0
 
 
