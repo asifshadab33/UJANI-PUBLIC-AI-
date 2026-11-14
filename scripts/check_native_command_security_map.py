@@ -160,16 +160,19 @@ def command_tokens(text: str) -> list[str]:
 
 
 def rust_function_body(source: str, function_name: str) -> str:
-    """Return one Rust function body, excluding comments and string literals."""
-    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\(", source)
+    """Return the actual Rust function body, locating syntax only in masked code."""
+    # Preserve offsets/newlines while blanking comments and strings first. This
+    # prevents a commented-out fake fn declaration from shadowing the real item.
+    masked = strip_rust_noncode(source)
+    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\(", masked)
     if not match:
         raise ValueError(f"could not locate Rust function {function_name}")
-    opening_paren = source.find("(", match.start())
-    closing_paren = find_matching_delimiter(source, opening_paren, "(", ")")
-    opening_brace = source.find("{", closing_paren + 1)
+    opening_paren = masked.find("(", match.start())
+    closing_paren = find_matching_delimiter(masked, opening_paren, "(", ")")
+    opening_brace = masked.find("{", closing_paren + 1)
     if opening_brace < 0:
         raise ValueError(f"could not locate body for Rust function {function_name}")
-    closing_brace = find_matching_delimiter(source, opening_brace, "{", "}")
+    closing_brace = find_matching_delimiter(masked, opening_brace, "{", "}")
     return source[opening_brace + 1:closing_brace]
 
 
