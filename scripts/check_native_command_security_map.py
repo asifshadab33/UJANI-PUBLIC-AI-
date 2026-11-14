@@ -156,7 +156,36 @@ def strip_rust_noncode(text: str) -> str:
 
 def command_tokens(text: str) -> list[str]:
     cleaned = strip_rust_noncode(text)
-    return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", cleaned)
+    return re.findall(r"(?<![\\w$])(?:[A-Za-z_]\\w*::)*[A-Za-z_]\\w*", cleaned)
+
+
+def rust_function_body(source: str, function_name: str) -> str:
+    """Return one Rust function body, excluding comments and string literals."""
+    match = re.search(rf"\\bfn\\s+{re.escape(function_name)}\\s*\\(", source)
+    if not match:
+        raise ValueError(f"could not locate Rust function {function_name}")
+    opening_paren = source.find("(", match.start())
+    closing_paren = find_matching_delimiter(source, opening_paren, "(", ")")
+    opening_brace = source.find("{", closing_paren + 1)
+    if opening_brace < 0:
+        raise ValueError(f"could not locate body for Rust function {function_name}")
+    closing_brace = find_matching_delimiter(source, opening_brace, "{", "}")
+    return source[opening_brace + 1:closing_brace]
+
+
+def missing_demo_command_guards(source: str) -> list[str]:
+    """Identify demo commands whose own bodies lack the build-profile guard."""
+    expected = ("list_local_models", "run_local_model_task", "run_local_task")
+    missing = []
+    for name in expected:
+        try:
+            body = rust_function_body(source, name)
+        except ValueError:
+            missing.append(name)
+            continue
+        if "debug_demo_commands_enabled" not in command_tokens(body):
+            missing.append(name)
+    return missing
 
 
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
@@ -250,11 +279,12 @@ def main() -> int:
 
     # Mock/demo commands must remain development-only at both UI and native IPC
     # boundaries; release builds must not silently substitute word-count output.
-    if lib_source_count := source.count("debug_demo_commands_enabled()"):
-        if lib_source_count < 4:
-            errors.append("debug demo commands: expected native release guards for model inventory, mock inference and word-count demo")
-    else:
-        errors.append("debug demo commands: native build-profile guard is missing")
+    missing_demo_guards = missing_demo_command_guards(source)
+    if missing_demo_guards:
+        errors.append(
+            "debug demo commands: missing build-profile guard in "
+            + ", ".join(missing_demo_guards)
+        )
     require_tokens(
         APP_SOURCE,
         ("if (!import.meta.env.DEV)", "import.meta.env.DEV && <div className=\"controls\">", "Run word-count demo"),
