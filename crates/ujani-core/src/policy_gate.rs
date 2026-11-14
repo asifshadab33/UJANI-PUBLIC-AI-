@@ -27,10 +27,10 @@ pub fn parse_data_class(value: &str) -> Result<DataClass, &'static str> {
 /// Shared external-transfer policy used by native cloud dispatch.
 /// This is a user-declared classification, not automatic content inspection.
 pub fn evaluate_external_transfer(data_class: DataClass, user_approved: bool) -> GateDecision {
-    if !user_approved {
-        GateDecision::RequireReview
-    } else if matches!(data_class, DataClass::Confidential | DataClass::Restricted) {
+    if matches!(data_class, DataClass::Confidential | DataClass::Restricted) {
         GateDecision::Deny
+    } else if !user_approved {
+        GateDecision::RequireReview
     } else {
         GateDecision::Allow
     }
@@ -124,6 +124,10 @@ mod fail_closed_boundary_regressions {
             GateDecision::Allow
         );
         for class in [DataClass::Confidential, DataClass::Restricted] {
+            assert_eq!(
+                evaluate_external_transfer(class, false),
+                GateDecision::Deny
+            );
             assert_eq!(
                 evaluate_external_transfer(class, true),
                 GateDecision::Deny
