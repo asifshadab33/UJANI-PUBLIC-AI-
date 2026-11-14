@@ -476,6 +476,22 @@ pub(crate) fn open_regular_file_under_root(
     windows_handle::open_regular_file_under_root(root, path)
 }
 
+/// Best-effort fallback for targets without Unix/Windows handle-relative APIs.
+/// The caller performs canonical containment first; this check rejects links and
+/// non-regular files before opening, but cannot provide race-free handle-relative
+/// confinement on platforms without the required primitives.
+#[cfg(not(any(unix, windows)))]
+fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected path is not a regular non-symlink file",
+        ));
+    }
+    std::fs::File::open(path)
+}
+
 /// Non-Unix/non-Windows fallback retains final-component no-follow checks and verifies
 /// canonical containment. Windows uses native handle-relative traversal above.
 #[cfg(not(any(unix, windows)))]
