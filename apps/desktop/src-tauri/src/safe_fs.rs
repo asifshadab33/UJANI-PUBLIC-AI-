@@ -695,6 +695,16 @@ pub(crate) fn walk_directory(
     options: WalkOptions,
     cancellation: &CancellationToken,
 ) -> Result<WalkResult, String> {
+    // The Windows handle-relative implementation intentionally supports local
+    // fixed/removable/RAM drives only. Validate this before either importer or
+    // search starts enumeration, so UNC and mapped network selections fail
+    // explicitly instead of becoming silently skipped/truncated results.
+    #[cfg(windows)]
+    let _validated_root = windows_handle::open_directory_path_no_reparse(selected_root)
+        .map_err(|error| format!(
+            "The selected folder cannot be searched safely on Windows. Network shares, mapped network drives and device paths are not supported: {error}"
+        ))?;
+
     let root_metadata = std::fs::symlink_metadata(selected_root)
         .map_err(|error| format!("Cannot inspect selected folder: {error}"))?;
     if is_reparse_point(&root_metadata) || !root_metadata.is_dir() {
@@ -860,6 +870,37 @@ pub(crate) fn walk_directory(
 
 #[cfg(test)]
 mod walk_tests {
+    #[cfg(windows)]
+    #[test]
+    fn rejects_unsupported_network_and_device_roots_before_enumeration() {
+        let unsupported = [
+            r"\\\\server\\share\\folder",
+            r"\\\\?\\UNC\\server\\share\\folder",
+            r"\\\\.\\PhysicalDrive0",
+            r"C:relative\\folder",
+        ];
+        for value in unsupported {
+            let error = super::walk_directory(
+                std::path::Path::new(value),
+                super::WalkOptions {
+                    max_depth: 1,
+                    max_entries: 10,
+                    recursive: false,
+                    links: super::LinkPolicy::Reject,
+                    errors: super::WalkErrorPolicy::Reject,
+                    file_filter: None,
+                    max_duration: None,
+                },
+                &CancellationToken::new(),
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("cannot be searched safely on Windows"),
+                "unsupported root should be rejected before enumeration: {value}: {error}"
+            );
+        }
+    }
+
     use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
     use tokio_util::sync::CancellationToken;
