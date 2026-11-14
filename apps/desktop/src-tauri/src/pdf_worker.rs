@@ -267,6 +267,9 @@ mod tests {
             let error = std::fs::File::open("/etc/passwd")
                 .expect_err("path-based reads must be denied");
             assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+            let parsed = super::extract_pdf_text(&minimal_pdf_with_text())
+                .expect("in-memory PDF parsing must work after filesystem confinement");
+            assert!(parsed.contains("UJANI worker test"));
             std::io::stdout()
                 .write_all(b"UJANI_PDF_STDIO_REMAINS_AVAILABLE")
                 .expect("stdout remains available");
