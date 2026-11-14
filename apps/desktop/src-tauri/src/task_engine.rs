@@ -362,10 +362,13 @@ fn create_pdf_worker_job() -> Result<std::os::windows::io::OwnedHandle, String> 
 }
 
 #[cfg(target_os = "linux")]
+const SYS_FCHMODAT2: libc::c_long = 452; // Linux x86_64/AArch64 syscall ABI
+
+#[cfg(target_os = "linux")]
 fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     // The worker receives its input only after the parent has installed limits.
-    // Deny sockets plus process/thread creation and namespace changes so a parser
-    // compromise cannot create a helper process or move into another namespace.
+    // Deny sockets, process/thread creation, namespace changes and path-based
+    // permission changes so a parser compromise cannot escape this worker boundary.
     let mut denied = vec![
         libc::SYS_socket,
         libc::SYS_socketpair,
@@ -387,6 +390,8 @@ fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
         libc::SYS_clone3,
         libc::SYS_unshare,
         libc::SYS_setns,
+        // Defense in depth: reject path-based permission changes before exec as well.
+        SYS_FCHMODAT2,
     ];
     // The x86_64 ABI exposes fork/vfork syscalls; arm64 uses clone/clone3.
     #[cfg(target_arch = "x86_64")]
@@ -416,6 +421,7 @@ fn pdf_worker_failure_message(exit_code: Option<i32>) -> &'static str {
     match exit_code {
         Some(2) => "The PDF worker rejected the input size or header. Select a valid PDF no larger than 10 MiB.",
         Some(3) => "The file may be encrypted, malformed, scanned, or use unsupported PDF features. Try an unencrypted text-based PDF.",
+        Some(6) => "The PDF worker could not enforce its Linux filesystem boundary; extraction was stopped before reading the PDF.",
         _ => "The isolated PDF worker could not complete extraction. Try the file again or use a smaller PDF.",
     }
 }
@@ -561,17 +567,22 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
             Ok::<Vec<u8>, std::io::Error>(metadata)
         });
         let mut output = Vec::new();
-        (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
-            .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
-        writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
-            .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
+        let output_result = (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await;
+        // Keep both asynchronous results until the child exit code is known. A worker
+        // that fails closed before reading stdin may make write_all return BrokenPipe;
+        // its specific exit code is the more useful and security-relevant diagnostic.
+        let writer_result = writer.await;
         let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
-        let worker_metadata = stderr_reader.await
-            .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
-            .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
+        let worker_metadata_result = stderr_reader.await;
         if !status.success() {
             return Err(format!("PDF text extraction failed. {}", pdf_worker_failure_message(status.code())));
         }
+        output_result.map_err(|e| format!("Could not read PDF worker output: {e}"))?;
+        writer_result.map_err(|e| format!("PDF worker input task failed: {e}"))?
+            .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
+        let worker_metadata = worker_metadata_result
+            .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
+            .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
         if pdf_worker_output_was_truncated(&worker_metadata)? {
             return Err("PDF text extraction exceeded the 1 MiB worker output limit. The incomplete result was rejected; split the PDF into smaller sections and retry.".into());
@@ -598,6 +609,7 @@ mod pdf_worker_status_tests {
         assert!(pdf_worker_failure_message(Some(2)).contains("valid PDF"));
         assert!(pdf_worker_failure_message(Some(3)).contains("encrypted"));
         assert!(pdf_worker_failure_message(None).contains("Try the file again"));
+        assert!(pdf_worker_failure_message(Some(6)).contains("filesystem boundary"));
     }
 
     #[test]
@@ -885,10 +897,10 @@ mod windows_pdf_worker_job_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod pdf_worker_seccomp_tests {
-    use super::denied_pdf_worker_syscalls;
+    use super::{denied_pdf_worker_syscalls, SYS_FCHMODAT2};
 
     #[test]
-    fn linux_pdf_worker_blocks_network_process_creation_and_namespace_changes() {
+    fn linux_pdf_worker_blocks_network_process_creation_namespace_and_path_permission_changes() {
         let denied = denied_pdf_worker_syscalls();
         for syscall in [
             libc::SYS_socket,
@@ -911,6 +923,7 @@ mod pdf_worker_seccomp_tests {
             libc::SYS_clone3,
             libc::SYS_unshare,
             libc::SYS_setns,
+            SYS_FCHMODAT2,
         ] {
             assert!(denied.contains(&syscall), "missing denied syscall {syscall}");
         }

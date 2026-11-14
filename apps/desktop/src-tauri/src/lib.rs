@@ -103,7 +103,13 @@ fn pdf_worker_resource_limits_state() -> CapabilityState {
 }
 
 fn pdf_worker_filesystem_isolation_state() -> CapabilityState {
-    CapabilityState::Unavailable
+    if cfg!(target_os = "linux") {
+        // A post-loader seccomp boundary is configured, but this build has not
+        // run a non-destructive enforcement probe on the current device.
+        CapabilityState::Unknown
+    } else {
+        CapabilityState::Unavailable
+    }
 }
 
 fn pdf_worker_network_isolation_state() -> CapabilityState {
@@ -183,7 +189,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             id: "pdf.worker.filesystem_isolation".into(), category: "security".into(),
             state: pdf_worker_filesystem_isolation_state(),
             source: "Current OS-specific sidecar policy".into(),
-            detail: "No deny-by-default filesystem read boundary is configured on Windows, Linux or macOS. The worker retains the current user's filesystem read permissions; a compromised PDF parser may read files accessible to that user. Do not treat resource limits or network denial as filesystem isolation.".into(),
+            detail: "Linux configures a post-loader seccomp filter that closes inherited non-stdio descriptors and denies path-based file-open, handle-open and io_uring operations before PDF bytes are read; enforcement remains Unknown until a device probe runs. Windows and macOS still lack a deny-by-default filesystem-read boundary: the worker may retain the current user's file-read permissions there. Do not treat resource limits or network denial as filesystem isolation.".into(),
         },
         CapabilityRecord {
             id: "pdf.worker.network_isolation".into(), category: "security".into(),
@@ -2408,9 +2414,14 @@ mod model_capability_selection_tests {
     #[test]
     fn pdf_worker_isolation_is_not_claimed_available_without_device_verification() {
         assert_eq!(super::pdf_worker_resource_limits_state(), super::CapabilityState::Unknown);
+        let expected_filesystem_state = if cfg!(target_os = "linux") {
+            super::CapabilityState::Unknown
+        } else {
+            super::CapabilityState::Unavailable
+        };
         assert_eq!(
             super::pdf_worker_filesystem_isolation_state(),
-            super::CapabilityState::Unavailable
+            expected_filesystem_state
         );
         let expected_network_state = if cfg!(target_os = "windows") {
             super::CapabilityState::Unavailable

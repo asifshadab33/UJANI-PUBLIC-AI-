@@ -5,9 +5,11 @@ The PDF parser handles untrusted bytes in a child process. The controls below ap
 ## Linux
 
 - The child applies resource limits before executing the worker: 45 seconds CPU, 768 MiB address space, 16 file descriptors, zero file growth and zero core dumps.
-- It sets `no_new_privs` and installs seccomp before the worker executable runs.
-- The seccomp filter fails closed on an unexpected syscall architecture and denies network socket operations, process/thread creation and namespace changes.
-- The filter includes the x86_64 x32 ABI rejection. Supported architecture claims are limited to the architectures covered by the build/test matrix.
+- The parent sets `no_new_privs` and installs seccomp before exec to deny network socket operations, process/thread creation and namespace changes. The filter fails closed on an unexpected syscall architecture and rejects the x86_64 x32 ABI.
+- After the dynamic loader has started the worker, but before it reads PDF bytes, the worker closes every inherited descriptor above stdin/stdout/stderr with `close_range` and stacks a second seccomp filter. It denies `open`, `openat`, `openat2`, handle-based opens, directory enumeration, file mutation, `io_uring`, pidfd descriptor transfer, process-memory access and exec syscalls.
+- The parent pre-exec denylist and worker-local second filter both deny the separate `fchmodat2` permission-change syscall (Linux syscall number 452 on the supported x86_64 and AArch64 ABIs). The worker-local filter also denies legacy x86_64 pathname mutation syscalls and modern `*at` mutation variants. The subprocess regression uses a disposable file to verify `fchmodat2` returns `EPERM` and leaves its mode unchanged; x86_64 probes also verify unlink, rename and truncate return `EPERM` and preserve the source bytes.
+- The worker receives untrusted PDF bytes only through stdin and returns bounded text through stdout; stderr carries only the fixed truncation marker. If descriptor closure or filter installation fails (including on a kernel without `close_range`), the worker exits with code 6 before reading the PDF.
+- A Linux subprocess regression proves that an inherited non-stdio descriptor is closed, opening `/etc/passwd` is denied with `EPERM`, and stdout remains available. This is worker-level path-open confinement, not a full application sandbox. Supported architecture claims remain limited to the build/test matrix.
 
 ## macOS
 
@@ -31,4 +33,4 @@ The PDF parser handles untrusted bytes in a child process. The controls below ap
 
 ## Evidence status
 
-GitHub Actions validates compilation, Rust tests, CodeQL and installer builds on its Linux, Windows and macOS runners. Those checks are useful regression evidence, not a substitute for hands-on tests on separate macOS Intel/Apple Silicon devices or a security assessment of the deployed OS versions. Unsupported restrictions must remain labelled unknown rather than inferred from a successful build.
+GitHub Actions validates compilation, Rust tests, CodeQL and installer builds on its Linux, Windows and macOS runners. Linux now has an automated subprocess probe for the worker's path-open boundary, but the runtime capability remains Unknown until a supported-device smoke test confirms the deployed kernel enforces it. macOS still relies on deprecated `sandbox-exec` and does not deny arbitrary file reads; Windows Job Objects do not deny file reads or network access. Those platform gaps remain release blockers. CI is not a substitute for hands-on tests on macOS Intel/Apple Silicon devices or a security assessment of deployed OS versions. Unsupported restrictions must remain labelled unknown rather than inferred from a successful build.
