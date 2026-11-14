@@ -255,7 +255,7 @@ def main() -> int:
             errors.append("debug demo commands: expected native release guards for model inventory, mock inference and word-count demo")
     else:
         errors.append("debug demo commands: native build-profile guard is missing")
-    app_source = require_tokens(
+    require_tokens(
         APP_SOURCE,
         ("if (!import.meta.env.DEV)", "import.meta.env.DEV && <div className=\"controls\">", "Run word-count demo"),
         errors,
