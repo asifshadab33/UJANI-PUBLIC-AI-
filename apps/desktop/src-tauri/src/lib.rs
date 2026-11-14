@@ -444,21 +444,37 @@ async fn execute_cloud_ai_task(
  prompt: String,
  mode: String,
  external_data_approved: bool,
+ data_classification: String,
  token_parameter: String,
 ) -> Result<String, String> {
  if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
   return Err("Invalid task identifier.".into());
  }
- if !external_data_approved {
-  return Err("Cloud transfer was not approved in UJANI. No request was sent.".into());
+ let data_class = ujani_core::policy_gate::parse_data_class(&data_classification)
+  .map_err(str::to_owned)?;
+ let transfer_gate = ujani_core::policy_gate::evaluate_external_transfer(data_class, external_data_approved);
+ match transfer_gate.decision {
+  ujani_core::policy_gate::GateDecision::Allow => {}
+  ujani_core::policy_gate::GateDecision::RequireReview => {
+   return Err("Cloud transfer requires explicit approval for this exact task. No request was sent.".into());
+  }
+  ujani_core::policy_gate::GateDecision::Deny => {
+   return Err("Confidential or restricted data cannot be sent through the generic cloud gateway. No request was sent.".into());
+  }
  }
+ let data_class_label = match data_class {
+  ujani_core::policy_gate::DataClass::Public => "Public / non-sensitive",
+  ujani_core::policy_gate::DataClass::Internal => "Internal",
+  ujani_core::policy_gate::DataClass::Confidential => "Confidential",
+  ujani_core::policy_gate::DataClass::Restricted => "Restricted",
+ };
  cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
  let provider_host = cloud_gateway::endpoint_host(&endpoint)
   .ok_or_else(|| "Cloud endpoint host could not be validated. No request was sent.".to_string())?;
  let preview: String = prompt.chars().take(600).collect();
  let truncated = prompt.chars().count() > 600;
  let consent_message = format!(
-  "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThe provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nDeclared data classification: {data_class_label}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThis classification is your declaration, not an automatic content scan. The provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
   prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
  );
  // Register before showing consent so the user can cancel while the native dialog is pending.
@@ -487,7 +503,7 @@ async fn execute_cloud_ai_task(
  let input_digest = sha256_hex(prompt.as_bytes());
  let receipt_model_id = model.clone();
  // This reference binds the native approval to this task, endpoint, model and exact prompt digest.
- let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{input_digest}:{started_at_unix_ms}").as_bytes());
+ let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{data_class_label}:{input_digest}:{started_at_unix_ms}").as_bytes());
  flush_pending_receipts(&app).await;
  let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
  if let Some(warning) = receipt_slot.archive_warning() {
