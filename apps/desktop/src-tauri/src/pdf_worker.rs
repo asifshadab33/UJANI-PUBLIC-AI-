@@ -34,6 +34,9 @@ fn bounded_output(text: &str) -> &str {
 /// Closes inherited non-stdio descriptors and denies path-based file access after
 /// the dynamic loader has finished. The worker receives PDF bytes only on stdin.
 #[cfg(target_os = "linux")]
+const SYS_FCHMODAT2: libc::c_long = 452;
+
+#[cfg(target_os = "linux")]
 fn install_linux_filesystem_deny_filter() -> Result<(), ()> {
     // A parser compromise must not inherit an open handle to another user file.
     // Linux 5.9+ close_range is required; failure stops extraction before stdin is read.
@@ -55,6 +58,8 @@ fn install_linux_filesystem_deny_filter() -> Result<(), ()> {
         libc::SYS_unlinkat, libc::SYS_renameat, libc::SYS_renameat2,
         libc::SYS_mkdirat, libc::SYS_linkat, libc::SYS_symlinkat,
         libc::SYS_mknodat, libc::SYS_fchmodat, libc::SYS_fchownat,
+        // fchmodat2 is a separate path-based permission-change syscall.
+        SYS_FCHMODAT2,
         libc::SYS_utimensat, libc::SYS_ftruncate, libc::SYS_fallocate,
         libc::SYS_io_uring_setup, libc::SYS_io_uring_enter, libc::SYS_io_uring_register,
         libc::SYS_pidfd_open, libc::SYS_pidfd_getfd,
@@ -254,7 +259,7 @@ mod tests {
         use std::{
             ffi::CString,
             io::Write,
-            os::fd::AsRawFd,
+            os::{fd::AsRawFd, unix::fs::PermissionsExt},
             process::Command,
             time::{SystemTime, UNIX_EPOCH},
         };
@@ -270,6 +275,12 @@ mod tests {
                 .expect("inherited descriptor number")
                 .parse()
                 .expect("valid descriptor number");
+            let source = CString::new(
+                std::env::var(MUTATION_SOURCE).expect("disposable source path"),
+            ).expect("source path contains no NUL");
+            let target = CString::new(
+                std::env::var(MUTATION_TARGET).expect("disposable target path"),
+            ).expect("target path contains no NUL");
             assert!(
                 unsafe { libc::fcntl(inherited_fd, libc::F_GETFD) } >= 0,
                 "test descriptor must be inherited before confinement",
@@ -286,13 +297,6 @@ mod tests {
 
             #[cfg(target_arch = "x86_64")]
             {
-                let source = CString::new(
-                    std::env::var(MUTATION_SOURCE).expect("disposable source path"),
-                ).expect("source path contains no NUL");
-                let target = CString::new(
-                    std::env::var(MUTATION_TARGET).expect("disposable target path"),
-                ).expect("target path contains no NUL");
-
                 assert_eq!(unsafe { libc::unlink(source.as_ptr()) }, -1);
                 assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
                 assert_eq!(unsafe { libc::rename(source.as_ptr(), target.as_ptr()) }, -1);
@@ -300,6 +304,24 @@ mod tests {
                 assert_eq!(unsafe { libc::truncate(source.as_ptr(), 0) }, -1);
                 assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
             }
+
+            // Linux syscall 452 is fchmodat2 on both supported worker ABIs.
+            // Use a disposable file and request mode 0000; the filter must reject
+            // the path-based permission change before it can alter the file.
+            assert_eq!(
+                unsafe {
+                    libc::syscall(
+                        super::SYS_FCHMODAT2,
+                        libc::AT_FDCWD,
+                        source.as_ptr(),
+                        0o000u32,
+                        0u32,
+                    )
+                },
+                -1,
+                "fchmodat2 must be denied by the worker filter",
+            );
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
 
             let parsed = super::extract_pdf_text(&minimal_pdf_with_text())
                 .expect("in-memory PDF parsing must work after filesystem confinement");
@@ -326,6 +348,8 @@ mod tests {
         let source_path = test_dir.join("source.txt");
         let target_path = test_dir.join("renamed.txt");
         std::fs::write(&source_path, ORIGINAL_CONTENT).expect("create disposable source file");
+        std::fs::set_permissions(&source_path, std::fs::Permissions::from_mode(0o600))
+            .expect("set deterministic disposable-file permissions");
 
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args([
@@ -345,6 +369,11 @@ mod tests {
         let marker_present = output.stdout.windows(b"UJANI_PDF_STDIO_REMAINS_AVAILABLE".len())
             .any(|window| window == b"UJANI_PDF_STDIO_REMAINS_AVAILABLE");
         let source_content = std::fs::read(&source_path).expect("source file remains readable");
+        let source_mode = std::fs::metadata(&source_path)
+            .expect("source metadata remains readable")
+            .permissions()
+            .mode()
+            & 0o777;
         let target_exists = target_path.exists();
         std::fs::remove_dir_all(&test_dir).expect("remove disposable probe directory");
 
@@ -356,6 +385,7 @@ mod tests {
         );
         assert!(marker_present, "worker stdout remains available");
         assert_eq!(source_content, ORIGINAL_CONTENT, "truncate/rename/unlink must not alter the source");
+        assert_eq!(source_mode, 0o600, "fchmodat2 must not change source permissions");
         assert!(!target_exists, "rename must not create the target");
     }
 
