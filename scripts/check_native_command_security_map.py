@@ -54,7 +54,7 @@ def main() -> int:
         "peer_preview_commands": (peer, manifest.get("peer_preview_commands", {})),
     }
     errors: list[str] = []
-    required = ("classification", "capability", "scope", "effects", "boundary", "receipt", "tests", "status")
+    required = ("classification", "capability", "scope", "effects", "boundary", "receipt", "tests", "status", "caller", "data_classification", "consent", "cancellation", "resource_limits", "failure_mode")
     for group_name, (registered, mapped) in groups.items():
         if len(registered) != len(set(registered)):
             errors.append(f"{group_name}: duplicate command in native handler")
