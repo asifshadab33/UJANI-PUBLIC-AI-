@@ -16,8 +16,8 @@ MANIFEST = ROOT / "docs/native-command-security-map.json"
 
 
 def command_tokens(text: str) -> list[str]:
-    text = re.sub(r"//[^\\n]*", "", text)
-    return re.findall(r"(?<![\\w$])(?:[A-Za-z_]\\w*::)*[A-Za-z_]\\w*", text)
+    text = re.sub(r"//[^\n]*", "", text)
+    return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", text)
 
 
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
@@ -32,8 +32,8 @@ def registered_commands(source: str) -> tuple[list[str], list[str]]:
     default = [item for item in command_tokens(source[body_start:body_end]) if item != "peer_command"]
 
     peer = re.search(
-        r'#\\[cfg\\(feature = "peer-preview"\\)\\]\\s*'
-        r'let builder = builder\\.invoke_handler\\(ujani_invoke_handler!\\((.*?)\\)\\);',
+        r'#\[cfg\(feature = "peer-preview"\)\]\s*'
+        r'let builder = builder\.invoke_handler\(ujani_invoke_handler!\((.*?)\)\);',
         source,
         re.DOTALL,
     )
