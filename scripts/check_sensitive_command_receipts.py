@@ -37,7 +37,9 @@ REQUIRED_POLICY_MARKERS = {
         "native_consent::confirm_native",
     ),
     ("lib.rs", "execute_cloud_ai_task"): (
-        "if !external_data_approved",
+        "ujani_core::policy_gate::parse_data_class",
+        "ujani_core::policy_gate::evaluate_registered_external_transfer",
+        "cloud_gateway::validate_request",
         "native_consent::confirm_native",
         "reserve_cloud_tokens",
     ),
@@ -86,6 +88,14 @@ REQUIRED_POLICY_MARKERS = {
 }
 
 REQUIRED_ORDERED_MARKERS = {
+    ("lib.rs", "execute_cloud_ai_task"): (
+        "ujani_core::policy_gate::parse_data_class",
+        "ujani_core::policy_gate::evaluate_registered_external_transfer",
+        "cloud_gateway::validate_request",
+        "native_consent::confirm_native",
+        "reserve_cloud_tokens",
+        "cloud_gateway::execute(",
+    ),
     ("lib.rs", "execute_local_ai_task"): (
         "let registration = register_active_task(&control, &task_id)?;",
         "let token = registration.token.clone();",
@@ -241,6 +251,15 @@ def main() -> None:
         for test_name in test_names:
             if test_name not in tests:
                 raise SystemExit(f"missing receipt/policy regression test in {path}: {test_name}")
+    policy_gate_tests = (ROOT / "crates/ujani-core/src/policy_gate.rs").read_text(encoding="utf-8")
+    for test_name in (
+        "data_classification_parser_rejects_unknown_and_unclassified_values",
+        "external_transfer_requires_a_registered_operation",
+        "external_transfer_requires_approval_and_blocks_sensitive_classes",
+    ):
+        if test_name not in policy_gate_tests:
+            raise SystemExit(f"missing cloud data-classification policy regression test: {test_name}")
+
     print(f"Sensitive receipt and local-policy wiring checks passed for {len(REQUIRED_MARKERS)} receipt paths and {len(REQUIRED_POLICY_MARKERS)} policy paths.")
 
 

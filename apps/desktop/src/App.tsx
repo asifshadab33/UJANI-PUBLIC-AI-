@@ -203,12 +203,13 @@ export default function App() {
   const [cloudEndpoint, setCloudEndpoint] = useState("https://api.openai.com/v1/chat/completions");
   const [cloudModel, setCloudModel] = useState("gpt-4o-mini");
   const [cloudTokenParameter, setCloudTokenParameter] = useState("auto");
+  const [cloudDataClassification, setCloudDataClassification] = useState("unclassified");
   const [cloudApiKey, setCloudApiKey] = useState("");
   const [cloudConsent, setCloudConsent] = useState(false);
   const [cloudConsentSnapshot, setCloudConsentSnapshot] = useState("");
   const [localCapacityFallbackNotice, setLocalCapacityFallbackNotice] = useState("");
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
-  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode]);
+  const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode, cloudDataClassification]);
   const selectedInventoryModel = ollamaStatus?.inventory.models.find((model) => model.model_ref === ollamaModel);
   const inventoryAvailableMemoryMb = ollamaStatus?.inventory.hardware.memory_available_mb;
   const inventoryRuntime = ollamaStatus?.inventory.runtimes.find((runtime) => runtime.runtime_id === "ollama.local");
@@ -939,9 +940,17 @@ export default function App() {
       setCloudError("The BYOK cloud gateway is available in Smart mode only. Worker and Partner peer execution are not implemented in this build; Fortress remains local-only.");
       return;
     }
+    if (cloudDataClassification === "unclassified") {
+      setCloudError("Choose a data classification before requesting external processing. UJANI does not classify content automatically.");
+      return;
+    }
+    if (cloudDataClassification === "confidential" || cloudDataClassification === "restricted") {
+      setCloudError("Confidential and restricted data are blocked from the generic cloud gateway. Use a local route instead.");
+      return;
+    }
     if (!cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot) {
       setCloudConsent(false); setCloudConsentSnapshot("");
-      setCloudError("The prompt, provider endpoint, model, or mode changed after approval. Review the current task and approve it again.");
+      setCloudError("The prompt, provider endpoint, model, mode, or data classification changed after approval. Review the current task and approve it again.");
       return;
     }
     if (!cloudApiKey.trim()) { setCloudError("Enter your own provider API key. UJANI does not supply keys or credits."); return; }
@@ -951,7 +960,7 @@ export default function App() {
     setTaskProgress({ task_id: taskId, stage: "cloud_starting", message: "Preparing approved cloud request…", progress_percent: 5 });
     setCloudBusy(true); setCloudError(""); setCloudResult("");
     try {
-      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: cloudConversationPrompt, mode: executionMode, externalDataApproved: cloudConsent, tokenParameter: cloudTokenParameter });
+      const response = await invoke<string>("execute_cloud_ai_task", { taskId, endpoint: cloudEndpoint, model: cloudModel, apiKey: cloudApiKey, prompt: cloudConversationPrompt, mode: executionMode, externalDataApproved: cloudConsent, dataClassification: cloudDataClassification, tokenParameter: cloudTokenParameter });
       setCloudResult(response);
       setCloudChatMessages((messages) => [...messages, { role: "user", content: userMessage }, { role: "assistant", content: response }]);
       setRequest("");
@@ -1399,11 +1408,21 @@ export default function App() {
             <label className="model-select">Model name<input value={cloudModel} onChange={(event) => { setCloudModel(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }} maxLength={128} placeholder="Provider model identifier"/></label>
             <label className="model-select">Token parameter<select value={cloudTokenParameter} onChange={(event) => { setCloudTokenParameter(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }}><option value="auto">Automatic (recognised model families)</option><option value="max_tokens">max_tokens (standard models)</option><option value="max_completion_tokens">max_completion_tokens (reasoning / compatible deployments)</option></select></label>
             <small className="muted">Automatic mode uses a larger token budget for recognised reasoning models, including on custom endpoints. For provider-specific deployment aliases, choose the compatible field explicitly. Provider support varies.</small>
-            <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
+            <label className="model-select">Data classification
+              <select value={cloudDataClassification} onChange={(event) => { setCloudDataClassification(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }}>
+                <option value="unclassified">Choose classification…</option>
+                <option value="public">Public / non-sensitive</option>
+                <option value="internal">Internal / ordinary work</option>
+                <option value="confidential">Confidential / sensitive personal or business data</option>
+                <option value="restricted">Restricted / secrets or regulated data</option>
+              </select>
+            </label>
+            <small className="muted">This is your explicit declaration, not an automatic content scan. The generic cloud gateway permits only Public or Internal data after fresh approval. Confidential and Restricted data are blocked; use a local route instead.</small>
+            <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => { setCloudApiKey(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }} placeholder="Paste your own API key"/></label>
             {localCapacityFallbackNotice && <p className="notice" role="status">{localCapacityFallbackNotice}</p>}
-            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation and current message to this exact endpoint and model for this task only.</label>
+            <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation, with my selected {cloudDataClassification} classification, to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>
-            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot || !cloudApiKey.trim() || cloudBusy || executionMode !== "smart"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
+            <button className="model-run" onClick={runCloudAi} disabled={!isTauri() || !request.trim() || !["public", "internal"].includes(cloudDataClassification) || !cloudConsent || cloudConsentSnapshot !== cloudApprovalSnapshot || !cloudApiKey.trim() || cloudBusy || executionMode !== "smart"}>{cloudBusy ? "Sending approved cloud request…" : "Run this prompt with my cloud provider"} <Send size={15}/></button>
             {cloudBusy && <><p className="progress" role="status">{taskProgress?.task_id === activeCloudTaskId ? taskProgress.message + " " + taskProgress.progress_percent + "%" : "Cloud request running…"}</p><button className="model-run" onClick={cancelCloudAi}>Cancel cloud request</button></>}
             {cloudError && <p className="error" role="alert">{cloudError}</p>}
             <div className="chat-thread cloud-thread" aria-live="polite">
