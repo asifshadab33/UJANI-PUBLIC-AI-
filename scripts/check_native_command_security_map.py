@@ -264,7 +264,7 @@ def main() -> int:
 
     # Keep the model pull fail-closed until registry artifact and daemon-store
     # evidence are available. A future enablement must replace this invariant.
-    if not re.search(r"fn model_download_preflight_ready\\(\\)\\s*->\\s*bool\\s*\\{\\s*false\\s*\\}", source):
+    if not re.search(r"fn model_download_preflight_ready\(\)\s*->\s*bool\s*\{\s*false\s*\}", source):
         errors.append("model download: fail-closed preflight must remain false until artifact/store verification is implemented")
     if "evaluate_registered_external_transfer" not in source or '"cloud.ai.generate"' not in source:
         errors.append("cloud dispatch: registered external-transfer policy must remain on the native dispatch path")
