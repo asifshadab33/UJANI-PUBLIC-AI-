@@ -362,6 +362,9 @@ fn create_pdf_worker_job() -> Result<std::os::windows::io::OwnedHandle, String> 
 }
 
 #[cfg(target_os = "linux")]
+const SYS_FCHMODAT2: libc::c_long = 452;
+
+#[cfg(target_os = "linux")]
 fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     // The worker receives its input only after the parent has installed limits.
     // Deny sockets plus process/thread creation and namespace changes so a parser
@@ -387,6 +390,8 @@ fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
         libc::SYS_clone3,
         libc::SYS_unshare,
         libc::SYS_setns,
+        // Defense in depth: reject path-based permission changes before exec as well.
+        SYS_FCHMODAT2,
     ];
     // The x86_64 ABI exposes fork/vfork syscalls; arm64 uses clone/clone3.
     #[cfg(target_arch = "x86_64")]
@@ -892,7 +897,7 @@ mod windows_pdf_worker_job_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod pdf_worker_seccomp_tests {
-    use super::denied_pdf_worker_syscalls;
+    use super::{denied_pdf_worker_syscalls, SYS_FCHMODAT2};
 
     #[test]
     fn linux_pdf_worker_blocks_network_process_creation_and_namespace_changes() {
@@ -918,6 +923,7 @@ mod pdf_worker_seccomp_tests {
             libc::SYS_clone3,
             libc::SYS_unshare,
             libc::SYS_setns,
+            SYS_FCHMODAT2,
         ] {
             assert!(denied.contains(&syscall), "missing denied syscall {syscall}");
         }
