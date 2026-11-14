@@ -9,6 +9,8 @@ pub mod self_evolution;
 pub mod self_evolution_approval;
 /// Single-use replay-consumption contract for verified self-evolution approvals.
 pub mod self_evolution_approval_replay;
+/// Optional user-controlled Self-Evolution proposal permission policy.
+pub mod self_evolution_module;
 
 use std::collections::BTreeSet;
 
