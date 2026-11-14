@@ -159,13 +159,13 @@ const featureEntries: FeatureEntry[] = [
   {
     id: "self-evolution",
     title: "Self-Evolution Engine",
-    status: "Proposal-only development",
-    tone: "planned",
+    status: "Policy-only preview · activation UI not wired",
+    tone: "preview",
     risk: "High",
-    summary: "The first proposal contract is being developed; the installed app cannot yet rewrite itself.",
-    permissions: "No runtime source access, code execution, self-approval, signing or automatic installation.",
-    data: "A future source-level workflow requires a user-selected trusted checkout and explicit disclosure before any external model receives source context.",
-    limits: "The protected core remains outside model authority. Signed releases require a separate trusted build and signing process.",
+    summary: "Proposal validation, user-opt-in policy, signed approval verification and durable single-use approval tracking exist. The desktop activation and patch workflow are not connected; the app cannot rewrite itself.",
+    permissions: "The policy requires explicit device-owner opt-in, an approved model and a trusted source/build environment. Signed approvals can be verified and their nonces durably consumed, but no staging or application permission is issued.",
+    data: "This feature does not currently access or transmit source context. Any future analysis must use a user-selected trusted checkout and disclose external transfer before approval.",
+    limits: "No activation UI, patch staging/application, code execution, self-approval or automatic installation. The protected core remains outside model authority; signed releases require a separate trusted build and signing process.",
   },
 ];
 
