@@ -1418,7 +1418,7 @@ export default function App() {
               </select>
             </label>
             <small className="muted">This is your explicit declaration, not an automatic content scan. The generic cloud gateway permits only Public or Internal data after fresh approval. Confidential and Restricted data are blocked; use a local route instead.</small>
-            <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => setCloudApiKey(event.target.value)} placeholder="Paste your own API key"/></label>
+            <label className="model-select">Provider API key (not saved)<input type="password" autoComplete="off" value={cloudApiKey} onChange={(event) => { setCloudApiKey(event.target.value); setCloudConsent(false); setCloudConsentSnapshot(""); }} placeholder="Paste your own API key"/></label>
             {localCapacityFallbackNotice && <p className="notice" role="status">{localCapacityFallbackNotice}</p>}
             <label className="consent-row"><input type="checkbox" checked={cloudConsent} onChange={(event) => { const checked = event.target.checked; setCloudConsent(checked); setCloudConsentSnapshot(checked ? cloudApprovalSnapshot : ""); }}/> I approve sending this exact conversation, with my selected {cloudDataClassification} classification, to this exact endpoint and model for this task only.</label>
             <small className="muted">Provider terms, data retention and billing apply. Do not send passwords, private keys or sensitive personal data. The key is not written to UJANI history or configuration; it is held temporarily for the request and cleared from the input afterward. JavaScript memory cannot be guaranteed to be securely erased.</small>
