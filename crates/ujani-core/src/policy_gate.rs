@@ -1,4 +1,5 @@
-//! Shared pre-execution policy gate for every local and external route.
+//! Shared pre-execution policy contract. Native dispatch integration is not yet complete;
+//! do not treat this module as enforced until every route calls it with trusted context.
 use crate::safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadIntent};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum DataClass { Public, Internal, Confidential, Restricted }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum ExecutionTarget { LocalTool, LocalModel, EnterpriseWorker, CloudProvider }
@@ -12,7 +13,8 @@ use crate::safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadInt
 }
 #[derive(Debug, Clone, PartialEq, Eq)] pub struct GateResult { pub decision:GateDecision, pub reason:&'static str, pub requires_isolation:bool }
 fn valid_id(s:&str)->bool { !s.trim().is_empty() && s.len()<=128 && s.chars().all(|c|c.is_ascii_alphanumeric() || "._:-".contains(c)) }
-/// Invoke immediately before dispatch on every route. Missing permission fails closed.
+/// Pure decision only: invoke at the trusted dispatch boundary on every route.
+/// This function does not itself enforce isolation, quotas, egress or cancellation.
 pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
  let deny=|reason|GateResult{decision:GateDecision::Deny,reason,requires_isolation:true};
  let review=|reason|GateResult{decision:GateDecision::RequireReview,reason,requires_isolation:true};
@@ -48,4 +50,100 @@ pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
  #[test] fn worker_requires_admin_and_owner_consent(){let mut r=req(ExecutionTarget::EnterpriseWorker);r.owner_opted_in=false;assert_eq!(evaluate_execution(&r).decision,GateDecision::Deny);}
  #[test] fn unknown_intent_reviewed_on_every_route(){let mut r=req(ExecutionTarget::LocalTool);r.intent=WorkloadIntent::Unknown;assert_eq!(evaluate_execution(&r).decision,GateDecision::RequireReview);}
  #[test] fn budgets_fail_closed(){let mut r=req(ExecutionTarget::LocalTool);r.requested_memory_mb=2048;assert_eq!(evaluate_execution(&r).decision,GateDecision::Deny);}
+}
+
+#[cfg(test)]
+mod fail_closed_boundary_regressions {
+    use super::*;
+
+    fn request(target: ExecutionTarget) -> ExecutionRequest {
+        ExecutionRequest {
+            task_id: "task-001".into(),
+            operation_id: "document.summarize".into(),
+            target,
+            intent: WorkloadIntent::OrdinaryProductivity,
+            authorization_verified: false,
+            data_class: DataClass::Public,
+            external_transfer: false,
+            user_approved_transfer: false,
+            admin_approved_worker: false,
+            owner_opted_in: false,
+            operation_registered: true,
+            policy_version: 1,
+            max_runtime_seconds: 60,
+            requested_runtime_seconds: 30,
+            max_memory_mb: 2048,
+            requested_memory_mb: 1024,
+        }
+    }
+
+    #[test]
+    fn confidential_data_is_blocked_from_generic_cloud_even_after_consent() {
+        for data_class in [DataClass::Confidential, DataClass::Restricted] {
+            let mut value = request(ExecutionTarget::CloudProvider);
+            value.external_transfer = true;
+            value.user_approved_transfer = true;
+            value.data_class = data_class;
+            assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+        }
+    }
+
+    #[test]
+    fn cloud_route_cannot_be_selected_without_an_explicit_transfer_declaration() {
+        let value = request(ExecutionTarget::CloudProvider);
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn local_route_cannot_smuggle_an_external_transfer_flag() {
+        let mut value = request(ExecutionTarget::LocalModel);
+        value.external_transfer = true;
+        value.user_approved_transfer = true;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn malformed_task_and_operation_identifiers_fail_closed() {
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.task_id = "../escape".into();
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.operation_id = "shell.run".into();
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn missing_registry_and_policy_version_fail_closed() {
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.operation_registered = false;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.policy_version = 0;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn zero_and_excessive_runtime_budgets_fail_closed() {
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.max_runtime_seconds = 0;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.requested_runtime_seconds = value.max_runtime_seconds + 1;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn worker_requires_both_admin_approval_and_owner_opt_in() {
+        let mut value = request(ExecutionTarget::EnterpriseWorker);
+        value.admin_approved_worker = true;
+        value.owner_opted_in = false;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        value.owner_opted_in = true;
+        value.admin_approved_worker = false;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
 }
