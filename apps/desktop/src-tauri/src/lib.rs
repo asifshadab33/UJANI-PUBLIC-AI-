@@ -452,8 +452,8 @@ async fn execute_cloud_ai_task(
  }
  let data_class = ujani_core::policy_gate::parse_data_class(&data_classification)
   .map_err(str::to_owned)?;
- let transfer_gate = ujani_core::policy_gate::evaluate_external_transfer(data_class, external_data_approved);
- match transfer_gate.decision {
+ let transfer_decision = ujani_core::policy_gate::evaluate_external_transfer(data_class, external_data_approved);
+ match transfer_decision {
   ujani_core::policy_gate::GateDecision::Allow => {}
   ujani_core::policy_gate::GateDecision::RequireReview => {
    return Err("Cloud transfer requires explicit approval for this exact task. No request was sent.".into());
