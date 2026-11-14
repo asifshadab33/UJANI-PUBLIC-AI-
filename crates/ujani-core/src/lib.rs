@@ -1,8 +1,10 @@
 //! Minimal, side-effect-free foundations for UJANI Public AI.
+//! This crate intentionally does not execute tools, inspect hardware, or make network calls.
 
 #![forbid(unsafe_code)]
 
-//! This crate intentionally does not execute tools, inspect hardware, or make network calls.
+/// Optional user-controlled Self-Evolution policy; no patch application or code execution.
+pub mod self_evolution_module;
 
 pub mod self_evolution;
 /// Signed, host-owned approval receipts for one exact self-evolution proposal; no patch application.
