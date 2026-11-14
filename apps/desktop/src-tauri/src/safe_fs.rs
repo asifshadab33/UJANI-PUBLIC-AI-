@@ -66,6 +66,38 @@ pub(crate) fn open_regular_file_under_root(
         Ok(unsafe { std::fs::File::from_raw_fd(fd) })
     }
 
+    // Linux O_PATH handles require search permission but not directory read
+    // permission. They remain valid dirfds for component-wise openat traversal.
+    // Other Unix targets retain O_RDONLY because O_PATH is Linux-specific.
+    fn directory_open_flags() -> i32 {
+        #[cfg(target_os = "linux")]
+        {
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        }
+    }
+
+    fn open_root_directory() -> io::Result<std::fs::File> {
+        #[cfg(target_os = "linux")]
+        {
+            let name = CString::new("/").expect("static root path has no NUL");
+            // SAFETY: name is NUL-terminated and remains alive for the call.
+            let fd = unsafe { libc::open(name.as_ptr(), directory_open_flags()) };
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: fd is a fresh descriptor returned by open and ownership is transferred.
+            Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            std::fs::File::open("/")
+        }
+    }
+
     if !root.is_absolute() || !path.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -93,14 +125,14 @@ pub(crate) fn open_regular_file_under_root(
         }
     }).peekable();
 
-    let mut directory = std::fs::File::open("/")?;
+    let mut directory = open_root_directory()?;
     while let Some(component) = components.next() {
         let name = component?;
         let final_component = components.peek().is_none();
         let flags = if final_component {
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
         } else {
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY
+            directory_open_flags()
         };
         let opened = open_at(&directory, name, flags)?;
         if final_component {
@@ -125,6 +157,52 @@ pub(crate) fn open_regular_file_under_root(
         io::ErrorKind::InvalidInput,
         "selected path does not name a file",
     ))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_search_only_ancestor_tests {
+    use super::open_regular_file_under_root;
+    use std::{
+        fs,
+        io::Read,
+        os::unix::fs::PermissionsExt,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn opens_through_searchable_but_unreadable_ancestor() {
+        // Root can bypass directory mode checks, so this regression must run as
+        // an unprivileged user (as on GitHub-hosted Linux runners).
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping permission regression when running as root");
+            return;
+        }
+
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base = std::env::temp_dir().join(format!("ujani-search-only-{nonce}"));
+        let shared = base.join("shared");
+        let selected = shared.join("project");
+        fs::create_dir_all(&selected).unwrap();
+        let path = selected.join("data.txt");
+        fs::write(&path, b"search-only ancestor").unwrap();
+
+        // The owner may traverse the shared directory but may not list/read it.
+        // Opening ancestors with O_RDONLY would fail; Linux O_PATH is sufficient.
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o111)).unwrap();
+        fs::set_permissions(&selected, fs::Permissions::from_mode(0o755)).unwrap();
+        let root = fs::canonicalize(&selected).unwrap();
+
+        let result = (|| {
+            let mut handle = open_regular_file_under_root(&root, &path)?;
+            let mut contents = Vec::new();
+            handle.read_to_end(&mut contents)?;
+            Ok::<_, std::io::Error>(contents)
+        })();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&base).unwrap();
+
+        assert_eq!(result.unwrap(), b"search-only ancestor");
+    }
 }
 
 #[cfg(windows)]
