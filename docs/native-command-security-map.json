@@ -445,10 +445,10 @@
       "status": "source-mapped; full review pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
-      "consent": "Local state mutation; any required native confirmation is described in boundary. Command-specific elevation/confirmation and revocation semantics still require review.",
-      "cancellation": "Short local transaction or key operation; cancellation semantics are not a substitute for transaction rollback.",
-      "resource_limits": "Validate identifiers, schema and storage bounds before mutation; command-specific numeric limits require review.",
-      "failure_mode": "Fail closed on invalid input, storage/receipt reservation failure or policy-store error; atomicity across OS vault and SQLite is not claimed."
+      "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
+      "cancellation": "Not expected to be long-running; if implementation becomes long-running, add cancellation and bounded execution.",
+      "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
+      "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
     },
     "search_cache::list_recent_local_searches": {
       "classification": "read_only_persistent_state",
@@ -461,10 +461,10 @@
       "status": "source-mapped; full review pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
-      "consent": "Local state mutation; any required native confirmation is described in boundary. Command-specific elevation/confirmation and revocation semantics still require review.",
-      "cancellation": "Short local transaction or key operation; cancellation semantics are not a substitute for transaction rollback.",
-      "resource_limits": "Validate identifiers, schema and storage bounds before mutation; command-specific numeric limits require review.",
-      "failure_mode": "Fail closed on invalid input, storage/receipt reservation failure or policy-store error; atomicity across OS vault and SQLite is not claimed."
+      "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
+      "cancellation": "Not expected to be long-running; if implementation becomes long-running, add cancellation and bounded execution.",
+      "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
+      "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
     },
     "search_cache::set_local_search_cache_settings": {
       "classification": "persistent_local_mutation",
@@ -509,10 +509,10 @@
       "status": "source-mapped; full review pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
-      "consent": "Local state mutation; any required native confirmation is described in boundary. Command-specific elevation/confirmation and revocation semantics still require review.",
-      "cancellation": "Short local transaction or key operation; cancellation semantics are not a substitute for transaction rollback.",
-      "resource_limits": "Validate identifiers, schema and storage bounds before mutation; command-specific numeric limits require review.",
-      "failure_mode": "Fail closed on invalid input, storage/receipt reservation failure or policy-store error; atomicity across OS vault and SQLite is not claimed."
+      "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
+      "cancellation": "Not expected to be long-running; if implementation becomes long-running, add cancellation and bounded execution.",
+      "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
+      "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
     },
     "history::set_task_history_enabled": {
       "classification": "persistent_local_mutation",
@@ -557,10 +557,10 @@
       "status": "source-mapped; full review pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
-      "consent": "Local state mutation; any required native confirmation is described in boundary. Command-specific elevation/confirmation and revocation semantics still require review.",
-      "cancellation": "Short local transaction or key operation; cancellation semantics are not a substitute for transaction rollback.",
-      "resource_limits": "Validate identifiers, schema and storage bounds before mutation; command-specific numeric limits require review.",
-      "failure_mode": "Fail closed on invalid input, storage/receipt reservation failure or policy-store error; atomicity across OS vault and SQLite is not claimed."
+      "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
+      "cancellation": "Not expected to be long-running; if implementation becomes long-running, add cancellation and bounded execution.",
+      "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
+      "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
     },
     "history::delete_task_history": {
       "classification": "persistent_local_mutation",
@@ -637,10 +637,10 @@
       "status": "source-mapped; full review pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
-      "consent": "Local state mutation; any required native confirmation is described in boundary. Command-specific elevation/confirmation and revocation semantics still require review.",
-      "cancellation": "Short local transaction or key operation; cancellation semantics are not a substitute for transaction rollback.",
-      "resource_limits": "Validate identifiers, schema and storage bounds before mutation; command-specific numeric limits require review.",
-      "failure_mode": "Fail closed on invalid input, storage/receipt reservation failure or policy-store error; atomicity across OS vault and SQLite is not claimed."
+      "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
+      "cancellation": "Not expected to be long-running; if implementation becomes long-running, add cancellation and bounded execution.",
+      "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
+      "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
     },
     "security_store::set_cloud_budget_limit": {
       "classification": "persistent_security_mutation",
