@@ -3,12 +3,11 @@
 //! This module centralizes bounded no-follow directory traversal and platform-specific
 //! file opening; callers retain extension, content, size and task-specific error policy.
 use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
-#[cfg(all(feature = "peer-preview", any(unix, windows)))]
+#[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
 
 
 /// Opens a regular file without following its final symlink/reparse point.
-#[cfg(feature = "peer-preview")]
 pub(crate) fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
     #[cfg(unix)]
     let file = {
