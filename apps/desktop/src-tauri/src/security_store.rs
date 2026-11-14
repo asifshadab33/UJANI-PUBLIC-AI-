@@ -1726,7 +1726,7 @@ mod self_evolution_approval_nonce_tests {
         let observer_path = path.clone();
 
         let result = store.claim_nonce_with_clock("admin-clock", &[12; 16], 2_000, || {
-            let observer = Connection::open(observer_path).unwrap();
+            let mut observer = Connection::open(observer_path).unwrap();
             observer.busy_timeout(std::time::Duration::ZERO).unwrap();
             let competing_lock =
                 observer.transaction_with_behavior(TransactionBehavior::Immediate);
