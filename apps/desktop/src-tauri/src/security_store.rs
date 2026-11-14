@@ -179,13 +179,15 @@ struct SqliteSelfEvolutionApprovalNonceStore {
     db: Connection,
 }
 
-impl SelfEvolutionApprovalNonceStore for SqliteSelfEvolutionApprovalNonceStore {
-    fn claim_nonce(
+impl SqliteSelfEvolutionApprovalNonceStore {
+    /// The clock is sampled only after the IMMEDIATE transaction has acquired
+    /// its write lock. Tests inject a clock to verify this ordering deterministically.
+    fn claim_nonce_with_clock(
         &mut self,
         approver_id: &str,
         nonce: &[u8; 16],
         expires_at_unix_ms: u64,
-        now_unix_ms: u64,
+        now_unix_ms: impl FnOnce() -> Result<u64, ApprovalNonceStoreError>,
     ) -> Result<(), ApprovalNonceStoreError> {
         if approver_id.is_empty()
             || approver_id.len() > 128
@@ -193,23 +195,26 @@ impl SelfEvolutionApprovalNonceStore for SqliteSelfEvolutionApprovalNonceStore {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
             || nonce.iter().all(|byte| *byte == 0)
-            || expires_at_unix_ms <= now_unix_ms
         {
             return Err(ApprovalNonceStoreError::InvalidRecord);
         }
 
         let expires_at = i64::try_from(expires_at_unix_ms)
             .map_err(|_| ApprovalNonceStoreError::InvalidRecord)?;
-        let now = i64::try_from(now_unix_ms)
-            .map_err(|_| ApprovalNonceStoreError::InvalidRecord)?;
-
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| ApprovalNonceStoreError::StorageUnavailable)?;
 
+        let now_unix_ms = now_unix_ms()?;
+        if expires_at_unix_ms <= now_unix_ms {
+            return Err(ApprovalNonceStoreError::Expired);
+        }
+        let now = i64::try_from(now_unix_ms)
+            .map_err(|_| ApprovalNonceStoreError::StorageUnavailable)?;
+
         // Expired receipts cannot authorize any future operation and may be
-        // compacted within the same write transaction before the new claim.
+        // compacted only after the fresh, post-lock expiry decision.
         tx.execute(
             "DELETE FROM self_evolution_approval_nonces WHERE expires_at_unix_ms <= ?1",
             params![now],
@@ -234,6 +239,23 @@ impl SelfEvolutionApprovalNonceStore for SqliteSelfEvolutionApprovalNonceStore {
     }
 }
 
+impl SelfEvolutionApprovalNonceStore for SqliteSelfEvolutionApprovalNonceStore {
+    fn claim_nonce(
+        &mut self,
+        approver_id: &str,
+        nonce: &[u8; 16],
+        expires_at_unix_ms: u64,
+    ) -> Result<(), ApprovalNonceStoreError> {
+        self.claim_nonce_with_clock(approver_id, nonce, expires_at_unix_ms, || {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| ApprovalNonceStoreError::StorageUnavailable)?
+                .as_millis();
+            u64::try_from(now).map_err(|_| ApprovalNonceStoreError::StorageUnavailable)
+        })
+    }
+}
+
 /// Persist consumption of an already-verified approval before any future
 /// patch staging. This is intentionally not exposed as a browser IPC command:
 /// only trusted Rust code that has completed signature and scope verification
@@ -243,20 +265,11 @@ pub(crate) fn consume_self_evolution_approval(
     app: &AppHandle,
     approval: &VerifiedSelfEvolutionApproval,
 ) -> Result<(), ApprovalConsumptionError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| {
-            ApprovalConsumptionError::Store(ApprovalNonceStoreError::StorageUnavailable)
-        })?
-        .as_millis();
-    let now = u64::try_from(now).map_err(|_| {
-        ApprovalConsumptionError::Store(ApprovalNonceStoreError::StorageUnavailable)
-    })?;
     let db = open(app).map_err(|_| {
         ApprovalConsumptionError::Store(ApprovalNonceStoreError::StorageUnavailable)
     })?;
     let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
-    consume_verified_self_evolution_approval(approval, &mut store, now)
+    consume_verified_self_evolution_approval(approval, &mut store)
 }
 
 /// Append one validated receipt in an immediate transaction. A retry with the
@@ -1607,9 +1620,9 @@ mod self_evolution_approval_nonce_tests {
         let mut store = store();
         let nonce = [7_u8; 16];
 
-        assert_eq!(store.claim_nonce("admin-one", &nonce, 10_000, 1_000), Ok(()));
+        assert_eq!(store.claim_nonce_with_clock("admin-one", &nonce, 10_000, || Ok(1_000)), Ok(()));
         assert_eq!(
-            store.claim_nonce("admin-one", &nonce, 10_000, 1_001),
+            store.claim_nonce_with_clock("admin-one", &nonce, 10_000, || Ok(1_001)),
             Err(ApprovalNonceStoreError::AlreadyConsumed)
         );
         assert_eq!(store.claim_nonce("admin-two", &nonce, 10_000, 1_001), Ok(()));
@@ -1620,8 +1633,8 @@ mod self_evolution_approval_nonce_tests {
         let mut store = store();
         let nonce = [8_u8; 16];
 
-        assert_eq!(store.claim_nonce("admin-one", &nonce, 2_000, 1_000), Ok(()));
-        assert_eq!(store.claim_nonce("admin-one", &nonce, 3_000, 2_000), Ok(()));
+        assert_eq!(store.claim_nonce_with_clock("admin-one", &nonce, 2_000, || Ok(1_000)), Ok(()));
+        assert_eq!(store.claim_nonce_with_clock("admin-one", &nonce, 3_000, || Ok(2_000)), Ok(()));
     }
 
     #[test]
@@ -1637,7 +1650,7 @@ mod self_evolution_approval_nonce_tests {
             initialize(&db).unwrap();
             let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
             assert_eq!(
-                store.claim_nonce("admin-persistent", &[10; 16], 10_000, 1_000),
+                store.claim_nonce_with_clock("admin-persistent", &[10; 16], 10_000, || Ok(1_000)),
                 Ok(())
             );
         }
@@ -1647,7 +1660,7 @@ mod self_evolution_approval_nonce_tests {
             initialize(&db).unwrap();
             let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
             assert_eq!(
-                store.claim_nonce("admin-persistent", &[10; 16], 10_000, 1_001),
+                store.claim_nonce_with_clock("admin-persistent", &[10; 16], 10_000, || Ok(1_001)),
                 Err(ApprovalNonceStoreError::AlreadyConsumed)
             );
         }
@@ -1667,6 +1680,11 @@ mod self_evolution_approval_nonce_tests {
         let path = std::env::temp_dir().join(format!("ujani-approval-race-{unique}.sqlite3"));
         let barrier = Arc::new(Barrier::new(2));
         let mut workers = Vec::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let expires_at = now + 60_000;
 
         for _ in 0..2 {
             let path = path.clone();
@@ -1677,7 +1695,7 @@ mod self_evolution_approval_nonce_tests {
                 initialize(&db).unwrap();
                 let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
                 barrier.wait();
-                store.claim_nonce("admin-race", &[11; 16], 10_000, 1_000)
+                store.claim_nonce("admin-race", &[11; 16], expires_at)
             }));
         }
 
@@ -1694,20 +1712,50 @@ mod self_evolution_approval_nonce_tests {
         fs::remove_file(path).unwrap();
     }
 
+ 
+    #[test]
+    fn expiry_clock_is_sampled_after_the_immediate_transaction_lock() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ujani-approval-clock-{unique}.sqlite3"));
+        let db = Connection::open(&path).unwrap();
+        initialize(&db).unwrap();
+        let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
+        let observer_path = path.clone();
+
+        let result = store.claim_nonce_with_clock("admin-clock", &[12; 16], 2_000, || {
+            let observer = Connection::open(observer_path).unwrap();
+            observer.busy_timeout(std::time::Duration::ZERO).unwrap();
+            let competing_lock =
+                observer.transaction_with_behavior(TransactionBehavior::Immediate);
+            assert!(
+                competing_lock.is_err(),
+                "the nonce clock must be sampled only after the IMMEDIATE write lock is held"
+            );
+            Ok(2_000)
+        });
+
+        assert_eq!(result, Err(ApprovalNonceStoreError::Expired));
+        drop(store);
+        fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn invalid_nonce_records_are_rejected() {
         let mut store = store();
         assert_eq!(
-            store.claim_nonce("admin-one", &[0; 16], 10_000, 1_000),
+            store.claim_nonce_with_clock("admin-one", &[0; 16], 10_000, || Ok(1_000)),
             Err(ApprovalNonceStoreError::InvalidRecord)
         );
         assert_eq!(
-            store.claim_nonce("../admin", &[9; 16], 10_000, 1_000),
+            store.claim_nonce_with_clock("../admin", &[9; 16], 10_000, || Ok(1_000)),
             Err(ApprovalNonceStoreError::InvalidRecord)
         );
         assert_eq!(
-            store.claim_nonce("admin-one", &[9; 16], 1_000, 1_000),
-            Err(ApprovalNonceStoreError::InvalidRecord)
+            store.claim_nonce_with_clock("admin-one", &[9; 16], 1_000, || Ok(1_000)),
+            Err(ApprovalNonceStoreError::Expired)
         );
     }
 }
