@@ -49,3 +49,88 @@ pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
  #[test] fn unknown_intent_reviewed_on_every_route(){let mut r=req(ExecutionTarget::LocalTool);r.intent=WorkloadIntent::Unknown;assert_eq!(evaluate_execution(&r).decision,GateDecision::RequireReview);}
  #[test] fn budgets_fail_closed(){let mut r=req(ExecutionTarget::LocalTool);r.requested_memory_mb=2048;assert_eq!(evaluate_execution(&r).decision,GateDecision::Deny);}
 }
+
+#[cfg(test)]
+mod fail_closed_boundary_regressions {
+    use super::*;
+
+    fn request(target: ExecutionTarget) -> ExecutionRequest {
+        ExecutionRequest {
+            task_id: "task-001".into(),
+            operation_id: "document.summarize".into(),
+            target,
+            intent: WorkloadIntent::OrdinaryProductivity,
+            authorization_verified: false,
+            data_class: DataClass::Public,
+            external_transfer: false,
+            user_approved_transfer: false,
+            admin_approved_worker: false,
+            owner_opted_in: false,
+            operation_registered: true,
+            policy_version: 1,
+            max_runtime_seconds: 60,
+            requested_runtime_seconds: 30,
+            max_memory_mb: 2048,
+            requested_memory_mb: 1024,
+        }
+    }
+
+    #[test]
+    fn confidential_data_is_blocked_from_generic_cloud_even_after_consent() {
+        for data_class in [DataClass::Confidential, DataClass::Restricted] {
+            let mut value = request(ExecutionTarget::CloudProvider);
+            value.external_transfer = true;
+            value.user_approved_transfer = true;
+            value.data_class = data_class;
+            assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+        }
+    }
+
+    #[test]
+    fn cloud_route_cannot_be_selected_without_an_explicit_transfer_declaration() {
+        let value = request(ExecutionTarget::CloudProvider);
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn local_route_cannot_smuggle_an_external_transfer_flag() {
+        let mut value = request(ExecutionTarget::LocalModel);
+        value.external_transfer = true;
+        value.user_approved_transfer = true;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn missing_registry_and_policy_version_fail_closed() {
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.operation_registered = false;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.policy_version = 0;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn zero_and_excessive_runtime_budgets_fail_closed() {
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.max_runtime_seconds = 0;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.requested_runtime_seconds = value.max_runtime_seconds + 1;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn worker_requires_both_admin_approval_and_owner_opt_in() {
+        let mut value = request(ExecutionTarget::EnterpriseWorker);
+        value.admin_approved_worker = true;
+        value.owner_opted_in = false;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        value.owner_opted_in = true;
+        value.admin_approved_worker = false;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+}
