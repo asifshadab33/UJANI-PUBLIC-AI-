@@ -322,7 +322,7 @@ mod tests {
                 &["apps/desktop/src".into()], 2_000),
             Err(ApprovalVerificationError::UnknownKey)
         );
-        signed.claims.approver_id = "other-admin".into();
+        signed.claims.nonce = [8; 16];
         assert_eq!(
             verify_self_evolution_approval(&signed, &keys, &target(), &proposal(),
                 &["apps/desktop/src".into()], 2_000),
