@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+/// Optional user-controlled Self-Evolution policy; no patch application or code execution.
+pub mod self_evolution_module;
+
 //! This crate intentionally does not execute tools, inspect hardware, or make network calls.
 
 pub mod self_evolution;
