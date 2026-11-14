@@ -40,7 +40,10 @@ pub struct SelfEvolutionPermission {
     /// Always false until typed host approval and durable replay consumption
     /// are wired into a separate, reviewed staging workflow.
     pub may_stage_approved_proposal: bool,
+    /// Why analysis/proposal preparation is unavailable, if applicable.
     pub blocked_by: Option<SelfEvolutionBlock>,
+    /// Staging remains unavailable until the host approval pipeline is integrated.
+    pub staging_blocked_by: Option<SelfEvolutionBlock>,
 }
 
 pub fn evaluate_self_evolution_permission(
@@ -67,7 +70,10 @@ pub fn evaluate_self_evolution_permission(
         may_analyse: may_prepare,
         may_prepare_proposals: may_prepare,
         may_stage_approved_proposal: false,
-        blocked_by: blocked_by.or(Some(SelfEvolutionBlock::ApprovalPipelineUnavailable)),
+        blocked_by,
+        staging_blocked_by: Some(
+            blocked_by.unwrap_or(SelfEvolutionBlock::ApprovalPipelineUnavailable),
+        ),
     }
 }
 
@@ -140,8 +146,9 @@ mod tests {
         assert!(result.may_analyse);
         assert!(result.may_prepare_proposals);
         assert!(!result.may_stage_approved_proposal);
+        assert_eq!(result.blocked_by, None);
         assert_eq!(
-            result.blocked_by,
+            result.staging_blocked_by,
             Some(SelfEvolutionBlock::ApprovalPipelineUnavailable)
         );
     }
