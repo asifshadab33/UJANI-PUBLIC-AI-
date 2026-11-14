@@ -161,7 +161,7 @@ def command_tokens(text: str) -> list[str]:
 
 def rust_function_body(source: str, function_name: str) -> str:
     """Return one Rust function body, excluding comments and string literals."""
-    match = re.search(rf"\\bfn\\s+{re.escape(function_name)}\\s*\\(", source)
+    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\(", source)
     if not match:
         raise ValueError(f"could not locate Rust function {function_name}")
     opening_paren = source.find("(", match.start())
