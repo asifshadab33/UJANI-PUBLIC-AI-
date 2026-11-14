@@ -80,10 +80,20 @@ pub async fn process_selected_folder(
 
     // Require a live CPU plan before opening the native picker. If a local model
     // is available and requested, preflight the model-backed summary as well.
-    let capability_snapshot = crate::get_capability_snapshot().await?;
+    let capability_snapshot = crate::get_capability_snapshot_for_task(&task_token).await?;
     crate::ensure_task_not_cancelled(&task_token)?;
     crate::require_local_operation(&capability_snapshot, "file.analyze_text", &mode)?;
-    let ollama_available = !model.trim().is_empty() && crate::ollama::is_available().await;
+    let ollama_available = if model.trim().is_empty() {
+        false
+    } else {
+        crate::await_task_with_limits(
+            &task_token,
+            Duration::from_secs(4),
+            "Local Ollama availability check exceeded its 4-second time budget.",
+            async { Ok(crate::ollama::is_available().await) },
+        ).await?
+    };
+    crate::ensure_task_not_cancelled(&task_token)?;
     if ollama_available {
         crate::require_local_operation(
             &capability_snapshot,
