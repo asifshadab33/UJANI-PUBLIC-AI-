@@ -254,10 +254,16 @@ mod tests {
                 .expect("inherited descriptor number")
                 .parse()
                 .expect("valid descriptor number");
+            assert!(
+                unsafe { libc::fcntl(inherited_fd, libc::F_GETFD) } >= 0,
+                "test descriptor must be inherited before confinement",
+            );
             super::install_linux_filesystem_deny_filter()
                 .expect("worker filesystem boundary must install");
-            assert_eq!(unsafe { libc::fcntl(inherited_fd, libc::F_GETFD) }, -1);
-            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+            let inherited_flags = unsafe { libc::fcntl(inherited_fd, libc::F_GETFD) };
+            let inherited_error = std::io::Error::last_os_error();
+            assert_eq!(inherited_flags, -1);
+            assert_eq!(inherited_error.raw_os_error(), Some(libc::EBADF));
             let error = std::fs::File::open("/etc/passwd")
                 .expect_err("path-based reads must be denied");
             assert_eq!(error.raw_os_error(), Some(libc::EPERM));
