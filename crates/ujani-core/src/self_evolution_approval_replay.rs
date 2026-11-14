@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_expired_approval_before_touching_store() {
+    fn refuses_expired_approval_before_claiming_nonce() {
         let approval = verified_approval();
         let mut store = MemoryStore {
             now_unix_ms: 60_000,
