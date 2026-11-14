@@ -1075,6 +1075,8 @@ mod selected_root_open_boundary_tests {
             r"\\server\share\folder",
             r"\\?\UNC\server\share\folder",
             r"\\.\PhysicalDrive0",
+            r"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows",
+            r"\\?\Volume{00000000-0000-0000-0000-000000000000}\folder",
             r"C:relative\folder",
         ];
         for value in unsupported {
