@@ -8,9 +8,10 @@ import EverydayTools from "./EverydayTools";
 import EverydayWritingActions from "./EverydayWritingActions";
 import IntegrationDirectory from "./IntegrationDirectory";
 import SecurityCentre from "./SecurityCentre";
+import FeaturePermissionsCentre from "./FeaturePermissionsCentre";
 import ModelCatalogue from "./ModelCatalogue";
 import { MODEL_SELECTION_STORAGE_KEY, readModelSelectionPreference } from "./modelSelectionPreference.js";
-import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink } from "lucide-react";
+import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink, ListChecks } from "lucide-react";
 
 type TaskProgressEvent = { task_id: string; stage: string; message: string; progress_percent: number };
 type ChatDeltaEvent = { task_id: string; delta: string };
@@ -118,7 +119,7 @@ function readFileAsBase64(file: File, signal?: AbortSignal, onReadComplete?: () 
 
 export default function App() {
   const [device, setDevice] = useState<DeviceInfo | null>(null);
-  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre" | "integrations">("new-task");
+  const [activeSidebarSection, setActiveSidebarSection] = useState<"new-task" | "activity" | "resources" | "security-centre" | "features" | "integrations">("new-task");
   const [deviceError, setDeviceError] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [request, setRequest] = useState("");
@@ -1026,6 +1027,20 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={`nav ${activeSidebarSection === "features" ? "active" : ""}`}
+          aria-label="Feature and Permissions Centre"
+          aria-current={activeSidebarSection === "features" ? "page" : undefined}
+          onClick={(event) => {
+            setActiveSidebarSection("features");
+            const target = document.getElementById("feature-permissions-centre");
+            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (event.detail === 0) target?.focus({ preventScroll: true });
+          }}
+        >
+          <ListChecks size={17}/> Features &amp; permissions
+        </button>
+        <button
+          type="button"
           className={`nav ${activeSidebarSection === "resources" ? "active" : ""}`}
           aria-label="Local resources"
           aria-current={activeSidebarSection === "resources" ? "page" : undefined}
@@ -1060,6 +1075,7 @@ export default function App() {
         document.getElementById("task-request")?.focus({ preventScroll: true });
       }} />
       <SecurityCentre />
+      <FeaturePermissionsCentre />
       <IntegrationDirectory />
       <section className="launcher-section" id="new-task" tabIndex={-1} aria-labelledby="launcher-title">
         <div className="section-heading"><div><h2 id="launcher-title">How would you like to work?</h2><p>Choose a workspace. You can change modes at any time.</p></div><span className="muted">QUICK START</span></div>
