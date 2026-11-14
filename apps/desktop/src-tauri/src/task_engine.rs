@@ -362,13 +362,13 @@ fn create_pdf_worker_job() -> Result<std::os::windows::io::OwnedHandle, String> 
 }
 
 #[cfg(target_os = "linux")]
-const SYS_FCHMODAT2: libc::c_long = 452;
+const SYS_FCHMODAT2: libc::c_long = 452; // Linux x86_64/AArch64 syscall ABI
 
 #[cfg(target_os = "linux")]
 fn denied_pdf_worker_syscalls() -> Vec<libc::c_long> {
     // The worker receives its input only after the parent has installed limits.
-    // Deny sockets plus process/thread creation and namespace changes so a parser
-    // compromise cannot create a helper process or move into another namespace.
+    // Deny sockets, process/thread creation, namespace changes and path-based
+    // permission changes so a parser compromise cannot escape this worker boundary.
     let mut denied = vec![
         libc::SYS_socket,
         libc::SYS_socketpair,
