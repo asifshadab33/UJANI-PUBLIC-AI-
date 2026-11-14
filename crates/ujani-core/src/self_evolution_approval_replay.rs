@@ -16,6 +16,8 @@ pub enum ApprovalNonceStoreError {
     StorageUnavailable,
     /// The store rejected malformed or inconsistent record data.
     InvalidRecord,
+    /// The approval expired before the durable claim acquired its lock.
+    Expired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,48 +28,36 @@ pub enum ApprovalConsumptionError {
 
 /// Trusted host persistence boundary for single-use approval receipts.
 ///
-/// Implementations must:
-/// - atomically reject an existing (approver_id, nonce) pair;
-/// - persist the new claim, including its expiry, before returning Ok;
-/// - serialize concurrent calls across threads/processes;
-/// - fail closed if durable storage is unavailable or integrity checks fail;
-/// - never delete unexpired claims as a cleanup shortcut.
-///
-/// Expired claims may be compacted only when the store can prove they cannot
-/// make a still-valid approval replayable.
+/// Implementations must check expiry only after acquiring their durable
+/// transaction/lock, then atomically compact expired claims and claim the
+/// new approver/nonce pair. This prevents a request that waited on a database
+/// lock from reusing a nonce based on a stale pre-lock clock sample.
+/// Implementations must persist the claim before returning Ok, serialize
+/// concurrent calls across threads/processes, and fail closed on storage errors.
 pub trait SelfEvolutionApprovalNonceStore {
     fn claim_nonce(
         &mut self,
         approver_id: &str,
         nonce: &[u8; 16],
         expires_at_unix_ms: u64,
-        now_unix_ms: u64,
     ) -> Result<(), ApprovalNonceStoreError>;
 }
 
-/// Consume one already-verified approval exactly once.
-///
-/// The caller must invoke this immediately before staging an approved patch,
-/// and must not stage or apply anything unless this function returns Ok.
-/// Re-verification is still required against the current repository revision
-/// and exact proposal immediately before any future application step.
+/// Consume one already-verified approval exactly once. The durable store owns
+/// the expiry check so it can sample time after its transaction lock is held.
 pub fn consume_verified_self_evolution_approval(
     approval: &VerifiedSelfEvolutionApproval,
     store: &mut impl SelfEvolutionApprovalNonceStore,
-    now_unix_ms: u64,
 ) -> Result<(), ApprovalConsumptionError> {
-    if approval.expires_at_unix_ms() <= now_unix_ms {
-        return Err(ApprovalConsumptionError::Expired);
+    match store.claim_nonce(
+        approval.approver_id(),
+        approval.nonce(),
+        approval.expires_at_unix_ms(),
+    ) {
+        Ok(()) => Ok(()),
+        Err(ApprovalNonceStoreError::Expired) => Err(ApprovalConsumptionError::Expired),
+        Err(error) => Err(ApprovalConsumptionError::Store(error)),
     }
-
-    store
-        .claim_nonce(
-            approval.approver_id(),
-            approval.nonce(),
-            approval.expires_at_unix_ms(),
-            now_unix_ms,
-        )
-        .map_err(ApprovalConsumptionError::Store)
 }
 
 #[cfg(test)]
@@ -87,6 +77,7 @@ mod tests {
     struct MemoryStore {
         claims: BTreeMap<(String, [u8; 16]), u64>,
         fail_closed: bool,
+        now_unix_ms: u64,
     }
 
     impl SelfEvolutionApprovalNonceStore for MemoryStore {
@@ -95,13 +86,15 @@ mod tests {
             approver_id: &str,
             nonce: &[u8; 16],
             expires_at_unix_ms: u64,
-            now_unix_ms: u64,
         ) -> Result<(), ApprovalNonceStoreError> {
             if self.fail_closed {
                 return Err(ApprovalNonceStoreError::StorageUnavailable);
             }
-            if approver_id.is_empty() || expires_at_unix_ms <= now_unix_ms {
+            if approver_id.is_empty() {
                 return Err(ApprovalNonceStoreError::InvalidRecord);
+            }
+            if expires_at_unix_ms <= self.now_unix_ms {
+                return Err(ApprovalNonceStoreError::Expired);
             }
             let key = (approver_id.to_owned(), *nonce);
             if self.claims.contains_key(&key) {
@@ -181,11 +174,11 @@ mod tests {
         let approval = verified_approval();
         let mut store = MemoryStore::default();
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, &mut store, 2_000),
+            consume_verified_self_evolution_approval(&approval, &mut store),
             Ok(())
         );
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, &mut store, 2_001),
+            consume_verified_self_evolution_approval(&approval, &mut store),
             Err(ApprovalConsumptionError::Store(ApprovalNonceStoreError::AlreadyConsumed))
         );
     }
@@ -195,17 +188,20 @@ mod tests {
         let approval = verified_approval();
         let mut store = MemoryStore { fail_closed: true, ..MemoryStore::default() };
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, &mut store, 2_000),
+            consume_verified_self_evolution_approval(&approval, &mut store),
             Err(ApprovalConsumptionError::Store(ApprovalNonceStoreError::StorageUnavailable))
         );
     }
 
     #[test]
-    fn refuses_expired_approval_before_touching_store() {
+    fn refuses_expired_approval_before_claiming_nonce() {
         let approval = verified_approval();
-        let mut store = MemoryStore::default();
+        let mut store = MemoryStore {
+            now_unix_ms: 60_000,
+            ..MemoryStore::default()
+        };
         assert_eq!(
-            consume_verified_self_evolution_approval(&approval, &mut store, 60_000),
+            consume_verified_self_evolution_approval(&approval, &mut store),
             Err(ApprovalConsumptionError::Expired)
         );
         assert!(store.claims.is_empty());
