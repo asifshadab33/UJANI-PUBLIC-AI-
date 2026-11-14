@@ -11,7 +11,7 @@
 - Read-only OS CPU and memory reporting. GPU/NPU remain **unknown** until both hardware and a compatible compute runtime can be verified.
 - User-selected text and PDF processing in memory, bounded document chunking, local summarisation and optional local translation.
 - Bounded image-header inspection only; this is not image decoding, OCR or vision inference.
-- Registered local operation and workflow-graph planning. A successful plan is not execution, resource reservation, filesystem permission or a sandbox.
+- Registered local operation and workflow-graph planning. Both planners now invoke the shared policy preflight for registered local operations. A successful plan is not execution, resource reservation, filesystem permission or a sandbox; command-level denial coverage and universal native-command enforcement remain incomplete.
 
 ## Lightweight media capability boundary
 
