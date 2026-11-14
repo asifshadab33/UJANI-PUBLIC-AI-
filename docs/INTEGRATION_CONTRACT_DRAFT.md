@@ -85,3 +85,40 @@ Next gates, in order:
 - **Catalogue alignment:** both catalogues share eight identical entries. Enterprise additionally lists Qwen3 8B; Public main does not yet, although Public PR #234 adds it. This is a product/catalogue difference, not a schema mismatch. Catalogue claims remain advisory and do not attest installed runtime capabilities, artifact digest or licence.
 
 Model/runtime inventory v1 reports host platform and observed hardware/accelerators, runtime identity/version/network scope, model identity/version/size/context, declared task capabilities, bounded memory estimates and model-level evidence source/confidence/freshness. It does not yet express per-capability provenance, model-specific supported-platform/accelerator constraints, or explicit supported-language lists; `multilingual` is only a coarse capability claim. Neither product may infer those facts from a provider name, model family or catalogue label. Unknown or unsupported runtime metadata stays unknown. A future inventory schema v2 may add per-capability evidence and explicit model platform/accelerator compatibility constraints; each runtime adapter must populate them only from a documented runtime API, OS observation or appropriately trusted catalogue source. Different runtimes must remain separate least-privilege adapters rather than being treated as behaviourally interchangeable.
+
+## 2026-11-14 live verification delta
+
+This section supersedes earlier statements in this draft wherever the recorded PR state or model-download behavior differs.
+
+### Current repository and PR evidence
+
+- Public `main` is `465b9a9c1a3f4b260f6c4c56c7ce9d3605af5cfb`. PR #250 (hardware-aware model guidance and fail-closed downloads), #244 (duplicate-key parser regressions), #242 (integration-contract reconciliation) and #243 (native IPC/filesystem audit reconciliation) are merged. Their predecessor PRs #234, #239, #240 and #241 were closed as superseded, not merged. There are no open Public PRs at this verification point.
+- Enterprise `main` is `20224f5e9794c74f1b52b0ae7c188af2420a0b5c`. Enterprise PR #211 remains a draft at `7b7516bd52b0ce926900c5962a1595ddc2c3062b`, 12 commits ahead and one documentation-only commit behind `main`. Exact-head CI, CodeQL, RustSec and security-sensitive change watch passed, including PostgreSQL 16 migration, rollback and concurrent capacity tests. It has no independent review yet and is not merged.
+
+### Public model-download status correction
+
+PR #250 merged the hardware-aware guidance and fail-closed download preflight. On current `main`, `model_download_preflight_ready()` remains deliberately false: UJANI-managed Ollama pulls are disabled. The user may install a model through their trusted Ollama interface and refresh local inventory. Do not describe current Smart mode as permitting an UJANI-managed pull. The daemon's downstream registry host, exact artifact digest/licence and actual model-store path/free space remain unverifiable, which is why the managed-download preflight stays closed.
+
+### Shared contract parity and remaining boundary
+
+The current shared Git blobs are byte-identical across both repositories:
+
+- Task-contract v1 schema: `566a0d72babd58636a3ef40e55b5c44168776522`.
+- Model/runtime inventory v1 schema: `8ff1a1db4700214ba687cd806c449bc1ea7dfdb4`.
+- Consent-binding vector: `dcd7021560212504810e8438e14efd591e5e657d`.
+- Model-inventory vector: `543d645d0154c9263ff7784ba4e203f54e498c3c`.
+- Task-contract Python validator: `a61c241289a32b750200bdcb01a8d79485e17a28`.
+
+No schema-level envelope mismatch was found. The two native Rust decoders remain separately maintained in their product crates. Public peer protocol v2 and Enterprise WorkloadManifest v1 still have no production adapter to shared task-contract v1; do not relabel or implicitly translate either legacy format. Durable authenticated replay intake, atomic consent/policy/lease admission, signed worker receipt ingestion and exact output-byte verification remain unimplemented end-to-end.
+
+### Model inventory v1 limits
+
+Inventory v1 carries host platform/architecture, observed hardware/accelerators, runtime/model identity and version, declared capabilities, context, bounded memory estimates, evidence source/confidence/freshness and privacy declarations. It does not carry per-capability provenance, per-model OS/accelerator compatibility, or explicit supported-language lists. Device trust, owner consent and administrator approval remain external authenticated policy boundaries, not facts to trust from an inventory payload. Keep v1 strict; add those richer claims only in a separately versioned extension and only when an adapter can provide trustworthy evidence. Public's live discovery is Ollama-only; `model_runtime.rs` remains a deterministic test mock, not inference. Enterprise still lacks authenticated enrolled-device model-inventory ingestion.
+
+### Current security and release gates
+
+- Public's native IPC inventory contains 42 default commands and 7 conditional peer-preview commands. Its 49-entry security map is a review inventory, not sign-off: full per-command authorization/consent denial review and negative tests remain open under issue #120. PDF worker restrictions are partial rather than a full application sandbox; Windows PDF file/network isolation is unavailable, macOS still uses deprecated `sandbox-exec`, and physical-device enforcement remains unverified. Windows filesystem junction/reparse-point regression and installed-device verification remain required.
+- Public main CI and CodeQL pass, but the desktop Rust dependency audit still reports six allowed RustSec warnings (including unsound `glib 0.18.5` / RUSTSEC-2024-0429). A successful workflow exit is not a clean audit; issue #73 remains open.
+- Enterprise PR #211 adds a database admission primitive only. Its HTTP adapter must still verify device/admin signatures and bind authenticated enrollment, replay, consent, policy and lease state. Protected production key custody, external anti-rollback anchoring, lease renewal/release/recovery, OS isolation, signed receipt integration and worker dispatch remain outstanding. Remote execution stays disabled.
+
+Neither repository is release-ready for production execution. Do not publish a release or enable remote workers based on schema parity or passing CI alone.
