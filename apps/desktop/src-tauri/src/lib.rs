@@ -2414,9 +2414,14 @@ mod model_capability_selection_tests {
     #[test]
     fn pdf_worker_isolation_is_not_claimed_available_without_device_verification() {
         assert_eq!(super::pdf_worker_resource_limits_state(), super::CapabilityState::Unknown);
+        let expected_filesystem_state = if cfg!(target_os = "linux") {
+            super::CapabilityState::Unknown
+        } else {
+            super::CapabilityState::Unavailable
+        };
         assert_eq!(
             super::pdf_worker_filesystem_isolation_state(),
-            super::CapabilityState::Unavailable
+            expected_filesystem_state
         );
         let expected_network_state = if cfg!(target_os = "windows") {
             super::CapabilityState::Unavailable
