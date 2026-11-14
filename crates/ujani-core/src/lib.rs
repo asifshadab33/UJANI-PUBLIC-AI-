@@ -11,6 +11,8 @@ pub mod self_evolution;
 pub mod self_evolution_approval;
 /// Single-use replay-consumption contract for verified self-evolution approvals.
 pub mod self_evolution_approval_replay;
+/// Validates exact approved patch artifacts against a trusted workspace snapshot; no writes or execution.
+pub mod self_evolution_patch;
 
 use std::collections::BTreeSet;
 
