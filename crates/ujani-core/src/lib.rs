@@ -7,6 +7,8 @@
 pub mod self_evolution;
 /// Signed, host-owned approval receipts for one exact self-evolution proposal; no patch application.
 pub mod self_evolution_approval;
+/// Single-use replay-consumption contract for verified self-evolution approvals.
+pub mod self_evolution_approval_replay;
 
 use std::collections::BTreeSet;
 
