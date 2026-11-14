@@ -103,13 +103,14 @@ mod fail_closed_boundary_regressions {
     }
 
     #[test]
-    fn malformed_task_and_operation_identifiers_fail_closed() {
+    fn malformed_task_and_unregistered_operation_identifiers_fail_closed() {
         let mut value = request(ExecutionTarget::LocalTool);
         value.task_id = "../escape".into();
         assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
 
         let mut value = request(ExecutionTarget::LocalTool);
         value.operation_id = "shell.run".into();
+        value.operation_registered = false;
         assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
     }
 
