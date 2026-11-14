@@ -278,9 +278,6 @@ mod tests {
             let source = CString::new(
                 std::env::var(MUTATION_SOURCE).expect("disposable source path"),
             ).expect("source path contains no NUL");
-            let target = CString::new(
-                std::env::var(MUTATION_TARGET).expect("disposable target path"),
-            ).expect("target path contains no NUL");
             assert!(
                 unsafe { libc::fcntl(inherited_fd, libc::F_GETFD) } >= 0,
                 "test descriptor must be inherited before confinement",
@@ -297,6 +294,9 @@ mod tests {
 
             #[cfg(target_arch = "x86_64")]
             {
+                let target = CString::new(
+                    std::env::var(MUTATION_TARGET).expect("disposable target path"),
+                ).expect("target path contains no NUL");
                 assert_eq!(unsafe { libc::unlink(source.as_ptr()) }, -1);
                 assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
                 assert_eq!(unsafe { libc::rename(source.as_ptr(), target.as_ptr()) }, -1);
