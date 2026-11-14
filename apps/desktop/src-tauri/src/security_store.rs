@@ -1608,15 +1608,14 @@ mod tests {
 #[cfg(test)]
 mod self_evolution_approval_nonce_tests {
     use super::*;
-    use rand::{rngs::OsRng, RngCore};
 
     fn test_nonce() -> [u8; 16] {
-        let mut nonce = [0_u8; 16];
-        OsRng.fill_bytes(&mut nonce);
-        if nonce.iter().all(|byte| *byte == 0) {
-            nonce[0] = 1;
+        loop {
+            let nonce = rand::random::<[u8; 16]>();
+            if nonce.iter().any(|byte| *byte != 0) {
+                return nonce;
+            }
         }
-        nonce
     }
 
     fn store() -> SqliteSelfEvolutionApprovalNonceStore {
