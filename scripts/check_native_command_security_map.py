@@ -15,7 +15,72 @@ SOURCE = ROOT / "apps/desktop/src-tauri/src/lib.rs"
 MANIFEST = ROOT / "docs/native-command-security-map.json"
 
 
+def find_matching_delimiter(source: str, opening_index: int, opening: str, closing: str) -> int:
+    """Find a matching delimiter while ignoring Rust comments and string literals."""
+    if opening_index >= len(source) or source[opening_index] != opening:
+        raise ValueError(f"expected {opening!r} at delimiter start")
+    depth = 0
+    index = opening_index
+    while index < len(source):
+        if source.startswith("//", index):
+            newline = source.find("\n", index + 2)
+            index = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", index):
+            index += 2
+            comment_depth = 1
+            while index < len(source) and comment_depth:
+                if source.startswith("/*", index):
+                    comment_depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    comment_depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            if comment_depth:
+                raise ValueError("unterminated Rust block comment")
+            continue
+
+        # Rust raw strings: r"...", r#"..."#, r##"..."##, etc.
+        raw = re.match(r'r(#+)?"', source[index:])
+        if raw:
+            hashes = raw.group(1) or ""
+            terminator = '"' + hashes
+            index += raw.end()
+            end = source.find(terminator, index)
+            if end < 0:
+                raise ValueError("unterminated Rust raw string")
+            index = end + len(terminator)
+            continue
+
+        char = source[index]
+        if char == '"':
+            index += 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index += 2
+                elif source[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            else:
+                raise ValueError("unterminated Rust string literal")
+            continue
+
+        if char == opening:
+            depth += 1
+        elif char == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    raise ValueError(f"could not find matching {closing!r} delimiter")
+
+
 def command_tokens(text: str) -> list[str]:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     text = re.sub(r"//[^\n]*", "", text)
     return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", text)
 
@@ -25,21 +90,20 @@ def registered_commands(source: str) -> tuple[list[str], list[str]]:
     start = source.find(marker)
     if start < 0:
         raise ValueError("could not locate tauri::generate_handler! in lib.rs")
-    body_start = start + len(marker)
-    body_end = source.find("]", body_start)
-    if body_end < 0:
-        raise ValueError("could not locate end of default Tauri handler list")
-    default = [item for item in command_tokens(source[body_start:body_end]) if item != "peer_command"]
+    opening = start + len(marker) - 1
+    body_end = find_matching_delimiter(source, opening, "[", "]")
+    default = [item for item in command_tokens(source[opening + 1:body_end]) if item != "peer_command"]
 
     peer = re.search(
         r'#\[cfg\(feature = "peer-preview"\)\]\s*'
-        r'let builder = builder\.invoke_handler\(ujani_invoke_handler!\((.*?)\)\);',
+        r'let builder = builder\.invoke_handler\(ujani_invoke_handler!\(',
         source,
-        re.DOTALL,
     )
     if not peer:
         raise ValueError("could not locate peer-preview handler expansion")
-    return default, command_tokens(peer.group(1))
+    peer_opening = peer.end() - 1
+    peer_end = find_matching_delimiter(source, peer_opening, "(", ")")
+    return default, command_tokens(source[peer_opening + 1:peer_end])
 
 
 def main() -> int:
