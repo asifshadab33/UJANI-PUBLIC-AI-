@@ -26,15 +26,14 @@ pub fn parse_data_class(value: &str) -> Result<DataClass, &'static str> {
 
 /// Shared external-transfer policy used by native cloud dispatch.
 /// This is a user-declared classification, not automatic content inspection.
-pub fn evaluate_external_transfer(data_class: DataClass, user_approved: bool) -> GateResult {
-    let (decision, reason) = if !user_approved {
-        (GateDecision::RequireReview, "explicit per-task approval required for external transfer")
+pub fn evaluate_external_transfer(data_class: DataClass, user_approved: bool) -> GateDecision {
+    if !user_approved {
+        GateDecision::RequireReview
     } else if matches!(data_class, DataClass::Confidential | DataClass::Restricted) {
-        (GateDecision::Deny, "confidential or restricted data blocked from generic external transfer")
+        GateDecision::Deny
     } else {
-        (GateDecision::Allow, "declared data class permits transfer after explicit user approval")
-    };
-    GateResult { decision, reason, requires_isolation: true }
+        GateDecision::Allow
+    }
 }
 
 /// Pure decision only: invoke at the trusted dispatch boundary on every route.
@@ -53,8 +52,11 @@ pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
   SafetyDecision::AllowWithLimits=>{}
  }
  if r.external_transfer {
-  let transfer = evaluate_external_transfer(r.data_class, r.user_approved_transfer);
-  if transfer.decision != GateDecision::Allow { return transfer; }
+  match evaluate_external_transfer(r.data_class, r.user_approved_transfer) {
+   GateDecision::RequireReview => return review("explicit per-task approval required for external transfer"),
+   GateDecision::Deny => return deny("confidential or restricted data blocked from generic external transfer"),
+   GateDecision::Allow => {}
+  }
  }
  match r.target {
   ExecutionTarget::EnterpriseWorker if !r.admin_approved_worker||!r.owner_opted_in=>return deny("worker requires administrator approval and device-owner opt-in"),
@@ -114,16 +116,16 @@ mod fail_closed_boundary_regressions {
     #[test]
     fn external_transfer_requires_approval_and_blocks_sensitive_classes() {
         assert_eq!(
-            evaluate_external_transfer(DataClass::Public, false).decision,
+            evaluate_external_transfer(DataClass::Public, false),
             GateDecision::RequireReview
         );
         assert_eq!(
-            evaluate_external_transfer(DataClass::Internal, true).decision,
+            evaluate_external_transfer(DataClass::Internal, true),
             GateDecision::Allow
         );
         for class in [DataClass::Confidential, DataClass::Restricted] {
             assert_eq!(
-                evaluate_external_transfer(class, true).decision,
+                evaluate_external_transfer(class, true),
                 GateDecision::Deny
             );
         }
