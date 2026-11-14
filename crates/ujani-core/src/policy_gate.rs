@@ -1,4 +1,5 @@
-//! Shared pre-execution policy gate for every local and external route.
+//! Shared pre-execution policy contract. Native dispatch integration is not yet complete;
+//! do not treat this module as enforced until every route calls it with trusted context.
 use crate::safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadIntent};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum DataClass { Public, Internal, Confidential, Restricted }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)] pub enum ExecutionTarget { LocalTool, LocalModel, EnterpriseWorker, CloudProvider }
@@ -12,7 +13,8 @@ use crate::safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadInt
 }
 #[derive(Debug, Clone, PartialEq, Eq)] pub struct GateResult { pub decision:GateDecision, pub reason:&'static str, pub requires_isolation:bool }
 fn valid_id(s:&str)->bool { !s.trim().is_empty() && s.len()<=128 && s.chars().all(|c|c.is_ascii_alphanumeric() || "._:-".contains(c)) }
-/// Invoke immediately before dispatch on every route. Missing permission fails closed.
+/// Pure decision only: invoke at the trusted dispatch boundary on every route.
+/// This function does not itself enforce isolation, quotas, egress or cancellation.
 pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
  let deny=|reason|GateResult{decision:GateDecision::Deny,reason,requires_isolation:true};
  let review=|reason|GateResult{decision:GateDecision::RequireReview,reason,requires_isolation:true};
@@ -97,6 +99,17 @@ mod fail_closed_boundary_regressions {
         let mut value = request(ExecutionTarget::LocalModel);
         value.external_transfer = true;
         value.user_approved_transfer = true;
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+    }
+
+    #[test]
+    fn malformed_task_and_operation_identifiers_fail_closed() {
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.task_id = "../escape".into();
+        assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
+
+        let mut value = request(ExecutionTarget::LocalTool);
+        value.operation_id = "shell.run".into();
         assert_eq!(evaluate_execution(&value).decision, GateDecision::Deny);
     }
 
