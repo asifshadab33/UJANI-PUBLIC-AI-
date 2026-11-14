@@ -1,0 +1,498 @@
+{
+  "schema_version": 1,
+  "description": "Source-reviewed command classification and audit status. This manifest is an inventory guard, not an authorization implementation or security sign-off.",
+  "default_commands": {
+    "get_capability_snapshot": {
+      "classification": "read_only_local",
+      "capability": "capability.snapshot",
+      "scope": "Local runtime capability metadata only",
+      "effects": "OS/runtime metadata read; no file content or external transfer",
+      "boundary": "read-only command; snapshot freshness and unknown states must remain fail-closed",
+      "receipt": "none-read-only",
+      "tests": "unit tests for capability unknown/unavailable states",
+      "status": "source-mapped; full review pending"
+    },
+    "get_tool_catalogue": {
+      "classification": "read_only_local",
+      "capability": "tool.catalogue",
+      "scope": "Static operation catalogue",
+      "effects": "In-memory catalogue read",
+      "boundary": "read-only; UI visibility is not authorization",
+      "receipt": "none-read-only",
+      "tests": "catalogue schema and registry tests",
+      "status": "source-mapped; full review pending"
+    },
+    "plan_local_operation": {
+      "classification": "read_only_local",
+      "capability": "operation.plan",
+      "scope": "Operation ID and observed local capabilities",
+      "effects": "Pure local planning",
+      "boundary": "planning only; execution must recheck native capability state",
+      "receipt": "none-read-only",
+      "tests": "capability planner tests",
+      "status": "source-mapped; full review pending"
+    },
+    "plan_task_workflow": {
+      "classification": "read_only_local",
+      "capability": "workflow.plan",
+      "scope": "Fixed task graph and local capability metadata",
+      "effects": "Pure local planning",
+      "boundary": "workflow graph validation; no execution in planner",
+      "receipt": "none-read-only",
+      "tests": "task graph validation tests",
+      "status": "source-mapped; full review pending"
+    },
+    "get_model_recommendation": {
+      "classification": "read_only_local",
+      "capability": "model.recommend",
+      "scope": "Local model inventory metadata and available RAM",
+      "effects": "Local Ollama metadata reads",
+      "boundary": "loopback-only bounded reads; recommendation is advisory",
+      "receipt": "none-read-only",
+      "tests": "model metadata and RAM-fit tests",
+      "status": "source-mapped; full review pending"
+    },
+    "get_ollama_status": {
+      "classification": "read_only_local",
+      "capability": "runtime.status",
+      "scope": "Local Ollama status and installed model metadata",
+      "effects": "Loopback HTTP reads to 127.0.0.1 only",
+      "boundary": "bounded loopback requests; redirects/proxies disabled",
+      "receipt": "none-read-only",
+      "tests": "Ollama adapter timeout/response-bound tests",
+      "status": "source-mapped; full review pending"
+    },
+    "get_device_info": {
+      "classification": "read_only_local",
+      "capability": "device.info",
+      "scope": "Local device hardware metadata",
+      "effects": "OS metadata reads",
+      "boundary": "no remote discovery or device wake",
+      "receipt": "none-read-only",
+      "tests": "device capability tests",
+      "status": "source-mapped; full review pending"
+    },
+    "list_local_models": {
+      "classification": "read_only_local",
+      "capability": "model.inventory",
+      "scope": "Installed local model names/metadata",
+      "effects": "Local Ollama inventory read",
+      "boundary": "loopback-only; no download or prompt submission",
+      "receipt": "none-read-only",
+      "tests": "model inventory tests",
+      "status": "source-mapped; full review pending"
+    },
+    "evaluate_task_route": {
+      "classification": "read_only_local",
+      "capability": "route.evaluate",
+      "scope": "Task route request and local capability metadata",
+      "effects": "Pure route evaluation",
+      "boundary": "evaluation only; never treated as dispatch authorization",
+      "receipt": "none-read-only",
+      "tests": "router policy tests",
+      "status": "source-mapped; full review pending"
+    },
+    "pull_ollama_model": {
+      "classification": "disabled_external_mutation",
+      "capability": "model.download",
+      "scope": "User-selected model identifier and mode",
+      "effects": "Would cause Ollama daemon registry network traffic and local model-store writes",
+      "boundary": "currently hard-disabled pending artifact digest/licence/size/store verification; native consent exists only behind disabled preflight",
+      "receipt": "required-but-disabled",
+      "tests": "managed_model_downloads_stay_disabled_without_artifact_and_storage_evidence",
+      "status": "source-mapped; deliberately disabled"
+    },
+    "execute_local_ai_task": {
+      "classification": "local_model_execution",
+      "capability": "local.ai.generate",
+      "scope": "User prompt, selected model and mode",
+      "effects": "Local Ollama inference; metadata and receipts persisted",
+      "boundary": "active task registration, capability preflight, Fortress/Smart local route and cancellation",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "local task policy and receipt regression tests",
+      "status": "partially wired; command-level denial matrix pending"
+    },
+    "run_local_model_task": {
+      "classification": "local_model_execution",
+      "capability": "local.model.run",
+      "scope": "User-provided task input and selected local model",
+      "effects": "Local model inference",
+      "boundary": "native local runtime checks and task cancellation; verify exact policy path before expanding",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "native runtime tests",
+      "status": "source-mapped; full review pending"
+    },
+    "run_local_task": {
+      "classification": "local_tool_execution",
+      "capability": "local.tool.run",
+      "scope": "User-provided task input and operation ID",
+      "effects": "Local tool execution",
+      "boundary": "operation registry and local capability gate required",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "operation registry and local policy tests",
+      "status": "source-mapped; full review pending"
+    },
+    "cancel_active_task": {
+      "classification": "task_control",
+      "capability": "task.cancel",
+      "scope": "Active task identifier",
+      "effects": "Cancels a registered in-process task",
+      "boundary": "must only cancel matching active task; no arbitrary process termination",
+      "receipt": "none-control-event",
+      "tests": "cancellation and task registry tests",
+      "status": "source-mapped; full review pending"
+    },
+    "execute_document_workflow": {
+      "classification": "local_document_execution",
+      "capability": "document.workflow",
+      "scope": "User-selected document text, filename, model and optional language",
+      "effects": "Local Ollama inference and metadata receipt persistence",
+      "boundary": "fixed workflow graph, local capability planning, size limits, cancellation and receipt wrapper",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "workflow graph, task cancellation and receipt tests",
+      "status": "partially wired; shared authorization gate not complete"
+    },
+    "process_selected_document": {
+      "classification": "local_document_execution",
+      "capability": "document.summarize",
+      "scope": "User-selected document text and filename",
+      "effects": "Local Ollama inference",
+      "boundary": "native local operation preflight, task registration, cancellation and bounded input",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "local operation denial and document pipeline tests",
+      "status": "partially wired; command-level denial matrix pending"
+    },
+    "process_selected_pdf": {
+      "classification": "local_document_execution",
+      "capability": "pdf.extract_and_summarize",
+      "scope": "User-selected PDF bytes, filename and model",
+      "effects": "Isolated PDF worker plus local Ollama inference",
+      "boundary": "native local operation preflight, parser capability, byte/time limits, cancellation and worker isolation status",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "PDF worker isolation and parser regression tests",
+      "status": "partially wired; device isolation proof pending"
+    },
+    "analyze_text_file": {
+      "classification": "local_document_execution",
+      "capability": "file.analyze_text",
+      "scope": "User-selected text bytes and filename",
+      "effects": "Local bounded text analysis",
+      "boundary": "must remain limited to explicitly supplied file content",
+      "receipt": "none-or-managed-receipt",
+      "tests": "text parser bounds tests",
+      "status": "source-mapped; full review pending"
+    },
+    "summarize_selected_text": {
+      "classification": "local_document_execution",
+      "capability": "document.summarize",
+      "scope": "User-selected text and local model",
+      "effects": "Local Ollama inference",
+      "boundary": "native local operation preflight, cancellation and bounded input",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "local operation denial and cancellation tests",
+      "status": "partially wired; command-level denial matrix pending"
+    },
+    "translate_text_local": {
+      "classification": "local_document_execution",
+      "capability": "translate.text",
+      "scope": "User-selected text, target language and local model",
+      "effects": "Local Ollama inference",
+      "boundary": "native local operation preflight, cancellation and bounded input",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "translation policy and cancellation tests",
+      "status": "partially wired; command-level denial matrix pending"
+    },
+    "inspect_image_file": {
+      "classification": "local_image_execution",
+      "capability": "image.inspect",
+      "scope": "User-selected image bytes and metadata",
+      "effects": "Local image metadata/content inspection",
+      "boundary": "must remain scoped to user-selected image; enforce byte/dimension limits",
+      "receipt": "none-or-managed-receipt",
+      "tests": "image parser bounds tests",
+      "status": "source-mapped; full review pending"
+    },
+    "execute_cloud_ai_task": {
+      "classification": "external_data_transfer",
+      "capability": "cloud.ai.generate",
+      "scope": "Exact user prompt, configured endpoint, model and ephemeral API key",
+      "effects": "External provider network request; local budget and receipt state writes",
+      "boundary": "task-scoped native confirmation disclosing host/model/prompt preview; endpoint validation, token budget, cancellation and timeout",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "cloud approval denial, endpoint validation and budget tests",
+      "status": "partially wired; trusted data classification and unified gate pending"
+    },
+    "folder_import::process_selected_folder": {
+      "classification": "selected_folder_read_and_local_execution",
+      "capability": "file.analyze_text;document.summarize",
+      "scope": "Only the folder explicitly selected through native picker; bounded supported text files",
+      "effects": "Reads selected files and runs optional local model; persists metadata receipt",
+      "boundary": "native folder picker, cancellation, no-follow bounded traversal, local operation preflight and limits",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "selected-root, traversal, cancellation and receipt tests",
+      "status": "partially wired; device race validation pending"
+    },
+    "local_search::find_local_files": {
+      "classification": "selected_folder_read",
+      "capability": "file.search.local",
+      "scope": "Only folder explicitly selected through native picker and user query",
+      "effects": "Reads filesystem metadata/content within bounded selected scope; optional encrypted cache writes",
+      "boundary": "native picker, bounded traversal, symlink/reparse protections, cancellation; cache is hint only",
+      "receipt": "metadata-receipt-for-cache-mutation",
+      "tests": "search traversal, cache crypto and cancellation tests",
+      "status": "source-mapped; full review pending"
+    },
+    "everyday_tools::find_duplicate_files": {
+      "classification": "selected_folder_read",
+      "capability": "file.duplicates.preview",
+      "scope": "Only folder explicitly selected through native picker",
+      "effects": "Read-only bounded file hashing; no deletion or modification",
+      "boundary": "native picker, bounded traversal/bytes/time, no-follow opens and cancellation",
+      "receipt": "none-read-only",
+      "tests": "duplicate scan budget, no-follow and cancellation tests",
+      "status": "source-mapped; full review pending"
+    },
+    "file_insights::find_large_files": {
+      "classification": "selected_folder_metadata_read",
+      "capability": "file.large_files.preview",
+      "scope": "Only folder explicitly selected through native picker",
+      "effects": "Read-only filesystem metadata; does not read file contents",
+      "boundary": "native picker, bounded depth/entries/time/results and cancellation",
+      "receipt": "none-read-only",
+      "tests": "large-file scan bounds and symlink tests",
+      "status": "source-mapped; full review pending"
+    },
+    "everyday_tools::get_local_clock": {
+      "classification": "read_only_os_info",
+      "capability": "os.clock.read",
+      "scope": "Local system clock",
+      "effects": "OS clock read",
+      "boundary": "read-only; no location or network lookup",
+      "receipt": "none-read-only",
+      "tests": "clock serialization tests",
+      "status": "source-mapped; full review pending"
+    },
+    "search_cache::get_local_search_cache_settings": {
+      "classification": "read_only_persistent_state",
+      "capability": "search.cache.settings.read",
+      "scope": "Local cache configuration",
+      "effects": "Local SQLite/settings read",
+      "boundary": "no mutation",
+      "receipt": "none-read-only",
+      "tests": "cache settings tests",
+      "status": "source-mapped; full review pending"
+    },
+    "search_cache::list_recent_local_searches": {
+      "classification": "read_only_persistent_state",
+      "capability": "search.cache.history.read",
+      "scope": "Local encrypted cache metadata",
+      "effects": "Local SQLite/credential-vault reads",
+      "boundary": "no external transfer; respect cache encryption and retention",
+      "receipt": "none-read-only",
+      "tests": "cache decryption and retention tests",
+      "status": "source-mapped; full review pending"
+    },
+    "search_cache::set_local_search_cache_settings": {
+      "classification": "persistent_local_mutation",
+      "capability": "search.cache.settings.write",
+      "scope": "User-selected cache enablement and retention values",
+      "effects": "Persistent local settings mutation and receipt write",
+      "boundary": "native settings validation and transaction/receipt wrapper",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "settings bounds and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "search_cache::clear_local_search_cache": {
+      "classification": "persistent_local_mutation",
+      "capability": "search.cache.clear",
+      "scope": "Local encrypted search cache",
+      "effects": "Persistent local deletion and receipt write",
+      "boundary": "native confirmation/policy as applicable; transaction/receipt wrapper",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "clear and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "history::get_task_history_settings": {
+      "classification": "read_only_persistent_state",
+      "capability": "history.settings.read",
+      "scope": "Local history settings",
+      "effects": "Local settings read",
+      "boundary": "no mutation",
+      "receipt": "none-read-only",
+      "tests": "history settings tests",
+      "status": "source-mapped; full review pending"
+    },
+    "history::set_task_history_enabled": {
+      "classification": "persistent_local_mutation",
+      "capability": "history.settings.write",
+      "scope": "User-selected history enablement",
+      "effects": "Persistent local settings mutation and receipt write",
+      "boundary": "native settings validation and receipt wrapper",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "history settings and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "history::save_task_history": {
+      "classification": "persistent_local_mutation",
+      "capability": "history.save",
+      "scope": "Task metadata and bounded result metadata",
+      "effects": "Encrypted local history write and receipt write",
+      "boundary": "AES-GCM/AAD protected storage; no prompt/document content in receipt",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "history encryption, AAD and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "history::list_task_history": {
+      "classification": "read_only_persistent_state",
+      "capability": "history.list",
+      "scope": "Encrypted local history metadata",
+      "effects": "Local database read/decrypt",
+      "boundary": "no external transfer",
+      "receipt": "none-read-only",
+      "tests": "history decryption and schema tests",
+      "status": "source-mapped; full review pending"
+    },
+    "history::delete_task_history": {
+      "classification": "persistent_local_mutation",
+      "capability": "history.delete",
+      "scope": "User-selected history record ID",
+      "effects": "Persistent local deletion and receipt write",
+      "boundary": "validate record identifier and transaction/receipt wrapper",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "history delete and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "history::clear_task_history": {
+      "classification": "persistent_local_mutation",
+      "capability": "history.clear",
+      "scope": "Local task history",
+      "effects": "Persistent local deletion and receipt write",
+      "boundary": "transaction/receipt wrapper",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "history clear and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "security_store::verify_execution_receipt_ledger": {
+      "classification": "read_only_security_state",
+      "capability": "receipt.ledger.verify",
+      "scope": "Local metadata-only receipt ledger",
+      "effects": "Local integrity verification read",
+      "boundary": "verification only; local hash chain is not signature, trusted timestamp or remote anchor",
+      "receipt": "none-read-only",
+      "tests": "ledger corruption and verification tests",
+      "status": "source-mapped; full review pending"
+    },
+    "security_store::list_execution_receipts": {
+      "classification": "read_only_security_state",
+      "capability": "receipt.list",
+      "scope": "Local metadata-only execution receipts",
+      "effects": "Local database read",
+      "boundary": "never expose prompts, document content, credentials or secrets",
+      "receipt": "none-read-only",
+      "tests": "receipt schema and privacy tests",
+      "status": "source-mapped; full review pending"
+    },
+    "security_store::get_cloud_budget_status": {
+      "classification": "read_only_persistent_state",
+      "capability": "cloud.budget.read",
+      "scope": "Local cloud usage budget metadata",
+      "effects": "Local database read",
+      "boundary": "no external transfer",
+      "receipt": "none-read-only",
+      "tests": "budget accounting tests",
+      "status": "source-mapped; full review pending"
+    },
+    "security_store::set_cloud_budget_limit": {
+      "classification": "persistent_security_mutation",
+      "capability": "cloud.budget.write",
+      "scope": "Requested new local cloud budget ceiling",
+      "effects": "Persistent budget mutation and receipt write",
+      "boundary": "fresh native confirmation for increases; transaction rechecks previous and requested limits",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "budget transaction and receipt tests",
+      "status": "source-mapped; command-level denial matrix pending"
+    },
+    "get_security_provider_status": {
+      "classification": "read_only_security_state",
+      "capability": "security.provider.status",
+      "scope": "Local provider status metadata",
+      "effects": "OS security provider status reads",
+      "boundary": "native scope-specific confirmation currently required; no security tool changes performed",
+      "receipt": "none-read-only",
+      "tests": "provider status and consent regression tests",
+      "status": "source-mapped; full review pending"
+    }
+  },
+  "peer_preview_commands": {
+    "security_store::enroll_trusted_peer": {
+      "classification": "peer_trust_mutation",
+      "capability": "peer.trust.enroll",
+      "scope": "User-approved peer identity and public key",
+      "effects": "Persistent trusted-peer registry mutation and receipt write",
+      "boundary": "opt-in peer-preview feature; native confirmation; key and identity validation",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "peer enrollment consent and persistence tests",
+      "status": "peer-preview only; full review pending"
+    },
+    "security_store::revoke_trusted_peer": {
+      "classification": "peer_trust_mutation",
+      "capability": "peer.trust.revoke",
+      "scope": "User-selected trusted peer identity",
+      "effects": "Persistent trusted-peer revocation and receipt write",
+      "boundary": "opt-in peer-preview feature; native confirmation and durable state",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "peer revocation and persistence tests",
+      "status": "peer-preview only; full review pending"
+    },
+    "security_store::list_trusted_peers": {
+      "classification": "read_only_security_state",
+      "capability": "peer.trust.list",
+      "scope": "Local trusted-peer metadata",
+      "effects": "Local registry read",
+      "boundary": "opt-in peer-preview feature; no remote discovery",
+      "receipt": "none-read-only",
+      "tests": "peer registry read tests",
+      "status": "peer-preview only; full review pending"
+    },
+    "security_store::verify_and_claim_peer_envelope": {
+      "classification": "peer_authenticated_state_mutation",
+      "capability": "peer.envelope.claim",
+      "scope": "Signed peer envelope metadata and nonce",
+      "effects": "Signature verification plus durable replay/nonce claim and receipt",
+      "boundary": "opt-in peer-preview feature; signature verification before atomic nonce claim",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "signature, replay, expiry and receipt tests",
+      "status": "peer-preview only; full review pending"
+    },
+    "device_identity::get_or_create_device_identity": {
+      "classification": "device_identity_mutation",
+      "capability": "device.identity.create",
+      "scope": "Local device identity metadata",
+      "effects": "Protected local signing-key creation and identity receipt",
+      "boundary": "opt-in peer-preview feature; serialized local state transaction",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "identity creation race and receipt tests",
+      "status": "peer-preview only; full review pending"
+    },
+    "device_identity::rotate_device_identity": {
+      "classification": "device_identity_mutation",
+      "capability": "device.identity.rotate",
+      "scope": "Existing local identity and newly generated key",
+      "effects": "Protected local signing-key rotation and receipt",
+      "boundary": "opt-in peer-preview feature; native confirmation, locked recheck and receipt",
+      "receipt": "metadata-outcome-receipt",
+      "tests": "rotation consent, concurrency and receipt tests",
+      "status": "peer-preview only; full review pending"
+    },
+    "device_identity::sign_peer_task_envelope": {
+      "classification": "peer_cryptographic_action",
+      "capability": "peer.envelope.sign",
+      "scope": "User-approved task envelope metadata",
+      "effects": "Local signing operation; no dispatch authorization",
+      "boundary": "opt-in peer-preview feature; native confirmation and trusted identity required; signing does not authorize remote execution",
+      "receipt": "receipt-coverage-review-required",
+      "tests": "signature scope and consent tests; receipt coverage must be verified",
+      "status": "peer-preview only; receipt coverage review pending"
+    }
+  }
+}
