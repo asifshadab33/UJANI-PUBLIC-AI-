@@ -874,10 +874,10 @@ mod walk_tests {
     #[test]
     fn rejects_unsupported_network_and_device_roots_before_enumeration() {
         let unsupported = [
-            r"\\\\server\\share\\folder",
-            r"\\\\?\\UNC\\server\\share\\folder",
-            r"\\\\.\\PhysicalDrive0",
-            r"C:relative\\folder",
+            r"\\server\share\folder",
+            r"\\?\UNC\server\share\folder",
+            r"\\.\PhysicalDrive0",
+            r"C:relative\folder",
         ];
         for value in unsupported {
             let error = super::walk_directory(
