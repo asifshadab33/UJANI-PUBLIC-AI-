@@ -79,10 +79,78 @@ def find_matching_delimiter(source: str, opening_index: int, opening: str, closi
     raise ValueError(f"could not find matching {closing!r} delimiter")
 
 
+def strip_rust_noncode(text: str) -> str:
+    """Blank Rust comments and string literals without exposing their tokens."""
+    output: list[str] = []
+    index = 0
+
+    def blank(segment: str) -> str:
+        return "".join("\n" if char == "\n" else " " for char in segment)
+
+    while index < len(text):
+        if text.startswith("//", index):
+            newline = text.find("\n", index + 2)
+            end = len(text) if newline < 0 else newline
+            output.append(blank(text[index:end]))
+            index = end
+            continue
+
+        if text.startswith("/*", index):
+            start = index
+            index += 2
+            depth = 1
+            while index < len(text) and depth:
+                if text.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif text.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            if depth:
+                raise ValueError("unterminated Rust block comment")
+            output.append(blank(text[start:index]))
+            continue
+
+        raw = re.match(r'r(#+)?"', text[index:])
+        if raw:
+            hashes = raw.group(1) or ""
+            terminator = '"' + hashes
+            start = index
+            index += raw.end()
+            end = text.find(terminator, index)
+            if end < 0:
+                raise ValueError("unterminated Rust raw string")
+            index = end + len(terminator)
+            output.append(blank(text[start:index]))
+            continue
+
+        if text[index] == '"':
+            start = index
+            index += 1
+            while index < len(text):
+                if text[index] == "\\":
+                    index += 2
+                elif text[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            else:
+                raise ValueError("unterminated Rust string literal")
+            output.append(blank(text[start:index]))
+            continue
+
+        output.append(text[index])
+        index += 1
+
+    return "".join(output)
+
+
 def command_tokens(text: str) -> list[str]:
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
-    text = re.sub(r"//[^\n]*", "", text)
-    return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", text)
+    cleaned = strip_rust_noncode(text)
+    return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", cleaned)
 
 
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
