@@ -1245,6 +1245,19 @@ where
     }
 }
 
+/// Runs the local capability probe under the task's cancellation token and a bounded deadline.
+/// Dropping this future also drops any in-flight loopback HTTP request made by the probe.
+pub(crate) async fn get_capability_snapshot_for_task(
+    token: &CancellationToken,
+) -> Result<CapabilitySnapshot, String> {
+    await_task_with_limits(
+        token,
+        Duration::from_secs(8),
+        "Local capability discovery exceeded its 8-second time budget.",
+        get_capability_snapshot(),
+    ).await
+}
+
 /// Registers and executes a managed task with cancellation, resource admission, and provenance handling.
 async fn run_managed_task<T, F>(
     app: AppHandle,
@@ -1573,9 +1586,15 @@ async fn execute_local_ai_task(
     if !validate_model_identifier(&model) {
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
-    // Enforce the same live OS/runtime capability snapshot exposed by route preview.
+    // Register before local runtime probes so duplicate IDs are rejected and
+    // cancellation reaches capability discovery and model inventory, not only inference.
+    let registration = register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    ensure_task_not_cancelled(&token)?;
+
     // A UI-selected model is not proof that the local service is actually available.
-    let capability_snapshot = get_capability_snapshot().await?;
+    let capability_snapshot = get_capability_snapshot_for_task(&token).await?;
+    ensure_task_not_cancelled(&token)?;
     let local_plan = plan_local_task(
         "local.ai.generate",
         &mode,
@@ -1585,18 +1604,16 @@ async fn execute_local_ai_task(
     if !local_plan.accepted {
         return Err(format!("UJANI local-first policy blocked this task: {}", local_plan.reason));
     }
-    let installed_models = ollama::list_models().await?;
+    let installed_models = await_task_with_limits(
+        &token,
+        Duration::from_secs(7),
+        "Local Ollama model inventory exceeded its 7-second time budget.",
+        ollama::list_models(),
+    ).await?;
+    ensure_task_not_cancelled(&token)?;
     if !installed_models.iter().any(|installed| installed.name == model) {
         return Err("The selected model is not installed in the local Ollama runtime. Choose an installed model or download it explicitly; UJANI will not silently send this task to the cloud.".into());
     }
-    resource_runtime::validate_task_id(&task_id)?;
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
     emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 1);
     let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
     flush_pending_receipts(&app).await;
@@ -1704,7 +1721,11 @@ async fn summarize_selected_text(
     mode: String,
     model: String,
 ) -> Result<String, String> {
-    let snapshot = get_capability_snapshot().await?;
+    let registration = register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    ensure_task_not_cancelled(&token)?;
+    let snapshot = get_capability_snapshot_for_task(&token).await?;
+    ensure_task_not_cancelled(&token)?;
     require_local_operation(&snapshot, "document.summarize", &mode)?;
 
     let receipt = local_receipt_context(
@@ -1712,8 +1733,15 @@ async fn summarize_selected_text(
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Text summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::summarize(file_name, content, mode, model)).await
+    run_managed_task_registered(
+        app,
+        task_id,
+        "Text summary",
+        receipt,
+        NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+        LocalTaskEngine::summarize(file_name, content, mode, model),
+        registration,
+    ).await
 }
 
 /// Runs bounded text analysis followed by local-only Ollama summarisation.
@@ -1730,7 +1758,11 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    let snapshot = get_capability_snapshot().await?;
+    let registration = register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    ensure_task_not_cancelled(&token)?;
+    let snapshot = get_capability_snapshot_for_task(&token).await?;
+    ensure_task_not_cancelled(&token)?;
     require_local_operation(&snapshot, "document.summarize", &mode)?;
 
     let language = translation_language.as_deref().unwrap_or("");
@@ -1739,8 +1771,15 @@ async fn process_selected_document(
         &model,
         &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Document pipeline", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::process_document(file_name, content, mode, model, translation_language)).await
+    run_managed_task_registered(
+        app,
+        task_id,
+        "Document pipeline",
+        receipt,
+        NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+        LocalTaskEngine::process_document(file_name, content, mode, model, translation_language),
+        registration,
+    ).await
 }
 
 const MAX_PDF_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
@@ -2008,15 +2047,19 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
-    let snapshot = get_capability_snapshot().await?;
+    // Reserve before capability probes and decoding so cancellation covers the
+    // entire preparation path and duplicate task IDs cause no runtime requests.
+    let registration = register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    ensure_task_not_cancelled(&token)?;
+    let snapshot = get_capability_snapshot_for_task(&token).await?;
+    ensure_task_not_cancelled(&token)?;
     require_local_operation(&snapshot, "pdf.extract_and_summarize", &mode)?;
 
-    // Register before decoding so the user can cancel the native preparation phase.
-    let registration = register_active_task(&control, &task_id)?;
     emit_task_progress(&app, &task_id, "preparing", "Preparing the selected PDF upload…", 5);
-    ensure_task_not_cancelled(&registration.token)?;
     let data = await_task_with_limits(
-        &registration.token, Duration::from_secs(30),
+        &token,
+        Duration::from_secs(30),
         "PDF upload decoding exceeded its 30-second time budget.",
         decode_pdf_upload_off_thread(app.clone(), task_id.clone(), data_base64),
     ).await?;
@@ -2027,8 +2070,15 @@ async fn process_selected_pdf(
         &model,
         &[file_name.as_bytes(), data.as_slice(), mode.as_bytes(), language.as_bytes()],
     )?;
-    run_managed_task_registered(app, task_id, "PDF extraction and summary", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language), registration).await
+    run_managed_task_registered(
+        app,
+        task_id,
+        "PDF extraction and summary",
+        receipt,
+        NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+        LocalTaskEngine::process_pdf(file_name, data, mode, model, translation_language),
+        registration,
+    ).await
 }
 
 /// Translates user-provided text through the selected local Ollama model.
@@ -2042,7 +2092,11 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
-    let snapshot = get_capability_snapshot().await?;
+    let registration = register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    ensure_task_not_cancelled(&token)?;
+    let snapshot = get_capability_snapshot_for_task(&token).await?;
+    ensure_task_not_cancelled(&token)?;
     require_local_operation(&snapshot, "translate.text", &mode)?;
 
     let receipt = local_receipt_context(
@@ -2050,8 +2104,15 @@ async fn translate_text_local(
         &model,
         &[text.as_bytes(), target_language.as_bytes(), mode.as_bytes()],
     )?;
-    run_managed_task(app, &control, task_id, "Local translation", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-        LocalTaskEngine::translate_local(text, target_language, mode, model)).await
+    run_managed_task_registered(
+        app,
+        task_id,
+        "Local translation",
+        receipt,
+        NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+        LocalTaskEngine::translate_local(text, target_language, mode, model),
+        registration,
+    ).await
 }
 
 /// Inspects image bytes supplied by the user through the UI; never opens a path.
@@ -2357,5 +2418,57 @@ mod model_capability_selection_tests {
             super::CapabilityState::Unknown
         };
         assert_eq!(super::pdf_worker_network_isolation_state(), expected_network_state);
+    }
+}
+
+
+#[cfg(test)]
+mod cancellable_preflight_tests {
+    use super::await_task_with_limits;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    struct DropProbe(Arc<AtomicBool>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_drops_the_in_flight_preflight_future() {
+        let token = CancellationToken::new();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let future_dropped = dropped.clone();
+        let future = async move {
+            let _probe = DropProbe(future_dropped);
+            let _ = started_tx.send(());
+            std::future::pending::<Result<(), String>>().await
+        };
+
+        let task_token = token.clone();
+        let task = tokio::spawn(async move {
+            await_task_with_limits(
+                &task_token,
+                Duration::from_secs(5),
+                "Preflight exceeded its test time budget.",
+                future,
+            ).await
+        });
+
+        started_rx.await.expect("preflight future should start");
+        token.cancel();
+
+        assert_eq!(
+            task.await.expect("preflight task should join"),
+            Err("Task cancelled by user.".to_string())
+        );
+        assert!(dropped.load(Ordering::SeqCst));
     }
 }
