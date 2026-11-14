@@ -346,13 +346,13 @@
       "boundary": "task-scoped native confirmation disclosing host/model/prompt preview; endpoint validation, token budget, cancellation and timeout",
       "receipt": "metadata-outcome-receipt",
       "tests": "cloud approval denial, endpoint validation and budget tests",
-      "status": "partially wired; trusted data classification and unified gate pending",
+      "status": "explicit per-task data-classification and registered transfer gate wired; universal native-command gate and denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Native one-time confirmation discloses provider host, model, prompt size and preview; unified trusted data-classification and recipient policy remain incomplete.",
       "cancellation": "Active task cancellation and bounded request timeout; verify cancellation at each transport stage.",
       "resource_limits": "Prompt/token budgets and request timeout exist; verify endpoint-specific payload/response limits and classify content before transfer.",
-      "failure_mode": "Reject before external request when approval, endpoint validation, budget reservation or receipt reservation fails; command-level negative tests still required."
+      "failure_mode": "User-declared data class and explicit approval are checked for the registered cloud.ai.generate operation; no content classifier is implied, and other native routes still require their own gates and denial tests."
     },
     "folder_import::process_selected_folder": {
       "classification": "selected_folder_read_and_local_execution",
