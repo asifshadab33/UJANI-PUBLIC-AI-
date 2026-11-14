@@ -153,3 +153,11 @@ The document/PDF and translation commands now share the native task registry use
 - Read-only duplicate-file preview is implemented for a user-selected desktop folder. It groups same-size candidates and verifies content with SHA-256; traversal, file size, total hashed bytes, duplicate-group count and task duration are bounded. Symlinks/reparse points are skipped/rejected by the shared filesystem helpers. The feature never deletes, moves, renames or overwrites files.
 - Android currently returns an explicit unsupported result for folder duplicate scanning because Storage Access Framework integration is not yet implemented. Do not claim duplicate scanning works on Android.
 - This closes the initial Phase 1 slice of issue #44 for desktop only; remaining OS-backed utilities and the wider Everyday Tools roadmap in issue #46 remain open.
+
+
+## 2026-11-14 Self-Evolution implementation boundary
+
+- Main contains the user-opt-in and approved-model policy, the non-core proposal contract and protected-path checks, signed short-lived proposal approvals, and durable single-use approval-nonce consumption in the encrypted local security store.
+- The current patch-validation branch adds a pure validator that binds each exact file operation, base-file digest and replacement content to the approved proposal and trusted workspace revision. It rejects stale snapshots, path/scope mismatches, duplicate or missing artifacts, unsafe text and oversized bundles.
+- Patch validation performs no filesystem writes and executes no model-generated code. Staging in an isolated workspace, diff review, atomic installation, backup, rollback, build validation and release signing are not yet implemented. The action gate remains closed for staging and application.
+- Core crates, native runtime code, build scripts, CI workflows, dependency manifests and signing material remain outside the model's permitted change scope. No self-modification is enabled in production builds.
