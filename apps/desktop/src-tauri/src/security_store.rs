@@ -238,6 +238,7 @@ impl SelfEvolutionApprovalNonceStore for SqliteSelfEvolutionApprovalNonceStore {
 /// patch staging. This is intentionally not exposed as a browser IPC command:
 /// only trusted Rust code that has completed signature and scope verification
 /// can call it. Storage errors deny the operation.
+#[allow(dead_code)] // Reserved for the future trusted host approval workflow; no apply path is enabled yet.
 pub(crate) fn consume_self_evolution_approval(
     app: &AppHandle,
     approval: &VerifiedSelfEvolutionApproval,
