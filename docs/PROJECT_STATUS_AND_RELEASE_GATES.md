@@ -198,3 +198,16 @@ This review inspected the two repository backlogs, current pull-request metadata
 **Enterprise AI main:** `c9395194c9afc95866496e4219ce681af7af43a0`. Merged PR #130 adds a read-only inventory metadata contract/view, #134 adds shared contract/schema validators, #136 adds PostgreSQL replay/sequence storage, #140 adds the native task-contract verifier, #141 corrects the operator readiness record, and #142 adds monotonic telemetry persistence/admission tests, runtime tenant-registry privilege restrictions and the durable device-trust registry with an external-anchor interface. Exact-head checks passed for these PRs before merge; no post-merge main workflow run was returned in this audit.
 
 **Still not complete:** Public PR #215 (sensitive-action receipt and device-identity hardening, including cross-process identity mutation locking), #223 (runtime-metadata local-model preflight) and #225 (bounded Ubuntu dependency retries plus the Windows junction regression) remain under exact-head validation. No physical-device credential-vault tests are claimed for #215. Public OS-enforced application sandboxing, complete PDF-worker validation, signed reproducible installers, physical-device installation tests and independent security testing remain release gates. Enterprise still lacks the production OIDC/HTTP service, SQLx repository, authenticated device agent, production external-anchor provider, atomic lease/audit transaction service and worker isolation. No remote execution or autonomous containment is enabled.
+
+
+## 2026-11-14 release pipeline reconciliation
+
+The current main branch already contains a controlled multi-platform release workflow in .github/workflows/release.yml. The older audit statement that signing/SBOM/provenance workflow code was absent is no longer accurate.
+
+- The workflow builds Windows, macOS and Linux release candidates and fails closed when the Tauri updater signing key or required OS publisher-signing credentials are missing.
+- Windows Authenticode signing and verification, macOS Developer ID signing/notarization/stapling, and Tauri updater signature verification are defined in the workflow.
+- A source dependency SPDX SBOM is generated with a pinned action. The workflow validates the SBOM, produces checksums and a release-evidence manifest, and attests release assets/SBOM through GitHub Actions build provenance.
+- Evidence is uploaded to a draft release first. Publication is a separate job using the production-release GitHub environment. Repository administrators must configure required reviewers and disable self-review for that environment; the workflow itself warns that the gate is only effective when this protection is configured.
+- CI rejects updater artifacts when the configured public verification key is empty.
+
+**Not yet verified:** no controlled release-tag run or signed installer publication is claimed here. The signing secrets/certificates, updater public key, and protected production-release environment configuration have not been independently verified from this repository inspection. The workflow must be run against a controlled tagged candidate, its draft assets and provenance inspected, and the protected publication approval exercised before any production release claim. Physical installation, update, rollback and recovery testing remain user-owned acceptance work.
