@@ -562,17 +562,22 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
             Ok::<Vec<u8>, std::io::Error>(metadata)
         });
         let mut output = Vec::new();
-        (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await
-            .map_err(|e| format!("Could not read PDF worker output: {e}"))?;
-        writer.await.map_err(|e| format!("PDF worker input task failed: {e}"))?
-            .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
+        let output_result = (&mut stdout).take(1024 * 1024 + 1).read_to_end(&mut output).await;
+        // Keep both asynchronous results until the child exit code is known. A worker
+        // that fails closed before reading stdin may make write_all return BrokenPipe;
+        // its specific exit code is the more useful and security-relevant diagnostic.
+        let writer_result = writer.await;
         let status = child.wait().await.map_err(|e| format!("Could not wait for PDF worker: {e}"))?;
-        let worker_metadata = stderr_reader.await
-            .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
-            .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
+        let worker_metadata_result = stderr_reader.await;
         if !status.success() {
             return Err(format!("PDF text extraction failed. {}", pdf_worker_failure_message(status.code())));
         }
+        output_result.map_err(|e| format!("Could not read PDF worker output: {e}"))?;
+        writer_result.map_err(|e| format!("PDF worker input task failed: {e}"))?
+            .map_err(|e| format!("Could not send PDF to worker: {e}"))?;
+        let worker_metadata = worker_metadata_result
+            .map_err(|e| format!("PDF worker stderr task failed: {e}"))?
+            .map_err(|e| format!("Could not read PDF worker status: {e}"))?;
         if output.len() > 1024 * 1024 { return Err("PDF extraction output exceeded the 1 MiB limit.".into()); }
         if pdf_worker_output_was_truncated(&worker_metadata)? {
             return Err("PDF text extraction exceeded the 1 MiB worker output limit. The incomplete result was rejected; split the PDF into smaller sections and retry.".into());
