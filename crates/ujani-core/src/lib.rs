@@ -5,6 +5,8 @@
 //! This crate intentionally does not execute tools, inspect hardware, or make network calls.
 
 pub mod self_evolution;
+/// Signed, host-owned approval receipts for one exact self-evolution proposal; no patch application.
+pub mod self_evolution_approval;
 
 use std::collections::BTreeSet;
 
