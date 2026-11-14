@@ -93,7 +93,7 @@ This section supersedes earlier statements in this draft wherever the recorded P
 ### Current repository and PR evidence
 
 - Public `main` is `465b9a9c1a3f4b260f6c4c56c7ce9d3605af5cfb`. PR #250 (hardware-aware model guidance and fail-closed downloads), #244 (duplicate-key parser regressions), #242 (integration-contract reconciliation) and #243 (native IPC/filesystem audit reconciliation) are merged. Their predecessor PRs #234, #239, #240 and #241 were closed as superseded, not merged. At the start of this verification there were no open Public PRs; this documentation correction is now proposed in PR #282.
-- Enterprise `main` is `20224f5e9794c74f1b52b0ae7c188af2420a0b5c`. Enterprise PR #211 remains a draft at `7b7516bd52b0ce926900c5962a1595ddc2c3062b`, 12 commits ahead and one documentation-only commit behind `main`. Exact-head CI, CodeQL, RustSec and security-sensitive change watch passed, including PostgreSQL 16 migration, rollback and concurrent capacity tests. It has no independent review yet and is not merged.
+- Enterprise `main` is `20224f5e9794c74f1b52b0ae7c188af2420a0b5c`. Enterprise PR #211 remains a draft at `f2e7d8899f3d551bea58bceadf3fd8050dac9af2`, 21 commits ahead and one documentation-only commit behind `main`. Exact-head CI, CodeQL, RustSec and security-sensitive change watch passed, including Linux/macOS/Windows policy tests and PostgreSQL 16 migration, least-privilege admission, rollback and concurrent-capacity tests. It has no independent review yet and is not merged.
 
 ### Public model-download status correction
 
