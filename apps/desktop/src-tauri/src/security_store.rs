@@ -1608,6 +1608,16 @@ mod tests {
 #[cfg(test)]
 mod self_evolution_approval_nonce_tests {
     use super::*;
+    use rand::{rngs::OsRng, RngCore};
+
+    fn test_nonce() -> [u8; 16] {
+        let mut nonce = [0_u8; 16];
+        OsRng.fill_bytes(&mut nonce);
+        if nonce.iter().all(|byte| *byte == 0) {
+            nonce[0] = 1;
+        }
+        nonce
+    }
 
     fn store() -> SqliteSelfEvolutionApprovalNonceStore {
         let db = Connection::open_in_memory().unwrap();
@@ -1618,7 +1628,7 @@ mod self_evolution_approval_nonce_tests {
     #[test]
     fn approval_nonce_is_single_use_and_scoped_to_approver() {
         let mut store = store();
-        let nonce = [7_u8; 16];
+        let nonce = test_nonce();
 
         assert_eq!(store.claim_nonce_with_clock("admin-one", &nonce, 10_000, || Ok(1_000)), Ok(()));
         assert_eq!(
@@ -1631,7 +1641,7 @@ mod self_evolution_approval_nonce_tests {
     #[test]
     fn expired_nonce_can_be_compacted_before_a_new_claim() {
         let mut store = store();
-        let nonce = [8_u8; 16];
+        let nonce = test_nonce();
 
         assert_eq!(store.claim_nonce_with_clock("admin-one", &nonce, 2_000, || Ok(1_000)), Ok(()));
         assert_eq!(store.claim_nonce_with_clock("admin-one", &nonce, 3_000, || Ok(2_000)), Ok(()));
@@ -1644,13 +1654,14 @@ mod self_evolution_approval_nonce_tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("ujani-approval-nonce-{unique}.sqlite3"));
+        let nonce = test_nonce();
 
         {
             let db = Connection::open(&path).unwrap();
             initialize(&db).unwrap();
             let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
             assert_eq!(
-                store.claim_nonce_with_clock("admin-persistent", &[10; 16], 10_000, || Ok(1_000)),
+                store.claim_nonce_with_clock("admin-persistent", &nonce, 10_000, || Ok(1_000)),
                 Ok(())
             );
         }
@@ -1660,7 +1671,7 @@ mod self_evolution_approval_nonce_tests {
             initialize(&db).unwrap();
             let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
             assert_eq!(
-                store.claim_nonce_with_clock("admin-persistent", &[10; 16], 10_000, || Ok(1_001)),
+                store.claim_nonce_with_clock("admin-persistent", &nonce, 10_000, || Ok(1_001)),
                 Err(ApprovalNonceStoreError::AlreadyConsumed)
             );
         }
@@ -1680,6 +1691,7 @@ mod self_evolution_approval_nonce_tests {
         let path = std::env::temp_dir().join(format!("ujani-approval-race-{unique}.sqlite3"));
         let barrier = Arc::new(Barrier::new(2));
         let mut workers = Vec::new();
+        let nonce = test_nonce();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1695,7 +1707,7 @@ mod self_evolution_approval_nonce_tests {
                 initialize(&db).unwrap();
                 let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
                 barrier.wait();
-                store.claim_nonce("admin-race", &[11; 16], expires_at)
+                store.claim_nonce("admin-race", &nonce, expires_at)
             }));
         }
 
@@ -1724,8 +1736,9 @@ mod self_evolution_approval_nonce_tests {
         initialize(&db).unwrap();
         let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
         let observer_path = path.clone();
+        let nonce = test_nonce();
 
-        let result = store.claim_nonce_with_clock("admin-clock", &[12; 16], 2_000, || {
+        let result = store.claim_nonce_with_clock("admin-clock", &nonce, 2_000, || {
             let mut observer = Connection::open(observer_path).unwrap();
             observer.busy_timeout(std::time::Duration::ZERO).unwrap();
             let competing_lock =
@@ -1745,16 +1758,19 @@ mod self_evolution_approval_nonce_tests {
     #[test]
     fn invalid_nonce_records_are_rejected() {
         let mut store = store();
+        let mut zero_nonce = test_nonce();
+        zero_nonce.fill(u8::MIN);
+        let nonce = test_nonce();
         assert_eq!(
-            store.claim_nonce_with_clock("admin-one", &[0; 16], 10_000, || Ok(1_000)),
+            store.claim_nonce_with_clock("admin-one", &zero_nonce, 10_000, || Ok(1_000)),
             Err(ApprovalNonceStoreError::InvalidRecord)
         );
         assert_eq!(
-            store.claim_nonce_with_clock("../admin", &[9; 16], 10_000, || Ok(1_000)),
+            store.claim_nonce_with_clock("../admin", &nonce, 10_000, || Ok(1_000)),
             Err(ApprovalNonceStoreError::InvalidRecord)
         );
         assert_eq!(
-            store.claim_nonce_with_clock("admin-one", &[9; 16], 1_000, || Ok(1_000)),
+            store.claim_nonce_with_clock("admin-one", &nonce, 1_000, || Ok(1_000)),
             Err(ApprovalNonceStoreError::Expired)
         );
     }
