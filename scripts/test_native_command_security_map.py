@@ -53,6 +53,21 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             find_matching_delimiter("call(/* never closes", 4, "(", ")")
 
+    def test_commented_fake_function_cannot_mask_unguarded_command(self):
+        source = """
+        // fn run_local_task() {
+        //     if !debug_demo_commands_enabled() { return; }
+        // }
+        fn run_local_task() {
+            return;
+        }
+        """
+        self.assertEqual(missing_demo_command_guards(source), [
+            "list_local_models",
+            "run_local_model_task",
+            "run_local_task",
+        ])
+
     def test_each_demo_command_guard_is_checked_independently(self):
         source = """
         fn list_local_models() {
