@@ -156,7 +156,7 @@ def strip_rust_noncode(text: str) -> str:
 
 def command_tokens(text: str) -> list[str]:
     cleaned = strip_rust_noncode(text)
-    return re.findall(r"(?<![\\w$])(?:[A-Za-z_]\\w*::)*[A-Za-z_]\\w*", cleaned)
+    return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", cleaned)
 
 
 def rust_function_body(source: str, function_name: str) -> str:
