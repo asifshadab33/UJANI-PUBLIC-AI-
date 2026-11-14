@@ -10,6 +10,7 @@ const MAX_NODE_ID_BYTES: usize = 64;
 const SUPPORTED_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskNode {
     pub id: String,
     pub operation_id: String,
@@ -18,6 +19,7 @@ pub struct TaskNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskGraph {
     pub schema_version: u16,
     pub nodes: Vec<TaskNode>,
@@ -181,6 +183,14 @@ mod tests {
     }
     fn node(id: &str, operation: &str, depends_on: &[&str]) -> TaskNode {
         TaskNode { id: id.into(), operation_id: operation.into(), depends_on: depends_on.iter().map(|s| s.to_string()).collect() }
+    }
+
+    #[test]
+    fn rejects_unknown_fields_at_graph_and_node_boundaries() {
+        let unknown_graph_field = r#"{"schema_version":1,"nodes":[{"id":"count","operation_id":"local.word_count","depends_on":[]}],"unexpected":true}"#;
+        let unknown_node_field = r#"{"schema_version":1,"nodes":[{"id":"count","operation_id":"local.word_count","depends_on":[],"unexpected":true}]}"#;
+        assert!(serde_json::from_str::<TaskGraph>(unknown_graph_field).is_err());
+        assert!(serde_json::from_str::<TaskGraph>(unknown_node_field).is_err());
     }
 
     #[test]
