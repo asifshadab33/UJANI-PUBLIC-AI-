@@ -1,6 +1,6 @@
 # Local-first execution and automatic model selection
 
-Product defaults (2026-11-10): local-first execution and automatic model selection.
+Product defaults (2026-11-10): local-first execution. A fresh installation has no selected model; the user chooses an installed model or explicitly selects Automatic.
 
 UJANI Public AI decomposes requests into bounded, registered operations or content segments and evaluates each independently against positively observed device capabilities.
 
@@ -28,9 +28,9 @@ These are placement principles, not a promise that all tasks can currently be pa
 
 ## Automatic model selection
 
-Automatic selection is the default. Rank only models discovered from trusted, explicitly configured runtimes that are healthy, available, compatible with task modalities/capabilities, within conservative memory/context/resource limits, and permitted by execution policy and data classification. Prefer a suitable local model over any remote provider. Do not assume the largest model is best. If no local candidate qualifies, explain the missing capability and propose only a narrowly scoped external subtask when a configured provider can perform it.
+Automatic selection is an explicit user choice, not the fresh-install default. Once selected, rank only models discovered from trusted, explicitly configured runtimes that are healthy, available, compatible with task modalities/capabilities, within conservative memory/context/resource limits, and permitted by execution policy and data classification. Prefer a suitable local model over any remote provider. Do not assume the largest model is best. If no local candidate qualifies, explain the missing capability and propose only a narrowly scoped external subtask when a configured provider can perform it.
 
-Automatic selection must not download, install, wake, launch or silently switch a runtime/model. Setup and downloads remain explicit user actions. Users may override the automatic choice per task or set a preferred model.
+Automatic selection must not download, install, wake, launch or silently switch a runtime/model. Setup and downloads remain explicit user actions. Users may switch between Manual and Automatic and may set a preferred installed model. The current desktop UI persists the local model-selection preference on that device; cloud-provider preference persistence and a provider-neutral multi-runtime abstraction are not yet complete.
 
 ## Provider-neutral adapter contract
 
@@ -48,7 +48,7 @@ Extract, classify, index and search locally where supported. If one scanned page
 
 ## Status and boundaries
 
-The pure Rust local-first partition planner and tests are implemented in ujani-core. Existing Ollama chat/document paths remain the only confirmed real local model inference path. The generic model_runtime mock is not a production provider abstraction. Persistent provider/model preference, a real second local adapter, automatic multi-model ranking, selective external segment dispatch and end-to-end per-segment provenance still require implementation and integration tests. Existing PDF/document limits remain; this does not imply OCR, Office extraction or universal document support. Fortress is not full OS-wide application isolation.
+The pure Rust local-first partition planner and tests are implemented in ujani-core. Existing Ollama chat/document paths remain the only confirmed real local model inference path. The generic model_runtime mock is not a production provider abstraction. The local model-selection preference is persisted on-device, but persistent cloud-provider preference, a real second local adapter, automatic multi-model ranking, selective external segment dispatch and end-to-end per-segment provenance still require implementation and integration tests. Existing PDF/document limits remain; this does not imply OCR, Office extraction or universal document support. Fortress is not full OS-wide application isolation.
 
 ## Acceptance criteria
 
