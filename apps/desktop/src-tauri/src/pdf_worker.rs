@@ -66,6 +66,13 @@ fn install_linux_filesystem_deny_filter() -> Result<(), ()> {
         libc::SYS_open, libc::SYS_creat, libc::SYS_stat,
         libc::SYS_lstat, libc::SYS_access, libc::SYS_readlink,
         libc::SYS_getdents,
+        // Legacy x86_64 pathname mutation syscalls are separate from *at variants.
+        libc::SYS_unlink, libc::SYS_rename, libc::SYS_truncate,
+        libc::SYS_chmod, libc::SYS_chown, libc::SYS_lchown,
+        libc::SYS_utime, libc::SYS_utimes, libc::SYS_mkdir,
+        libc::SYS_rmdir, libc::SYS_link, libc::SYS_symlink,
+        libc::SYS_mknod, libc::SYS_chroot, libc::SYS_mount,
+        libc::SYS_umount2, libc::SYS_pivot_root,
     ]);
 
     let mut filter = Vec::<libc::sock_filter>::with_capacity(denied.len() * 2 + 7);
@@ -244,10 +251,19 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn worker_filesystem_filter_denies_path_open_and_closes_inherited_descriptors() {
-        use std::{io::Write, os::fd::AsRawFd, process::Command};
+        use std::{
+            ffi::CString,
+            io::Write,
+            os::fd::AsRawFd,
+            process::Command,
+            time::{SystemTime, UNIX_EPOCH},
+        };
 
         const PROBE: &str = "UJANI_PDF_FILESYSTEM_FILTER_PROBE";
         const INHERITED_FD: &str = "UJANI_PDF_FILESYSTEM_FILTER_FD";
+        const MUTATION_SOURCE: &str = "UJANI_PDF_FILESYSTEM_MUTATION_SOURCE";
+        const MUTATION_TARGET: &str = "UJANI_PDF_FILESYSTEM_MUTATION_TARGET";
+        const ORIGINAL_CONTENT: &[u8] = b"UJANI disposable filesystem probe";
 
         if std::env::var_os(PROBE).is_some() {
             let inherited_fd: i32 = std::env::var(INHERITED_FD)
@@ -267,6 +283,24 @@ mod tests {
             let error = std::fs::File::open("/etc/passwd")
                 .expect_err("path-based reads must be denied");
             assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+
+            #[cfg(target_arch = "x86_64")]
+            {
+                let source = CString::new(
+                    std::env::var(MUTATION_SOURCE).expect("disposable source path"),
+                ).expect("source path contains no NUL");
+                let target = CString::new(
+                    std::env::var(MUTATION_TARGET).expect("disposable target path"),
+                ).expect("target path contains no NUL");
+
+                assert_eq!(unsafe { libc::unlink(source.as_ptr()) }, -1);
+                assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+                assert_eq!(unsafe { libc::rename(source.as_ptr(), target.as_ptr()) }, -1);
+                assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+                assert_eq!(unsafe { libc::truncate(source.as_ptr(), 0) }, -1);
+                assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+            }
+
             let parsed = super::extract_pdf_text(&minimal_pdf_with_text())
                 .expect("in-memory PDF parsing must work after filesystem confinement");
             assert!(parsed.contains("UJANI worker test"));
@@ -279,26 +313,50 @@ mod tests {
         let inherited = std::fs::File::open("/etc/passwd").expect("test fixture exists");
         let inherited_fd = unsafe { libc::fcntl(inherited.as_raw_fd(), libc::F_DUPFD, 200) };
         assert!(inherited_fd >= 200, "create a non-stdio inherited descriptor");
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_nanos();
+        let test_dir = std::env::temp_dir().join(format!(
+            "ujani-pdf-seccomp-{}-{nonce}",
+            std::process::id(),
+        ));
+        std::fs::create_dir(&test_dir).expect("create disposable probe directory");
+        let source_path = test_dir.join("source.txt");
+        let target_path = test_dir.join("renamed.txt");
+        std::fs::write(&source_path, ORIGINAL_CONTENT).expect("create disposable source file");
+
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args([
                 "--exact",
-                "tests::worker_filesystem_filter_denies_path_open_and_closes_inherited_descriptors",
+                "pdf_worker::tests::worker_filesystem_filter_denies_path_open_and_closes_inherited_descriptors",
                 "--nocapture",
                 "--test-threads=1",
             ])
             .env(PROBE, "1")
             .env(INHERITED_FD, inherited_fd.to_string())
+            .env(MUTATION_SOURCE, source_path.as_os_str())
+            .env(MUTATION_TARGET, target_path.as_os_str())
             .output()
             .expect("run isolated filter probe");
         unsafe { libc::close(inherited_fd); }
+
+        let marker_present = output.stdout.windows(b"UJANI_PDF_STDIO_REMAINS_AVAILABLE".len())
+            .any(|window| window == b"UJANI_PDF_STDIO_REMAINS_AVAILABLE");
+        let source_content = std::fs::read(&source_path).expect("source file remains readable");
+        let target_exists = target_path.exists();
+        std::fs::remove_dir_all(&test_dir).expect("remove disposable probe directory");
+
         assert!(
             output.status.success(),
             "probe failed; stdout={} stderr={}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );
-        assert!(output.stdout.windows(b"UJANI_PDF_STDIO_REMAINS_AVAILABLE".len())
-            .any(|window| window == b"UJANI_PDF_STDIO_REMAINS_AVAILABLE"));
+        assert!(marker_present, "worker stdout remains available");
+        assert_eq!(source_content, ORIGINAL_CONTENT, "truncate/rename/unlink must not alter the source");
+        assert!(!target_exists, "rename must not create the target");
     }
 
     #[test]
