@@ -878,6 +878,10 @@ export default function App() {
   }
 
   async function runTask() {
+    if (!import.meta.env.DEV) {
+      setResult({ operation: "local.task", output: "The deterministic word-count demonstration is available only in development builds. Use Local AI or Everyday Tools for production tasks.", execution: "Unavailable in production" });
+      return;
+    }
     const text = request.trim();
     if (!text || busy) return;
     setBusy(true);
@@ -1202,7 +1206,7 @@ export default function App() {
         <div className="task-panel">
           <div className="section-heading"><div><h2>What would you like to do?</h2><p>Enter a task, or continue in the local or online chat workspace below.</p></div><Zap size={20}/></div>
           <textarea id="task-request" value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Describe a task… e.g. Explain how solar panels work." rows={5}/>
-          <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>
+          {import.meta.env.DEV && <div className="controls"><label>Execution policy <select value={policy} onChange={(event) => setPolicy(event.target.value)}><option value="local">Local only</option><option value="ask" disabled>Ask before external help (coming soon)</option></select></label><button onClick={runTask} disabled={!request.trim() || busy}>{busy ? "Running demo…" : "Run word-count demo"} <Send size={15}/></button></div>}
           <div className="mode-panel">
             <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
             <label className="model-select">Execution mode
