@@ -31,11 +31,11 @@ fn bounded_output(text: &str) -> &str {
 }
 
 
-/// Closes inherited non-stdio descriptors and denies path-based file access after
-/// the dynamic loader has finished. The worker receives PDF bytes only on stdin.
 #[cfg(target_os = "linux")]
 const SYS_FCHMODAT2: libc::c_long = 452;
 
+/// Closes inherited non-stdio descriptors and denies path-based file access after
+/// the dynamic loader has finished. The worker receives PDF bytes only on stdin.
 #[cfg(target_os = "linux")]
 fn install_linux_filesystem_deny_filter() -> Result<(), ()> {
     // A parser compromise must not inherit an open handle to another user file.
