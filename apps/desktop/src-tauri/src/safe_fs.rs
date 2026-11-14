@@ -1064,4 +1064,25 @@ mod selected_root_open_boundary_tests {
         fs::remove_dir_all(base).unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn rejects_unc_device_and_drive_relative_roots_before_opening() {
+        use super::windows_handle::open_directory_path_no_reparse;
+
+        // These paths must be rejected by prefix parsing before any filesystem
+        // handle is opened. Folder import deliberately supports only local drives.
+        let unsupported = [
+            r"\\server\share\folder",
+            r"\\?\UNC\server\share\folder",
+            r"\\.\PhysicalDrive0",
+            r"C:relative\folder",
+        ];
+        for value in unsupported {
+            assert!(
+                open_directory_path_no_reparse(Path::new(value)).is_err(),
+                "unsupported Windows root must fail closed: {value}"
+            );
+        }
+    }
+
 }
