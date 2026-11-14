@@ -1,0 +1,53 @@
+# Source-level inventory of Tauri command entry points.
+# This list is a coverage guard, not proof that a command is authorized or safe.
+# Every command must also be reviewed for capabilities, effects, consent, limits,
+# cancellation, failure behavior and execution receipts before release.
+apps/desktop/src-tauri/src/device_identity.rs::get_or_create_device_identity
+apps/desktop/src-tauri/src/device_identity.rs::rotate_device_identity
+apps/desktop/src-tauri/src/device_identity.rs::sign_peer_task_envelope
+apps/desktop/src-tauri/src/everyday_tools.rs::find_duplicate_files
+apps/desktop/src-tauri/src/everyday_tools.rs::get_local_clock
+apps/desktop/src-tauri/src/file_insights.rs::find_large_files
+apps/desktop/src-tauri/src/folder_import.rs::process_selected_folder
+apps/desktop/src-tauri/src/history.rs::clear_task_history
+apps/desktop/src-tauri/src/history.rs::delete_task_history
+apps/desktop/src-tauri/src/history.rs::get_task_history_settings
+apps/desktop/src-tauri/src/history.rs::list_task_history
+apps/desktop/src-tauri/src/history.rs::save_task_history
+apps/desktop/src-tauri/src/history.rs::set_task_history_enabled
+apps/desktop/src-tauri/src/lib.rs::analyze_text_file
+apps/desktop/src-tauri/src/lib.rs::cancel_active_task
+apps/desktop/src-tauri/src/lib.rs::evaluate_task_route
+apps/desktop/src-tauri/src/lib.rs::execute_cloud_ai_task
+apps/desktop/src-tauri/src/lib.rs::execute_document_workflow
+apps/desktop/src-tauri/src/lib.rs::execute_local_ai_task
+apps/desktop/src-tauri/src/lib.rs::get_capability_snapshot
+apps/desktop/src-tauri/src/lib.rs::get_device_info
+apps/desktop/src-tauri/src/lib.rs::get_model_recommendation
+apps/desktop/src-tauri/src/lib.rs::get_ollama_status
+apps/desktop/src-tauri/src/lib.rs::get_security_provider_status
+apps/desktop/src-tauri/src/lib.rs::get_tool_catalogue
+apps/desktop/src-tauri/src/lib.rs::inspect_image_file
+apps/desktop/src-tauri/src/lib.rs::list_local_models
+apps/desktop/src-tauri/src/lib.rs::plan_local_operation
+apps/desktop/src-tauri/src/lib.rs::plan_task_workflow
+apps/desktop/src-tauri/src/lib.rs::process_selected_document
+apps/desktop/src-tauri/src/lib.rs::process_selected_pdf
+apps/desktop/src-tauri/src/lib.rs::pull_ollama_model
+apps/desktop/src-tauri/src/lib.rs::run_local_model_task
+apps/desktop/src-tauri/src/lib.rs::run_local_task
+apps/desktop/src-tauri/src/lib.rs::summarize_selected_text
+apps/desktop/src-tauri/src/lib.rs::translate_text_local
+apps/desktop/src-tauri/src/local_search.rs::find_local_files
+apps/desktop/src-tauri/src/search_cache.rs::clear_local_search_cache
+apps/desktop/src-tauri/src/search_cache.rs::get_local_search_cache_settings
+apps/desktop/src-tauri/src/search_cache.rs::list_recent_local_searches
+apps/desktop/src-tauri/src/search_cache.rs::set_local_search_cache_settings
+apps/desktop/src-tauri/src/security_store.rs::enroll_trusted_peer
+apps/desktop/src-tauri/src/security_store.rs::get_cloud_budget_status
+apps/desktop/src-tauri/src/security_store.rs::list_execution_receipts
+apps/desktop/src-tauri/src/security_store.rs::list_trusted_peers
+apps/desktop/src-tauri/src/security_store.rs::revoke_trusted_peer
+apps/desktop/src-tauri/src/security_store.rs::set_cloud_budget_limit
+apps/desktop/src-tauri/src/security_store.rs::verify_and_claim_peer_envelope
+apps/desktop/src-tauri/src/security_store.rs::verify_execution_receipt_ledger
