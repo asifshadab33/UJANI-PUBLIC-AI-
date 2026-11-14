@@ -5,6 +5,8 @@
 //! This crate intentionally does not execute tools, inspect hardware, or make network calls.
 
 pub mod self_evolution;
+pub mod self_evolution_module;
+
 
 use std::collections::BTreeSet;
 
