@@ -7,6 +7,7 @@
 - Four-mode policy preview (Fortress, Smart, Worker, Partner) with registered operation checks, declared capability checks, memory preflight, explicit external-transfer approval and a capped Partner round count.
 - Fortress never permits external data transfer. Smart selects local execution when its declared local requirements are met. Worker and Partner require explicit approval and a separate gateway capability.
 - Real local inference through Ollama at `127.0.0.1:11434`; no remote Ollama endpoint or cloud fallback is configured.
+- Deterministic word-count and mock-model demonstration commands are hidden from the production UI and rejected by native release builds; they remain available only in development builds.
 - Bounded prompt/response handling and retry handling for transient local-service connection/time-out, throttling and server failures.
 - Read-only OS CPU and memory reporting. GPU/NPU remain **unknown** until both hardware and a compatible compute runtime can be verified.
 - User-selected text and PDF processing in memory, bounded document chunking, local summarisation and optional local translation.
