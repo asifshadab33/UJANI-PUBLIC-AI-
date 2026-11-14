@@ -69,7 +69,7 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
 
         for name in ("list_local_models", "run_local_model_task", "run_local_task"):
             guarded = (
-                f"fn {name}() {{\n"
+                f"        fn {name}() {{\n"
                 "            if !debug_demo_commands_enabled() { return; }\n"
                 "        }"
             )
