@@ -900,7 +900,7 @@ mod pdf_worker_seccomp_tests {
     use super::{denied_pdf_worker_syscalls, SYS_FCHMODAT2};
 
     #[test]
-    fn linux_pdf_worker_blocks_network_process_creation_and_namespace_changes() {
+    fn linux_pdf_worker_blocks_network_process_creation_namespace_and_path_permission_changes() {
         let denied = denied_pdf_worker_syscalls();
         for syscall in [
             libc::SYS_socket,
