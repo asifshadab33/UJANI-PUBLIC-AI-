@@ -452,7 +452,7 @@ async fn execute_cloud_ai_task(
  }
  let data_class = ujani_core::policy_gate::parse_data_class(&data_classification)
   .map_err(str::to_owned)?;
- let transfer_decision = ujani_core::policy_gate::evaluate_external_transfer(data_class, external_data_approved);
+ let transfer_decision = ujani_core::policy_gate::evaluate_registered_external_transfer("cloud.ai.generate", data_class, external_data_approved);
  match transfer_decision {
   ujani_core::policy_gate::GateDecision::Allow => {}
   ujani_core::policy_gate::GateDecision::RequireReview => {
