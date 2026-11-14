@@ -30,9 +30,119 @@ fn bounded_output(text: &str) -> &str {
     &text[..end]
 }
 
+
+/// Closes inherited non-stdio descriptors and denies path-based file access after
+/// the dynamic loader has finished. The worker receives PDF bytes only on stdin.
+#[cfg(target_os = "linux")]
+fn install_linux_filesystem_deny_filter() -> Result<(), ()> {
+    // A parser compromise must not inherit an open handle to another user file.
+    // Linux 5.9+ close_range is required; failure stops extraction before stdin is read.
+    let closed = unsafe { libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32) };
+    if closed != 0 {
+        return Err(());
+    }
+
+    let expected_arch = match std::env::consts::ARCH {
+        "x86_64" => 0xC000_003E, // AUDIT_ARCH_X86_64
+        "aarch64" => 0xC000_00B7, // AUDIT_ARCH_AARCH64
+        _ => return Err(()),
+    };
+    let mut denied: Vec<libc::c_long> = vec![
+        libc::SYS_openat, libc::SYS_openat2,
+        libc::SYS_open_by_handle_at, libc::SYS_name_to_handle_at,
+        libc::SYS_newfstatat, libc::SYS_statx, libc::SYS_readlinkat,
+        libc::SYS_getdents64, libc::SYS_faccessat, libc::SYS_faccessat2,
+        libc::SYS_unlinkat, libc::SYS_renameat, libc::SYS_renameat2,
+        libc::SYS_mkdirat, libc::SYS_linkat, libc::SYS_symlinkat,
+        libc::SYS_mknodat, libc::SYS_fchmodat, libc::SYS_fchownat,
+        libc::SYS_utimensat, libc::SYS_ftruncate, libc::SYS_fallocate,
+        libc::SYS_io_uring_setup, libc::SYS_io_uring_enter, libc::SYS_io_uring_register,
+        libc::SYS_pidfd_open, libc::SYS_pidfd_getfd,
+        libc::SYS_process_vm_readv, libc::SYS_process_vm_writev,
+        libc::SYS_ptrace, libc::SYS_execve, libc::SYS_execveat,
+    ];
+    #[cfg(target_arch = "x86_64")]
+    denied.extend([
+        libc::SYS_open, libc::SYS_creat, libc::SYS_stat,
+        libc::SYS_lstat, libc::SYS_access, libc::SYS_readlink,
+        libc::SYS_getdents,
+    ]);
+
+    let mut filter = Vec::<libc::sock_filter>::with_capacity(denied.len() * 2 + 7);
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+        jt: 0, jf: 0, k: 4,
+    });
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+        jt: 1, jf: 0, k: expected_arch,
+    });
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_RET | libc::BPF_K) as u16,
+        jt: 0, jf: 0, k: 0x8000_0000, // KILL_PROCESS on an unexpected syscall ABI
+    });
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+        jt: 0, jf: 0, k: 0,
+    });
+    #[cfg(target_arch = "x86_64")]
+    {
+        filter.push(libc::sock_filter {
+            code: (libc::BPF_JMP | 0x40 | libc::BPF_K) as u16,
+            jt: 0, jf: 1, k: 0x4000_0000, // Reject the x32 syscall ABI
+        });
+        filter.push(libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0, jf: 0, k: 0x8000_0000,
+        });
+    }
+    for syscall in denied {
+        filter.push(libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: 0, jf: 1, k: syscall as u32,
+        });
+        filter.push(libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0, jf: 0, k: libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
+        });
+    }
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_RET | libc::BPF_K) as u16,
+        jt: 0, jf: 0, k: libc::SECCOMP_RET_ALLOW,
+    });
+
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+        return Err(());
+    }
+    let program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    if unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER,
+            &program as *const _ as libc::c_ulong,
+            0,
+            0,
+        )
+    } != 0 {
+        return Err(());
+    }
+    Ok(())
+}
+
 /// Dedicated sidecar entry point. It reads one bounded PDF from stdin and writes
 /// only bounded UTF-8 text to stdout; diagnostics never contain document content.
 pub fn run() {
+    // The parent already applied network/process restrictions before exec. This
+    // second filter runs after the loader starts the worker but before PDF bytes
+    // are read, so parser code cannot open arbitrary filesystem paths.
+    #[cfg(target_os = "linux")]
+    if install_linux_filesystem_deny_filter().is_err() {
+        std::process::exit(6);
+    }
+
     let mut data = Vec::new();
     if std::io::stdin().take((MAX_INPUT_BYTES + 1) as u64).read_to_end(&mut data).is_err()
         || data.len() > MAX_INPUT_BYTES {
@@ -128,6 +238,58 @@ mod tests {
     fn output_truncation_is_signalled_only_above_the_limit() {
         assert!(!super::output_was_truncated(&"x".repeat(MAX_OUTPUT_BYTES)));
         assert!(super::output_was_truncated(&"x".repeat(MAX_OUTPUT_BYTES + 1)));
+    }
+
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn worker_filesystem_filter_denies_path_open_and_closes_inherited_descriptors() {
+        use std::{io::Write, os::fd::AsRawFd, process::Command};
+
+        const PROBE: &str = "UJANI_PDF_FILESYSTEM_FILTER_PROBE";
+        const INHERITED_FD: &str = "UJANI_PDF_FILESYSTEM_FILTER_FD";
+
+        if std::env::var_os(PROBE).is_some() {
+            let inherited_fd: i32 = std::env::var(INHERITED_FD)
+                .expect("inherited descriptor number")
+                .parse()
+                .expect("valid descriptor number");
+            super::install_linux_filesystem_deny_filter()
+                .expect("worker filesystem boundary must install");
+            assert_eq!(unsafe { libc::fcntl(inherited_fd, libc::F_GETFD) }, -1);
+            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
+            let error = std::fs::File::open("/etc/passwd")
+                .expect_err("path-based reads must be denied");
+            assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+            std::io::stdout()
+                .write_all(b"UJANI_PDF_STDIO_REMAINS_AVAILABLE")
+                .expect("stdout remains available");
+            return;
+        }
+
+        let inherited = std::fs::File::open("/etc/passwd").expect("test fixture exists");
+        let inherited_fd = unsafe { libc::fcntl(inherited.as_raw_fd(), libc::F_DUPFD, 200) };
+        assert!(inherited_fd >= 200, "create a non-stdio inherited descriptor");
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "tests::worker_filesystem_filter_denies_path_open_and_closes_inherited_descriptors",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PROBE, "1")
+            .env(INHERITED_FD, inherited_fd.to_string())
+            .output()
+            .expect("run isolated filter probe");
+        unsafe { libc::close(inherited_fd); }
+        assert!(
+            output.status.success(),
+            "probe failed; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(output.stdout.windows(b"UJANI_PDF_STDIO_REMAINS_AVAILABLE".len())
+            .any(|window| window == b"UJANI_PDF_STDIO_REMAINS_AVAILABLE"));
     }
 
     #[test]

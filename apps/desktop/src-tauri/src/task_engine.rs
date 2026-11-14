@@ -416,6 +416,7 @@ fn pdf_worker_failure_message(exit_code: Option<i32>) -> &'static str {
     match exit_code {
         Some(2) => "The PDF worker rejected the input size or header. Select a valid PDF no larger than 10 MiB.",
         Some(3) => "The file may be encrypted, malformed, scanned, or use unsupported PDF features. Try an unencrypted text-based PDF.",
+        Some(6) => "The PDF worker could not enforce its Linux filesystem boundary; extraction was stopped before reading the PDF.",
         _ => "The isolated PDF worker could not complete extraction. Try the file again or use a smaller PDF.",
     }
 }
@@ -598,6 +599,7 @@ mod pdf_worker_status_tests {
         assert!(pdf_worker_failure_message(Some(2)).contains("valid PDF"));
         assert!(pdf_worker_failure_message(Some(3)).contains("encrypted"));
         assert!(pdf_worker_failure_message(None).contains("Try the file again"));
+        assert!(pdf_worker_failure_message(Some(6)).contains("filesystem boundary"));
     }
 
     #[test]
