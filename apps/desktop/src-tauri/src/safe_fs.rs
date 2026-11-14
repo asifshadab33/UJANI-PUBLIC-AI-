@@ -702,7 +702,7 @@ pub(crate) fn walk_directory(
     #[cfg(windows)]
     let _validated_root = windows_handle::open_directory_path_no_reparse(selected_root)
         .map_err(|error| format!(
-            "The selected folder cannot be searched safely on Windows. Network shares, mapped network drives and device paths are not supported: {error}"
+            "Cannot safely access the selected Windows folder: {error}"
         ))?;
 
     let root_metadata = std::fs::symlink_metadata(selected_root)
@@ -895,7 +895,7 @@ mod walk_tests {
             )
             .unwrap_err();
             assert!(
-                error.contains("cannot be searched safely on Windows"),
+                error.contains("Cannot safely access the selected Windows folder"),
                 "unsupported root should be rejected before enumeration: {value}: {error}"
             );
         }
