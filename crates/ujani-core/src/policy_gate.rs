@@ -36,6 +36,23 @@ pub fn evaluate_external_transfer(data_class: DataClass, user_approved: bool) ->
     }
 }
 
+
+/// Explicit allowlist for operations permitted through the generic external gateway.
+/// Keep this list narrow; new operations require a reviewed policy and tests.
+pub const REGISTERED_EXTERNAL_OPERATIONS: &[&str] = &["cloud.ai.generate"];
+
+/// Require both a registered external operation and the declared data-class/approval policy.
+pub fn evaluate_registered_external_transfer(
+    operation_id: &str,
+    data_class: DataClass,
+    user_approved: bool,
+) -> GateDecision {
+    if !valid_id(operation_id) || !REGISTERED_EXTERNAL_OPERATIONS.contains(&operation_id) {
+        return GateDecision::Deny;
+    }
+    evaluate_external_transfer(data_class, user_approved)
+}
+
 /// Pure decision only: invoke at the trusted dispatch boundary on every route.
 /// This function does not itself enforce isolation, quotas, egress or cancellation.
 pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
@@ -101,6 +118,22 @@ mod fail_closed_boundary_regressions {
             max_memory_mb: 2048,
             requested_memory_mb: 1024,
         }
+    }
+
+    #[test]
+    fn external_transfer_requires_a_registered_operation() {
+        assert_eq!(
+            evaluate_registered_external_transfer("cloud.ai.generate", DataClass::Public, true),
+            GateDecision::Allow
+        );
+        assert_eq!(
+            evaluate_registered_external_transfer("shell.execute", DataClass::Public, true),
+            GateDecision::Deny
+        );
+        assert_eq!(
+            evaluate_registered_external_transfer("../cloud.ai.generate", DataClass::Public, true),
+            GateDecision::Deny
+        );
     }
 
     #[test]
