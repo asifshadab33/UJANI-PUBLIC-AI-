@@ -1625,7 +1625,7 @@ mod self_evolution_approval_nonce_tests {
             store.claim_nonce_with_clock("admin-one", &nonce, 10_000, || Ok(1_001)),
             Err(ApprovalNonceStoreError::AlreadyConsumed)
         );
-        assert_eq!(store.claim_nonce("admin-two", &nonce, 10_000, 1_001), Ok(()));
+        assert_eq!(store.claim_nonce_with_clock("admin-two", &nonce, 10_000, || Ok(1_001)), Ok(()));
     }
 
     #[test]
