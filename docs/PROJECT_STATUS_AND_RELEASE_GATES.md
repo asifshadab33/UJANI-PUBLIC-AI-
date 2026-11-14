@@ -15,7 +15,7 @@
 - Tauri desktop application with Rust core and React/TypeScript UI.
 - Local Ollama inference bound to loopback, bounded task inputs/outputs, cancellation and task concurrency controls.
 - User-selected text/PDF/image-header processing, fixed local document pipeline and native selected-folder import with bounded file counts/sizes.
-- Optional local task history uses AES-256-GCM v3 with row/column and metadata-bound authenticated data; legacy v1/v2 records are supported for migration. Recording remains disabled by default and requires explicit user opt-in. If the OS credential vault is unavailable, encrypted history remains unavailable rather than falling back to plaintext.
+- Optional local task history uses a version-3 record format encrypted with AES-256-GCM; authenticated data binds row/column and metadata, and legacy v1/v2 records are supported for migration. Recording remains disabled by default and requires explicit user opt-in. If the OS credential vault is unavailable, encrypted history remains unavailable rather than falling back to plaintext.
 - BYOK OpenAI-compatible HTTPS gateway with explicit per-task consent, endpoint/DNS checks, redirect/proxy restrictions, response bounds and local-only Fortress policy.
 - Native boundaries currently validate routing through `router::evaluate_mode`, validate BYOK requests through `cloud_gateway::validate_request`, and validate command/task identifiers. The separate `safety_policy` and `policy_gate` modules are not yet universal gates on every native command.
 - Versioned workflow planning, resource-aware scheduler policy contracts and typed execution receipt contracts.
