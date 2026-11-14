@@ -3,41 +3,9 @@
 //! This module centralizes bounded no-follow directory traversal and platform-specific
 //! file opening; callers retain extension, content, size and task-specific error policy.
 use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
-#[cfg(any(unix, windows))]
+#[cfg(windows)]
 use std::fs::OpenOptions;
 
-
-/// Opens a regular file without following its final symlink/reparse point.
-pub(crate) fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
-    #[cfg(unix)]
-    let file = {
-        use std::os::unix::fs::OpenOptionsExt;
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path)?
-    };
-    #[cfg(windows)]
-    let file = {
-        use std::os::windows::fs::OpenOptionsExt;
-        // Open the reparse point itself so handle metadata can reject it.
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(0x0020_0000)
-            .open(path)?
-    };
-    #[cfg(not(any(unix, windows)))]
-    let file = std::fs::File::open(path)?;
-
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || is_reparse_point(&metadata) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "The selected path is not a regular non-reparse file.",
-        ));
-    }
-    Ok(file)
-}
 
 /// Opens a file beneath a canonical selected root using handle-relative, no-follow
 /// traversal. On Unix every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the
