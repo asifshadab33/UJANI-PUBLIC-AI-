@@ -1,6 +1,6 @@
 import unittest
 
-from check_native_command_security_map import find_matching_delimiter, registered_commands
+from check_native_command_security_map import command_tokens, find_matching_delimiter, registered_commands
 
 
 class NativeCommandSecurityMapParserTests(unittest.TestCase):
@@ -27,6 +27,22 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         closing = find_matching_delimiter(source, opening, "(", ")")
         self.assertEqual(source[closing], ")")
         self.assertEqual(closing, len(source) - 1)
+
+    def test_comment_markers_inside_line_comments_do_not_hide_commands(self):
+        source = """alpha,
+            // The text /* is not a block comment opener here: beta::hidden
+            beta,
+            /* outer comment
+               /* nested comment with gamma::hidden */
+               still a comment
+            */
+            gamma,
+        """
+        self.assertEqual(command_tokens(source), ["alpha", "beta", "gamma"])
+
+    def test_commands_inside_strings_and_raw_strings_are_ignored(self):
+        source = 'alpha, "fake::command", r#"other::fake"#, beta'
+        self.assertEqual(command_tokens(source), ["alpha", "beta"])
 
     def test_unterminated_comment_fails_closed(self):
         with self.assertRaises(ValueError):
