@@ -13,6 +13,30 @@ use crate::safety_policy::{evaluate_workload_intent, SafetyDecision, WorkloadInt
 }
 #[derive(Debug, Clone, PartialEq, Eq)] pub struct GateResult { pub decision:GateDecision, pub reason:&'static str, pub requires_isolation:bool }
 fn valid_id(s:&str)->bool { !s.trim().is_empty() && s.len()<=128 && s.chars().all(|c|c.is_ascii_alphanumeric() || "._:-".contains(c)) }
+/// Parse the user's explicit data-classification declaration. Unknown values fail closed.
+pub fn parse_data_class(value: &str) -> Result<DataClass, &'static str> {
+    match value {
+        "public" => Ok(DataClass::Public),
+        "internal" => Ok(DataClass::Internal),
+        "confidential" => Ok(DataClass::Confidential),
+        "restricted" => Ok(DataClass::Restricted),
+        _ => Err("a valid data classification must be selected"),
+    }
+}
+
+/// Shared external-transfer policy used by native cloud dispatch.
+/// This is a user-declared classification, not automatic content inspection.
+pub fn evaluate_external_transfer(data_class: DataClass, user_approved: bool) -> GateResult {
+    let (decision, reason) = if !user_approved {
+        (GateDecision::RequireReview, "explicit per-task approval required for external transfer")
+    } else if matches!(data_class, DataClass::Confidential | DataClass::Restricted) {
+        (GateDecision::Deny, "confidential or restricted data blocked from generic external transfer")
+    } else {
+        (GateDecision::Allow, "declared data class permits transfer after explicit user approval")
+    };
+    GateResult { decision, reason, requires_isolation: true }
+}
+
 /// Pure decision only: invoke at the trusted dispatch boundary on every route.
 /// This function does not itself enforce isolation, quotas, egress or cancellation.
 pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
@@ -29,8 +53,8 @@ pub fn evaluate_execution(r:&ExecutionRequest)->GateResult {
   SafetyDecision::AllowWithLimits=>{}
  }
  if r.external_transfer {
-  if !r.user_approved_transfer{return review("explicit per-task approval required for external transfer")}
-  if matches!(r.data_class,DataClass::Confidential|DataClass::Restricted){return deny("confidential or restricted data blocked from generic external transfer")}
+  let transfer = evaluate_external_transfer(r.data_class, r.user_approved_transfer);
+  if transfer.decision != GateDecision::Allow { return transfer; }
  }
  match r.target {
   ExecutionTarget::EnterpriseWorker if !r.admin_approved_worker||!r.owner_opted_in=>return deny("worker requires administrator approval and device-owner opt-in"),
@@ -74,6 +98,34 @@ mod fail_closed_boundary_regressions {
             requested_runtime_seconds: 30,
             max_memory_mb: 2048,
             requested_memory_mb: 1024,
+        }
+    }
+
+    #[test]
+    fn data_classification_parser_rejects_unknown_and_unclassified_values() {
+        assert_eq!(parse_data_class("public"), Ok(DataClass::Public));
+        assert_eq!(parse_data_class("internal"), Ok(DataClass::Internal));
+        assert_eq!(parse_data_class("confidential"), Ok(DataClass::Confidential));
+        assert_eq!(parse_data_class("restricted"), Ok(DataClass::Restricted));
+        assert!(parse_data_class("unclassified").is_err());
+        assert!(parse_data_class("PUBLIC").is_err());
+    }
+
+    #[test]
+    fn external_transfer_requires_approval_and_blocks_sensitive_classes() {
+        assert_eq!(
+            evaluate_external_transfer(DataClass::Public, false).decision,
+            GateDecision::RequireReview
+        );
+        assert_eq!(
+            evaluate_external_transfer(DataClass::Internal, true).decision,
+            GateDecision::Allow
+        );
+        for class in [DataClass::Confidential, DataClass::Restricted] {
+            assert_eq!(
+                evaluate_external_transfer(class, true).decision,
+                GateDecision::Deny
+            );
         }
     }
 
