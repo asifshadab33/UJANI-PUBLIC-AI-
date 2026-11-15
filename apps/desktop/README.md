@@ -138,3 +138,27 @@ See [Security review](../../docs/SECURITY_REVIEW_2026-11.md) and [Fuzzing guide]
 ## Platform support policy
 
 See [the proposed platform support baseline and release gates](../../docs/PLATFORM_SUPPORT.md). The matrix is a proposed policy, not certification: minimum-version installation and launch tests must pass before a platform/version is advertised as supported.
+
+
+## What to expect after installing UJANI
+
+This is the current desktop-preview user journey. The installer installs UJANI; it does **not** bundle Ollama or download an AI model automatically.
+
+1. **Launch UJANI.** The desktop opens with the local-first workspace. The browser preview is only a UI demo and cannot access native device capabilities.
+2. **Check local readiness.** Install Ollama separately from its official source, start its local service, then use the Local AI workspace to refresh the connection. If Ollama is not running, local inference is unavailable; UJANI should show a recoverable status rather than silently switching to a cloud provider.
+3. **Choose whether to install a model.** Review the model identifier, download size, storage needs, hardware fit, supported tasks and licence. Model download is a separate, explicit action. It uses the network and disk space through Ollama. No model is downloaded merely because UJANI is installed or launched.
+4. **Choose a task and execution mode.** Fortress blocks UJANI cloud task-data transfer; Smart prefers the available local route. Worker and Partner are policy/protocol previews, not functioning distributed compute modes. Mode selection is not permission to send data externally.
+5. **Run a local task.** Start with chat or a supported user-selected text/PDF workflow. UJANI shows task progress and bounded errors. Text/PDF processing is subject to the limits listed above; scanned-PDF OCR, image understanding, audio/video analysis and arbitrary shell actions are not available.
+6. **Decide on history.** Persistent task history is optional and off by default. If enabled, prompt/output fields use AES-256-GCM with an OS credential-vault key; metadata remains visible. Exported JSON history is plaintext and must be protected separately.
+7. **Use cloud AI only if you choose.** Configure your own compatible HTTPS provider, model and API key. Review provider privacy and pricing. Approve the specific request before sending it. UJANI does not provide API credits, save the key, or automatically fall back to cloud when local inference fails.
+8. **Update deliberately.** In a signed production build, UJANI checks for a signed update and asks before downloading/installing it. Unsigned preview builds and browser preview do not provide the same update assurance.
+
+### First-launch troubleshooting
+
+- **Local AI unavailable:** confirm Ollama is installed and its local service is running; refresh the status in UJANI. Do not expose the Ollama API to the LAN or internet.
+- **No model available:** use the explicit model-download action, first checking disk space, download size, model licence and device capability. A successful download does not guarantee acceptable speed on every computer.
+- **Task rejected or cancelled:** read the displayed reason; input-size, capability, timeout and policy limits are intentional safeguards. Reduce the input or choose a supported task rather than bypassing the guard.
+- **Cloud request unavailable:** check the HTTPS endpoint/model configuration and provider limits. A failed local task does not authorise cloud transfer.
+- **Hardware capability says Unknown:** this is deliberate when the OS/runtime cannot provide trustworthy evidence. UJANI must not guess GPU/NPU support.
+
+The app remains a **pre-alpha controlled preview**. Installation success is not proof of native inference compatibility, OS-enforced sandboxing, platform certification or production readiness. Check [implementation status](../../docs/IMPLEMENTATION_STATUS.md) and [release gates](../../docs/PROJECT_STATUS_AND_RELEASE_GATES.md) before relying on a capability.
