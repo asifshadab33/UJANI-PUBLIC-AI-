@@ -39,22 +39,17 @@ pub async fn find_large_files(
     task_id: String,
     min_size_bytes: u64,
 ) -> Result<LargeFileScanResult, String> {
-    if !super::valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
-    }
     if !(MIN_THRESHOLD_BYTES..=MAX_THRESHOLD_BYTES).contains(&min_size_bytes) {
         return Err("Choose a minimum size between 1 MiB and 1 TiB.".into());
     }
 
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let registration = super::register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    super::ensure_task_not_cancelled(&token)?;
+    let snapshot = super::get_capability_snapshot_for_task(&token).await?;
+    super::ensure_task_not_cancelled(&token)?;
+    super::require_local_operation(&snapshot, "file.large_files.preview", "fortress")?;
+    super::ensure_task_not_cancelled(&token)?;
     super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to find large files.", 1);
 
     let picker_app = app.clone();
