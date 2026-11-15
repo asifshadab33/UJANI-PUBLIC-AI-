@@ -633,7 +633,7 @@ mod tests {
 
     /// Confirms receipt digests depend only on non-sensitive cache-operation flags.
     #[test]
-    fn cache_store_receipt_input_is_digest_only_and_scope_specific() {
+    fn cache_store_receipt_input_uses_only_non_sensitive_flags() {
         let digest = cache_store_receipt_input(false, false);
         assert_eq!(digest.len(), 64);
         assert_eq!(digest, cache_store_receipt_input(false, false));
