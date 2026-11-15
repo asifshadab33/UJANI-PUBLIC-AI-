@@ -338,6 +338,8 @@ def main() -> int:
             "MAX_SNOOZE_MS",
             "notifications_enabled: false",
             "upcoming_reminders",
+            "ReminderRequest::ClearAll",
+            "DELETE FROM local_reminders",
         ),
         errors,
         "local reminder storage",
