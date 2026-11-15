@@ -1316,23 +1316,6 @@ pub(crate) async fn get_capability_snapshot_for_task(
     ).await
 }
 
-/// Registers and executes a managed task with cancellation, resource admission, and provenance handling.
-async fn run_managed_task<T, F>(
-    app: AppHandle,
-    control: &TaskControlState,
-    task_id: String,
-    label: &'static str,
-    receipt_context: LocalReceiptContext,
-    network_activity: NetworkActivity,
-    future: F,
-) -> Result<T, String>
-where
-    T: Serialize,
-    F: std::future::Future<Output = Result<T, String>>,
-{
-    let registration = register_active_task(control, &task_id)?;
-    run_managed_task_registered(app, task_id, label, receipt_context, network_activity, future, registration).await
-}
 
 /// Runs a task using an existing cancellation registration through admission, execution, and receipt handling.
 async fn run_managed_task_registered<T, F>(app: AppHandle, task_id: String, label: &'static str, receipt_context: LocalReceiptContext, network_activity: NetworkActivity, future: F, registration: ActiveTaskRegistration<'_>) -> Result<T, String>
