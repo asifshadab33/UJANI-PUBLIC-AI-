@@ -169,7 +169,7 @@ pub async fn find_local_files(
     let registration = super::register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     super::ensure_task_not_cancelled(&token)?;
-    let snapshot = super::get_capability_snapshot_for_task(&token).await;
+    let snapshot = super::get_selected_folder_capability_snapshot_for_task(&token).await;
     super::emit_task_progress(&app, &task_id, "starting", "Checking local permissions and choosing a folder.", 1);
     let picker_app = app.clone();
     let required_operations: &[&str] = if search_pdf_text {
