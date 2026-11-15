@@ -972,14 +972,15 @@ mod tests {
             // The response deliberately remains incomplete. The client must close
             // the body when its managed-task cancellation future wins the select.
             let mut probe = [0_u8; 1];
-            let closed = match tokio::time::timeout(Duration::from_secs(3), stream.read(&mut probe)).await {
-                Ok(Ok(0)) | Ok(Err(_)) => true,
-                _ => false,
-            };
+            let closed = matches!(
+                tokio::time::timeout(Duration::from_secs(3), stream.read(&mut probe)).await,
+                Ok(Ok(0)) | Ok(Err(_))
+            );
             let _ = closed_tx.send(closed);
         });
 
         let client = build_client(Some(Duration::from_secs(30))).unwrap();
+        let worker_client = client.clone();
         let base_url = format!("http://{address}");
         let cancellation = CancellationToken::new();
         let worker_cancellation = cancellation.clone();
@@ -990,7 +991,7 @@ mod tests {
                 biased;
                 _ = worker_cancellation.cancelled() => Err("Task cancelled by user.".to_string()),
                 result = chat_stream_with_client(
-                    &client,
+                    &worker_client,
                     &base_url,
                     "llama3.2",
                     None,
@@ -1013,6 +1014,9 @@ mod tests {
                 .await.unwrap().unwrap(),
             "cancellation must close the in-flight Ollama HTTP response"
         );
+        // Keep the original client alive so this assertion proves response-body
+        // cancellation, not merely teardown of the client's connection pool.
+        drop(client);
         server.await.unwrap();
     }
 
