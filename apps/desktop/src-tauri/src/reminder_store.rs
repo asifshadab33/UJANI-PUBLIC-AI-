@@ -20,7 +20,8 @@ use std::{
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
-use ujani_core::{upcoming_reminders, LocalReminder, ReminderState, MAX_AGENDA_HORIZON_MS};
+use ujani_core::{upcoming_reminders, LocalReminder, ReminderState};
+use ujani_core::reminders::MAX_AGENDA_HORIZON_MS;
 
 const KEYRING_SERVICE: &str = "org.ujani.publicai";
 const KEYRING_USER: &str = "local-reminders-v1";
