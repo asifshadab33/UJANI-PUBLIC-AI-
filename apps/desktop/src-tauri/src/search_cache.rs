@@ -428,6 +428,17 @@ pub fn store(
         return Ok(());
     }
 
+    // Cache is opt-in. Avoid reserving or persisting a receipt for the ordinary
+    // disabled-cache path; recheck under the write transaction below to close
+    // the race with a concurrent disable-and-clear operation.
+    let enabled = {
+        let db = open(app)?;
+        settings_from_db(&db)?.enabled
+    };
+    if !enabled {
+        return Ok(());
+    }
+
     let input_metadata = cache_store_receipt_input(search_pdf_text, is_negative);
     crate::with_local_state_receipt(app, "search_cache.store", input_metadata.as_bytes(), || {
         let mut db = open(app)?;
