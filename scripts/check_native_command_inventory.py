@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import sys
 
+from check_native_command_security_map import registered_commands, strip_rust_noncode
+
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATH = ROOT / "apps/desktop/src-tauri/src/lib.rs"
 INVENTORY_PATH = ROOT / "docs/NATIVE-COMMAND-AUDIT-INVENTORY.md"
@@ -17,7 +19,7 @@ INVENTORY_PATH = ROOT / "docs/NATIVE-COMMAND-AUDIT-INVENTORY.md"
 
 def command_tokens(text: str) -> list[str]:
     """Extract Rust command paths from a handler argument list."""
-    text = re.sub(r"//[^\n]*", "", text)
+    text = strip_rust_noncode(text)
     tokens = re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", text)
     return [token for token in tokens if token != "peer_command"]
 
@@ -48,24 +50,10 @@ def main() -> int:
     source = SOURCE_PATH.read_text(encoding="utf-8")
     inventory = INVENTORY_PATH.read_text(encoding="utf-8")
 
-    macro_start = source.find("tauri::generate_handler![")
-    if macro_start < 0:
-        raise ValueError("could not locate tauri::generate_handler! in lib.rs")
-    body_start = macro_start + len("tauri::generate_handler![")
-    body_end = source.find("]", body_start)
-    if body_end < 0:
-        raise ValueError("could not locate the end of the Tauri handler list")
-    registered = command_tokens(source[body_start:body_end])
-
-    peer_match = re.search(
-        r'#\[cfg\(feature = "peer-preview"\)\]\s*'
-        r'let builder = builder\.invoke_handler\(ujani_invoke_handler!\((.*?)\)\);',
-        source,
-        re.DOTALL,
-    )
-    if not peer_match:
-        raise ValueError("could not locate the peer-preview command expansion")
-    peer_commands = command_tokens(peer_match.group(1))
+    # Reuse the security-map parser so inventory parity and security mapping
+    # interpret Rust comments, strings, raw strings, character literals and
+    # nested delimiters consistently.
+    registered, peer_commands = registered_commands(source)
 
     documented = table_commands(
         inventory,
