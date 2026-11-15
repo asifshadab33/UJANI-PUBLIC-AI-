@@ -124,6 +124,17 @@ export default function ReminderCentre() {
 
   async function saveReminder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const titleValue = title.trim();
+    const notesValue = notes.trim() ? notes.trim() : null;
+    const encoder = new TextEncoder();
+    if (encoder.encode(titleValue).length > 160) {
+      setError("Reminder title must be no more than 160 UTF-8 bytes.");
+      return;
+    }
+    if (notesValue !== null && encoder.encode(notesValue).length > 2000) {
+      setError("Reminder notes must be no more than 2,000 UTF-8 bytes.");
+      return;
+    }
     const dueAt = new Date(dueInput).getTime();
     if (!Number.isFinite(dueAt) || dueAt <= 0) {
       setError("Choose a valid reminder date and time.");
@@ -131,8 +142,8 @@ export default function ReminderCentre() {
     }
     await run(async () => {
       const common = {
-        title: title.trim(),
-        notes: notes.trim() ? notes.trim() : null,
+        title: titleValue,
+        notes: notesValue,
         due_at_unix_ms: dueAt,
         timezone: localTimezone(),
       };
