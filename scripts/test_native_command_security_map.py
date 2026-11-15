@@ -1,6 +1,11 @@
 import unittest
 
-from check_native_command_security_map import command_tokens, find_matching_delimiter, registered_commands
+from check_native_command_security_map import (
+    command_tokens,
+    find_matching_delimiter,
+    missing_demo_command_guards,
+    registered_commands,
+)
 
 
 class NativeCommandSecurityMapParserTests(unittest.TestCase):
@@ -44,9 +49,72 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         source = 'alpha, "fake::command", r#"other::fake"#, beta'
         self.assertEqual(command_tokens(source), ["alpha", "beta"])
 
+    def test_character_literals_are_masked_without_masking_lifetimes(self):
+        source = """
+        fn unrelated() {
+            let quote = '"';
+        }
+        fn guarded<'a>(value: &'a str) {
+            if !debug_demo_commands_enabled() { return; }
+            let _ = value;
+        }
+        """
+        cleaned = __import__("check_native_command_security_map").strip_rust_noncode(source)
+        self.assertNotIn('"', cleaned)
+        self.assertIn("&'a str", cleaned)
+        self.assertEqual(
+            missing_demo_command_guards(
+                source + """
+                fn list_local_models() { if !debug_demo_commands_enabled() { return; } }
+                fn run_local_model_task() { if !debug_demo_commands_enabled() { return; } }
+                """
+            ),
+            ["run_local_task"],
+        )
+
     def test_unterminated_comment_fails_closed(self):
         with self.assertRaises(ValueError):
             find_matching_delimiter("call(/* never closes", 4, "(", ")")
+
+    def test_commented_fake_function_cannot_mask_unguarded_command(self):
+        source = """
+        // fn run_local_task() {
+        //     if !debug_demo_commands_enabled() { return; }
+        // }
+        fn run_local_task() {
+            return;
+        }
+        """
+        self.assertEqual(missing_demo_command_guards(source), [
+            "list_local_models",
+            "run_local_model_task",
+            "run_local_task",
+        ])
+
+    def test_each_demo_command_guard_is_checked_independently(self):
+        source = """
+        fn list_local_models() {
+            if !debug_demo_commands_enabled() { return; }
+        }
+        fn run_local_model_task() {
+            if !debug_demo_commands_enabled() { return; }
+        }
+        fn run_local_task() {
+            if !debug_demo_commands_enabled() { return; }
+        }
+        """
+        self.assertEqual(missing_demo_command_guards(source), [])
+
+        for name in ("list_local_models", "run_local_model_task", "run_local_task"):
+            guarded = (
+                f"        fn {name}() {{\n"
+                "            if !debug_demo_commands_enabled() { return; }\n"
+                "        }"
+            )
+            unguarded = f"fn {name}() {{ return; }}"
+            altered = source.replace(guarded, unguarded)
+            self.assertNotEqual(altered, source, f"test fixture did not remove {name} guard")
+            self.assertEqual(missing_demo_command_guards(altered), [name])
 
 
 if __name__ == "__main__":

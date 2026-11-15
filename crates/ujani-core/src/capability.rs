@@ -94,6 +94,22 @@ pub fn plan_local_task(
         return base(false, "unavailable", vec![], "Available memory is below the operation's conservative minimum. Close other applications or retry later.".into());
     }
 
+    // Keep the shared policy evaluator on the same path as the local capability
+    // planner so a registered operation cannot bypass its policy-version,
+    // operation-registration, memory and runtime-budget checks.
+    let policy = crate::policy_gate::evaluate_local_registered_operation(
+        &operation.id,
+        available_memory_mb,
+    );
+    if policy.decision != crate::policy_gate::GateDecision::Allow || policy.requires_isolation {
+        return base(
+            false,
+            "blocked",
+            vec![],
+            format!("Shared local execution policy blocked this operation: {}", policy.reason),
+        );
+    }
+
     base(true, "local", vec![], "Local plan is ready. The memory threshold is a coarse preflight only; it does not predict model-specific memory use or reserve CPU/RAM.".into())
 }
 

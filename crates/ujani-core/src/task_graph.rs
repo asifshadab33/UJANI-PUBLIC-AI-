@@ -141,6 +141,17 @@ pub fn plan_task_graph(
     let mut peak_memory = 0_u64;
     for node in &graph.nodes {
         let operation = operation_by_id.get(&node.operation_id).expect("validated operation");
+        let policy = crate::policy_gate::evaluate_local_registered_operation(
+            &node.operation_id,
+            available_memory_mb,
+        );
+        if policy.decision != crate::policy_gate::GateDecision::Allow || policy.requires_isolation {
+            return rejected(
+                graph,
+                available_memory_mb,
+                format!("Shared local execution policy blocked node '{}': {}", node.id, policy.reason),
+            );
+        }
         required.extend(operation.required_capabilities.iter().cloned());
         peak_memory = peak_memory.max(operation.minimum_available_memory_mb);
     }
@@ -243,6 +254,15 @@ mod tests {
         assert!(!plan_task_graph(&g, "smart", 128, &caps()).accepted);
     }
 
+
+    #[test]
+    fn shared_policy_gate_blocks_graph_nodes_before_execution() {
+        let g = graph(vec![node("summarize", "document.summarize", &[])]);
+        let plan = plan_task_graph(&g, "smart", 512, &caps());
+        assert!(!plan.accepted);
+        assert!(plan.reason.contains("Shared local execution policy blocked"));
+        assert!(!plan.execution_started);
+    }
 
     #[test]
     fn rejects_nodes_with_too_many_dependencies() {

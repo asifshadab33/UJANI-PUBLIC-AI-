@@ -7,11 +7,12 @@
 - Four-mode policy preview (Fortress, Smart, Worker, Partner) with registered operation checks, declared capability checks, memory preflight, explicit external-transfer approval and a capped Partner round count.
 - Fortress never permits external data transfer. Smart selects local execution when its declared local requirements are met. Worker and Partner require explicit approval and a separate gateway capability.
 - Real local inference through Ollama at `127.0.0.1:11434`; no remote Ollama endpoint or cloud fallback is configured.
+- Deterministic word-count and mock-model demonstration commands are hidden from the production UI and rejected by native release builds; they remain available only in development builds.
 - Bounded prompt/response handling and retry handling for transient local-service connection/time-out, throttling and server failures.
 - Read-only OS CPU and memory reporting. GPU/NPU remain **unknown** until both hardware and a compatible compute runtime can be verified.
 - User-selected text and PDF processing in memory, bounded document chunking, local summarisation and optional local translation.
 - Bounded image-header inspection only; this is not image decoding, OCR or vision inference.
-- Registered local operation and workflow-graph planning. A successful plan is not execution, resource reservation, filesystem permission or a sandbox.
+- Registered local operation and workflow-graph planning. Both planners now invoke the shared policy preflight for registered local operations. A successful plan is not execution, resource reservation, filesystem permission or a sandbox; command-level denial coverage and universal native-command enforcement remain incomplete.
 
 ## Lightweight media capability boundary
 
@@ -25,19 +26,19 @@
 ## Important policy distinctions
 
 - Fortress means **no external task-data transfer**. Ollama is contacted over local loopback HTTP; this is local IPC/network communication and does not provide OS-wide network isolation.
-- A mode selection is not consent. An explicit approval checkbox is required before a future external transfer can be considered.
+- A mode selection is not consent. Smart-mode cloud requests require explicit per-task native consent and a user-declared data classification; Confidential and Restricted classes are blocked. This is not automatic content classification.
 - The router and resource scheduler are policy evaluators, not general executors. The native task engine invokes the local Ollama adapter; the separate BYOK gateway sends only explicitly approved Smart-mode requests to a user-configured provider.
 - A model's self-reported confidence must never grant external-transfer permission. If a local model cannot complete a task, the current product should explain the limitation and ask the user before any future external gateway is used.
 - Worker and Partner remain policy previews only. BYOK Smart-mode cloud requests are implemented through a bounded native gateway with a local daily token reservation and local execution receipts; provider-side billing controls, configurable monetary budgets, encrypted peer transport, dispatch and cross-device execution are not implemented.
 
 ## Deferred deliberately
 
-1. **Cloud gateway hardening:** the BYOK gateway now validates requests before reserving a local daily token allowance and writes local hash-chained receipts after successful calls. Provider-specific integration tests, exact provider usage reconciliation, user-configurable monetary spend limits, field-level data minimisation and externally anchored audit evidence remain required before production.
+1. **Cloud gateway production hardening:** the BYOK gateway enforces explicit per-task consent, user-declared data classification, a registered `cloud.ai.generate` operation, a local daily token allowance and local hash-chained receipts. Provider-specific integration tests, exact provider usage reconciliation, user-configurable monetary spend limits, field-level data minimisation and externally anchored audit evidence remain required before production.
 2. **Persistent history / SQLite:** optional SQLite history exists with AES-256-GCM encrypted prompt/output fields and row/column authenticated data; the local receipt ledger is hash-chained and capped at 10,000 entries. The saved-history panel now supports user-confirmed export of the currently loaded entries (up to 100) to versioned JSON. The export is plaintext, is not encrypted by UJANI, and is not removed when in-app history is deleted; users must protect exported copies. Remaining gaps include key rotation/recovery, encrypted backup/restore, concurrent key initialization and end-to-end migration verification. The receipt ledger is local, unsigned and not externally anchored.
 3. **GPU/NPU detection:** do not infer accelerator support from hardware presence alone. Verify driver/runtime compatibility and report unknown when uncertain.
 4. **Full image processing:** add decoding/OCR/vision only with pixel, dimension, memory and decompression-bomb limits.
-5. **Filesystem sandbox:** current file tools accept user-selected bytes from the UI and do not open arbitrary paths. A future folder tool must use OS-granted scoped access and canonical-path checks; never accept paths or shell commands generated by a model.
-6. **Distributed execution:** device identity, native-confirmed peer enrollment/revocation, recipient-bound domain-separated protocol-v2 signatures with strict verification, and persistent replay nonce claims exist in the current remediation branch. Encrypted authenticated transport, dispatch, remote execution, peer resource budgets, organisation enrollment and remote receipt exchange remain unimplemented; Worker/Partner stay blocked.
+5. **Filesystem safety:** folder import is user-selected, registers cancellation before the native picker, enforces bounded traversal and uses handle-relative no-follow opens beneath the selected root. Linux `O_PATH` ancestor handles are under review in PR #283; cross-platform race testing and independent review remain required. Never accept paths or shell commands generated by a model.
+6. **Distributed execution:** device identity, native-confirmed peer enrollment/revocation, recipient-bound domain-separated protocol-v2 signatures with strict verification, and persistent replay nonce claims exist in `main`. Encrypted authenticated transport, dispatch, remote execution, peer resource budgets, organisation enrollment and remote receipt exchange remain unimplemented; Worker/Partner stay blocked.
 
 ## Verification
 
@@ -59,7 +60,7 @@ A successful CI run verifies compilation/tests in its runner. It does not prove 
 
 ## Current next milestone
 
-Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux, including Ollama unavailable, model missing, timeout, oversized prompt/response and low-memory cases. Do not start cloud escalation until the consent and gateway controls above are implemented.
+Stabilise and test the local Fortress/Smart workflow on Windows, macOS and Linux, including Ollama unavailable, model missing, timeout, oversized prompt/response and low-memory cases. Keep cloud escalation opt-in per task; do not add automatic fallback or broaden transfer until provider-specific integration tests, spend controls and field-level minimisation are complete.
 
 
 ## 2026-11-06 implementation update

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Require an explicit security-audit disposition for every registered native IPC command.
+"""Check native IPC inventory completeness and selected security-wiring invariants.
 
-This checks inventory completeness and required metadata only. It does not prove
-that a policy gate is enforced, a receipt is durable, or a denial precedes side effects.
+These static checks catch regressions in known command paths. They do not prove
+runtime enforcement, durable receipt integrity, sandbox effectiveness or absence
+of alternate call paths; those still require code review and platform testing.
 """
 from __future__ import annotations
 
@@ -13,6 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "apps/desktop/src-tauri/src/lib.rs"
 MANIFEST = ROOT / "docs/native-command-security-map.json"
+CORE_CAPABILITY = ROOT / "crates/ujani-core/src/capability.rs"
+CORE_POLICY_GATE = ROOT / "crates/ujani-core/src/policy_gate.rs"
+CORE_TASK_GRAPH = ROOT / "crates/ujani-core/src/task_graph.rs"
+APP_SOURCE = ROOT / "apps/desktop/src/App.tsx"
+FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
 
 
 def find_matching_delimiter(source: str, opening_index: int, opening: str, closing: str) -> int:
@@ -126,6 +132,18 @@ def strip_rust_noncode(text: str) -> str:
             output.append(blank(text[start:index]))
             continue
 
+        # Rust character literals must be masked before string handling: a
+        # literal such as '"' must not open a string that consumes later code.
+        # The closing quote is required, so lifetimes like &'a str do not match.
+        char_literal = re.match(
+            r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'",
+            text[index:],
+        )
+        if char_literal:
+            output.append(blank(char_literal.group(0)))
+            index += char_literal.end()
+            continue
+
         if text[index] == '"':
             start = index
             index += 1
@@ -153,6 +171,38 @@ def command_tokens(text: str) -> list[str]:
     return re.findall(r"(?<![\w$])(?:[A-Za-z_]\w*::)*[A-Za-z_]\w*", cleaned)
 
 
+def rust_function_body(source: str, function_name: str) -> str:
+    """Return the actual Rust function body, locating syntax only in masked code."""
+    # Preserve offsets/newlines while blanking comments and strings first. This
+    # prevents a commented-out fake fn declaration from shadowing the real item.
+    masked = strip_rust_noncode(source)
+    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\(", masked)
+    if not match:
+        raise ValueError(f"could not locate Rust function {function_name}")
+    opening_paren = masked.find("(", match.start())
+    closing_paren = find_matching_delimiter(masked, opening_paren, "(", ")")
+    opening_brace = masked.find("{", closing_paren + 1)
+    if opening_brace < 0:
+        raise ValueError(f"could not locate body for Rust function {function_name}")
+    closing_brace = find_matching_delimiter(masked, opening_brace, "{", "}")
+    return source[opening_brace + 1:closing_brace]
+
+
+def missing_demo_command_guards(source: str) -> list[str]:
+    """Identify demo commands whose own bodies lack the build-profile guard."""
+    expected = ("list_local_models", "run_local_model_task", "run_local_task")
+    missing = []
+    for name in expected:
+        try:
+            body = rust_function_body(source, name)
+        except ValueError:
+            missing.append(name)
+            continue
+        if "debug_demo_commands_enabled" not in command_tokens(body):
+            missing.append(name)
+    return missing
+
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -172,6 +222,18 @@ def registered_commands(source: str) -> tuple[list[str], list[str]]:
     peer_opening = peer.end() - 1
     peer_end = find_matching_delimiter(source, peer_opening, "(", ")")
     return default, command_tokens(source[peer_opening + 1:peer_end])
+
+
+def require_tokens(path: Path, tokens: tuple[str, ...], errors: list[str], label: str) -> str:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        errors.append(f"{label}: could not read {path}: {error}")
+        return ""
+    for token in tokens:
+        if token not in source:
+            errors.append(f"{label}: missing source invariant {token!r}")
+    return source
 
 
 def main() -> int:
@@ -209,6 +271,59 @@ def main() -> int:
                     errors.append(f"{group_name}:{name}: missing non-empty {field}")
             if entry.get("receipt") == "required-but-disabled" and "disabled" not in entry.get("status", ""):
                 errors.append(f"{group_name}:{name}: disabled mutation must say so in status")
+    # The shared local policy evaluator must remain on both ordinary local
+    # operation planning and every node in a local task graph.
+    require_tokens(
+        CORE_CAPABILITY,
+        ("evaluate_local_registered_operation(", "policy.decision != crate::policy_gate::GateDecision::Allow"),
+        errors,
+        "local capability planner",
+    )
+    require_tokens(
+        CORE_TASK_GRAPH,
+        ("evaluate_local_registered_operation(", "Shared local execution policy blocked node"),
+        errors,
+        "local task-graph planner",
+    )
+    require_tokens(
+        CORE_POLICY_GATE,
+        ("pub fn evaluate_local_registered_operation(", "external_transfer: false", "max_runtime_seconds: 240"),
+        errors,
+        "shared local policy gate",
+    )
+
+    # Mock/demo commands must remain development-only at both UI and native IPC
+    # boundaries; release builds must not silently substitute word-count output.
+    missing_demo_guards = missing_demo_command_guards(source)
+    if missing_demo_guards:
+        errors.append(
+            "debug demo commands: missing build-profile guard in "
+            + ", ".join(missing_demo_guards)
+        )
+    require_tokens(
+        APP_SOURCE,
+        ("if (!import.meta.env.DEV)", "import.meta.env.DEV && <div className=\"controls\">", "Run word-count demo"),
+        errors,
+        "development-only demo UI",
+    )
+
+    # Keep the model pull fail-closed until registry artifact and daemon-store
+    # evidence are available. A future enablement must replace this invariant.
+    if not re.search(r"fn model_download_preflight_ready\(\)\s*->\s*bool\s*\{\s*false\s*\}", source):
+        errors.append("model download: fail-closed preflight must remain false until artifact/store verification is implemented")
+    if "evaluate_registered_external_transfer" not in source or '"cloud.ai.generate"' not in source:
+        errors.append("cloud dispatch: registered external-transfer policy must remain on the native dispatch path")
+
+    # Folder selection must be registered/cancellable before opening the native picker.
+    folder_source = require_tokens(
+        FOLDER_IMPORT,
+        ("register_active_task", "blocking_pick_folder", "ensure_task_not_cancelled"),
+        errors,
+        "folder import cancellation",
+    )
+    if folder_source and folder_source.find("register_active_task") > folder_source.find("blocking_pick_folder"):
+        errors.append("folder import: task registration must precede the native folder picker")
+
     if errors:
         print("Native command security-map check FAILED:")
         for error in errors:
@@ -218,7 +333,7 @@ def main() -> int:
         "Native command security-map check passed: "
         f"{len(default)} default commands and {len(peer)} peer-preview commands have explicit audit mappings."
     )
-    print("This is mapping completeness only; it is not a security sign-off or proof of runtime enforcement.")
+    print("Selected source-wiring checks passed; this is not a security sign-off or proof of runtime enforcement.")
     return 0
 
 

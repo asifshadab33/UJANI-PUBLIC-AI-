@@ -2175,10 +2175,23 @@ fn get_device_info() -> DeviceInfo {
     }
 }
 
+/// Debug-only deterministic adapters are never exposed as production AI capabilities.
+fn debug_demo_commands_enabled() -> bool {
+    cfg!(debug_assertions)
+}
+
+#[cfg(test)]
+mod debug_demo_command_tests {
+    #[test]
+    fn demo_command_gate_matches_the_build_profile() {
+        assert_eq!(super::debug_demo_commands_enabled(), cfg!(debug_assertions));
+    }
+}
+
 /// Returns only models registered by the application. No model files are scanned.
 #[tauri::command]
 fn list_local_models() -> Vec<ModelInfo> {
-    if !cfg!(debug_assertions) {
+    if !debug_demo_commands_enabled() {
         return Vec::new();
     }
     let mut system = System::new();
@@ -2189,7 +2202,7 @@ fn list_local_models() -> Vec<ModelInfo> {
 /// Runs an explicitly selected local adapter. No network or cloud fallback exists.
 #[tauri::command]
 fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceResult, String> {
-    if !cfg!(debug_assertions) {
+    if !debug_demo_commands_enabled() {
         return Err("The deterministic mock model adapter is disabled in release builds.".into());
     }
     let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
@@ -2201,6 +2214,9 @@ fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceRes
 /// Narrow demonstration operation: no shell, scripts, filesystem or network access.
 #[tauri::command]
 fn run_local_task(request: String) -> Result<RunResult, String> {
+    if !debug_demo_commands_enabled() {
+        return Err("The deterministic word-count demonstration is disabled in release builds.".into());
+    }
     let trimmed = request.trim();
     if trimmed.is_empty() {
         return Err("Request cannot be empty.".into());

@@ -120,9 +120,9 @@
       "scope": "Installed local model names/metadata",
       "effects": "Local Ollama inventory read",
       "boundary": "loopback-only; no download or prompt submission",
-      "receipt": "none-read-only",
-      "tests": "model inventory tests",
-      "status": "source-mapped; full review pending",
+      "receipt": "none-debug-only",
+      "tests": "release-build guard and mock inventory tests",
+      "status": "debug-only mock inventory; returns empty in release builds",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
@@ -170,13 +170,13 @@
       "boundary": "active task registration, capability preflight, Fortress/Smart local route and cancellation",
       "receipt": "metadata-outcome-receipt",
       "tests": "local task policy and receipt regression tests",
-      "status": "partially wired; command-level denial matrix pending",
+      "status": "shared local preflight gate wired through registered operation planner; command-level denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
       "cancellation": "Managed task cancellation and overall timeout are used on covered paths; per-command coverage must be verified.",
       "resource_limits": "Local task admission, memory reservation and operation-specific input limits apply where wired; verify each route independently.",
-      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared policy_gate is not universally enforced."
+      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared gate is applied through the local planner but does not classify model intent or replace native dispatch checks."
     },
     "run_local_model_task": {
       "classification": "local_model_execution",
@@ -184,9 +184,9 @@
       "scope": "User-provided task input and selected local model",
       "effects": "Local model inference",
       "boundary": "native local runtime checks and task cancellation; verify exact policy path before expanding",
-      "receipt": "metadata-outcome-receipt",
-      "tests": "native runtime tests",
-      "status": "source-mapped; full review pending",
+      "receipt": "none-debug-only",
+      "tests": "release-build guard and deterministic adapter tests",
+      "status": "debug-only mock inference; rejected in release builds",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
@@ -200,9 +200,9 @@
       "scope": "User-provided task input and operation ID",
       "effects": "Local tool execution",
       "boundary": "operation registry and local capability gate required",
-      "receipt": "metadata-outcome-receipt",
-      "tests": "operation registry and local policy tests",
-      "status": "source-mapped; full review pending",
+      "receipt": "none-debug-only",
+      "tests": "release-build guard and word-count behavior tests",
+      "status": "debug-only deterministic word-count demo; hidden and rejected in release builds",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
@@ -234,13 +234,13 @@
       "boundary": "fixed workflow graph, local capability planning, size limits, cancellation and receipt wrapper",
       "receipt": "metadata-outcome-receipt",
       "tests": "workflow graph, task cancellation and receipt tests",
-      "status": "partially wired; shared authorization gate not complete",
+      "status": "shared local preflight gate wired per graph node; graph remains planning-only",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
       "cancellation": "Managed task cancellation and overall timeout are used on covered paths; per-command coverage must be verified.",
       "resource_limits": "Local task admission, memory reservation and operation-specific input limits apply where wired; verify each route independently.",
-      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared policy_gate is not universally enforced."
+      "failure_mode": "Reject invalid graphs, unregistered operations, missing capabilities and insufficient memory; policy preflight does not execute nodes or reserve resources."
     },
     "process_selected_document": {
       "classification": "local_document_execution",
@@ -250,13 +250,13 @@
       "boundary": "native local operation preflight, task registration, cancellation and bounded input",
       "receipt": "metadata-outcome-receipt",
       "tests": "local operation denial and document pipeline tests",
-      "status": "partially wired; command-level denial matrix pending",
+      "status": "shared local gate wired via require_local_operation and registered planner; denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
       "cancellation": "Managed task cancellation and overall timeout are used on covered paths; per-command coverage must be verified.",
       "resource_limits": "Local task admission, memory reservation and operation-specific input limits apply where wired; verify each route independently.",
-      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared policy_gate is not universally enforced."
+      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; native dispatch, cancellation and receipt controls remain required."
     },
     "process_selected_pdf": {
       "classification": "local_document_execution",
@@ -266,13 +266,13 @@
       "boundary": "native local operation preflight, parser capability, byte/time limits, cancellation and worker isolation status",
       "receipt": "metadata-outcome-receipt",
       "tests": "PDF worker isolation and parser regression tests",
-      "status": "partially wired; device isolation proof pending",
+      "status": "shared local gate wired via require_local_operation and registered planner; device isolation proof pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
       "cancellation": "Managed task cancellation and overall timeout are used on covered paths; per-command coverage must be verified.",
       "resource_limits": "Local task admission, memory reservation and operation-specific input limits apply where wired; verify each route independently.",
-      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared policy_gate is not universally enforced."
+      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; parser isolation and platform-specific sandbox evidence remain separate requirements."
     },
     "analyze_text_file": {
       "classification": "local_document_execution",
@@ -298,13 +298,13 @@
       "boundary": "native local operation preflight, cancellation and bounded input",
       "receipt": "metadata-outcome-receipt",
       "tests": "local operation denial and cancellation tests",
-      "status": "partially wired; command-level denial matrix pending",
+      "status": "shared local gate wired via require_local_operation and registered planner; denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
       "cancellation": "Managed task cancellation and overall timeout are used on covered paths; per-command coverage must be verified.",
       "resource_limits": "Local task admission, memory reservation and operation-specific input limits apply where wired; verify each route independently.",
-      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared policy_gate is not universally enforced."
+      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; native dispatch, cancellation and receipt controls remain required."
     },
     "translate_text_local": {
       "classification": "local_document_execution",
@@ -314,13 +314,13 @@
       "boundary": "native local operation preflight, cancellation and bounded input",
       "receipt": "metadata-outcome-receipt",
       "tests": "translation policy and cancellation tests",
-      "status": "partially wired; command-level denial matrix pending",
+      "status": "shared local gate wired via require_local_operation and registered planner; denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Local execution only; task-specific local capability preflight is not external-transfer consent. User-selected data scope and model choice must remain explicit.",
       "cancellation": "Managed task cancellation and overall timeout are used on covered paths; per-command coverage must be verified.",
       "resource_limits": "Local task admission, memory reservation and operation-specific input limits apply where wired; verify each route independently.",
-      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; shared policy_gate is not universally enforced."
+      "failure_mode": "Reject missing local capabilities and unavailable model/runtime before inference; native dispatch, cancellation and receipt controls remain required."
     },
     "inspect_image_file": {
       "classification": "local_image_execution",
@@ -346,13 +346,13 @@
       "boundary": "task-scoped native confirmation disclosing host/model/prompt preview; endpoint validation, token budget, cancellation and timeout",
       "receipt": "metadata-outcome-receipt",
       "tests": "cloud approval denial, endpoint validation and budget tests",
-      "status": "partially wired; trusted data classification and unified gate pending",
+      "status": "explicit per-task data-classification and registered transfer gate wired; universal native-command gate and denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
       "consent": "Native one-time confirmation discloses provider host, model, prompt size and preview; unified trusted data-classification and recipient policy remain incomplete.",
       "cancellation": "Active task cancellation and bounded request timeout; verify cancellation at each transport stage.",
       "resource_limits": "Prompt/token budgets and request timeout exist; verify endpoint-specific payload/response limits and classify content before transfer.",
-      "failure_mode": "Reject before external request when approval, endpoint validation, budget reservation or receipt reservation fails; command-level negative tests still required."
+      "failure_mode": "User-declared data class and explicit approval are checked for the registered cloud.ai.generate operation; no content classifier is implied, and other native routes still require their own gates and denial tests."
     },
     "folder_import::process_selected_folder": {
       "classification": "selected_folder_read_and_local_execution",
