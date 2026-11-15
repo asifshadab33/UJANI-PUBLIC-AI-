@@ -9,6 +9,7 @@ import EverydayWritingActions from "./EverydayWritingActions";
 import IntegrationDirectory from "./IntegrationDirectory";
 import SecurityCentre from "./SecurityCentre";
 import FeaturePermissionsCentre from "./FeaturePermissionsCentre";
+import ReminderCentre from "./ReminderCentre";
 import ModelCatalogue from "./ModelCatalogue";
 import { MODEL_SELECTION_STORAGE_KEY, readModelSelectionPreference } from "./modelSelectionPreference.js";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink, ListChecks } from "lucide-react";
@@ -1082,6 +1083,7 @@ export default function App() {
       </section>}
       <LocalFinder />
       <EverydayTools />
+      <ReminderCentre />
       <EverydayWritingActions onChoose={(prompt) => {
         setRequest(prompt);
         document.getElementById("chat-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
