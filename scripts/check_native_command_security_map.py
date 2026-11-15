@@ -286,8 +286,26 @@ def main() -> int:
         "local task-graph planner",
     )
     require_tokens(
+        CORE_CAPABILITY,
+        (
+            "pub max_runtime_seconds: u32",
+            '"file.search.local"',
+            '"file.search.pdf_text"',
+            '"file.duplicates.preview"',
+            '"file.large_files.preview"',
+        ),
+        errors,
+        "registered local operation budgets",
+    )
+    require_tokens(
         CORE_POLICY_GATE,
-        ("pub fn evaluate_local_registered_operation(", "external_transfer: false", "max_runtime_seconds: 240"),
+        (
+            "pub fn evaluate_local_registered_operation(",
+            "let max_runtime_seconds = operation",
+            ".map(|value| value.max_runtime_seconds)",
+            "requested_runtime_seconds: max_runtime_seconds",
+            "external_transfer: false",
+        ),
         errors,
         "shared local policy gate",
     )
