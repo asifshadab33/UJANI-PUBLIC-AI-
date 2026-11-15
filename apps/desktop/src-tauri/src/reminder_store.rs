@@ -126,7 +126,7 @@ fn require_enabled(db: &Connection) -> Result<(), String> {
     else { Err("Local reminders are disabled. Enable them before creating or changing reminders.".into()) }
 }
 
-fn reminder_key() -> Result<Zeroizing<[u8; 32]>, String> {
+fn reminder_key(create_if_missing: bool) -> Result<Zeroizing<[u8; 32]>, String> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
     match entry.get_password() {
@@ -139,6 +139,9 @@ fn reminder_key() -> Result<Zeroizing<[u8; 32]>, String> {
             let key: [u8; 32] = decoded.as_slice().try_into()
                 .map_err(|_| "Stored reminder encryption key has an invalid length.".to_string())?;
             Ok(Zeroizing::new(key))
+        }
+        Err(keyring::Error::NoEntry) if !create_if_missing => {
+            Err("The OS credential vault has no key for existing reminders; refusing to replace it with a new key.".into())
         }
         Err(keyring::Error::NoEntry) => {
             let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
@@ -261,7 +264,7 @@ fn create(app: AppHandle, title: String, notes: Option<String>, due_at_unix_ms: 
         let count: i64 = tx.query_row("SELECT COUNT(*) FROM local_reminders", [], |row| row.get(0))
             .map_err(|error| error.to_string())?;
         if count >= MAX_REMINDERS { return Err("Local reminder limit reached. Delete an old reminder first.".into()); }
-        let key = reminder_key()?;
+        let key = reminder_key(count == 0)?;
         save_record(&tx, &key, &reminder)?;
         tx.commit().map_err(|error| error.to_string())?;
         let output = audit_metadata("created", &reminder.id, Some(reminder.due_at_unix_ms));
@@ -277,7 +280,7 @@ fn update(app: AppHandle, id: String, title: String, notes: Option<String>, due_
         let mut db = open(&app)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
         require_enabled(&tx)?;
-        let key = reminder_key()?;
+        let key = reminder_key(false)?;
         let mut reminder = load_one(&tx, &key, &id)?;
         reminder.title = title;
         reminder.notes = notes;
