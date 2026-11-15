@@ -4,7 +4,7 @@
 use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
@@ -244,9 +244,22 @@ fn entry_aad(scope_id: &str, request_key: &str, kind: &str) -> Vec<u8> {
 
 /// Resolves a user-selected canonical folder to a native-generated opaque scope ID.
 fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path, create: bool) -> Result<Option<String>, String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+    let scope_id = scope_for_path_in_transaction(&tx, key, root, create)?;
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(scope_id)
+}
+
+/// Scope lookup/creation inside the caller's transaction so cache consent and
+/// scope registration can be serialized with a concurrent disable-and-clear.
+fn scope_for_path_in_transaction(
+    tx: &Transaction<'_>,
+    key: &[u8; 32],
+    root: &Path,
+    create: bool,
+) -> Result<Option<String>, String> {
     let canonical = fs::canonicalize(root).map_err(|error| format!("Could not resolve selected folder: {error}"))?;
     let canonical_text = canonical.to_str().ok_or_else(|| "This folder path cannot be safely represented for encrypted caching; search will run without cache.".to_string())?;
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
     let mut statement = tx.prepare("SELECT scope_id,encrypted_path FROM approved_scopes")
         .map_err(|error| error.to_string())?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
@@ -263,11 +276,9 @@ fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path, create: bool
     }
     drop(statement);
     if let Some(scope_id) = found {
-        tx.commit().map_err(|error| error.to_string())?;
         return Ok(Some(scope_id));
     }
     if !create {
-        tx.commit().map_err(|error| error.to_string())?;
         return Ok(None);
     }
     let mut random = [0_u8; 16];
@@ -278,7 +289,6 @@ fn scope_for_path(db: &mut Connection, key: &[u8; 32], root: &Path, create: bool
         "INSERT INTO approved_scopes(scope_id,encrypted_path,created_at) VALUES(?1,?2,?3)",
         params![scope_id, encrypted_path, now_seconds()?],
     ).map_err(|error| error.to_string())?;
-    tx.commit().map_err(|error| error.to_string())?;
     Ok(Some(scope_id))
 }
 
@@ -418,30 +428,27 @@ pub fn store(
     if inventory_json.len() > MAX_CACHE_ROW_BYTES || payload_json.len() > MAX_CACHE_ROW_BYTES {
         return Ok(());
     }
-    let enabled = {
-        let db = open(app)?;
-        settings_from_db(&db)?.enabled
-    };
-    if !enabled {
-        return Ok(());
-    }
 
     let input_metadata = cache_store_receipt_input(root, query, search_pdf_text, is_negative);
     crate::with_local_state_receipt(app, "search_cache.store", input_metadata.as_bytes(), || {
         let mut db = open(app)?;
-        let settings = settings_from_db(&db)?;
+        // The consent read, scope registration, upserts and eviction share one
+        // IMMEDIATE transaction. Disabling cache uses the same writer lock and
+        // therefore cannot be followed by a stale write that recreates the scope.
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| error.to_string())?;
+        let settings = settings_from_db(&tx)?;
         if !settings.enabled {
             return Ok(((), b"cache-disabled-before-write".to_vec()));
         }
         let key = cache_key()?;
-        let scope_id = scope_for_path(&mut db, &key, root, true)?
+        let scope_id = scope_for_path_in_transaction(&tx, &key, root, true)?
             .ok_or_else(|| "Could not register the selected local search scope.".to_string())?;
         let request_key = request_key(&scope_id, query, search_pdf_text);
         let encrypted_inventory = encrypt(&key, inventory_json.as_bytes(), &entry_aad(&scope_id, &request_key, "inventory"))?;
         let encrypted_payload = encrypt(&key, payload_json.as_bytes(), &entry_aad(&scope_id, &request_key, "payload"))?;
         let now = now_seconds()?;
         let encrypted_query = encrypt(&key, query.as_bytes(), &entry_aad(&scope_id, &request_key, "query"))?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
         tx.execute(
             "INSERT INTO search_cache(scope_id,request_key,inventory_ciphertext,payload_ciphertext,is_negative,created_at,last_access)
              VALUES(?1,?2,?3,?4,?5,?6,?6)
@@ -463,8 +470,10 @@ pub fn store(
                last_access=excluded.last_access",
             params![scope_id,request_key,encrypted_query,if is_negative {1} else {0},now]
         ).map_err(|error| error.to_string())?;
+        // Eviction is part of the same cache transaction; no upsert can commit
+        // while a later trim failure leaves the cache over its configured bounds.
+        trim_cache(&tx, &settings, now)?;
         tx.commit().map_err(|error| error.to_string())?;
-        trim_cache(&db, &settings, now)?;
         Ok(((), b"encrypted-cache-upserted".to_vec()))
     })
 }
