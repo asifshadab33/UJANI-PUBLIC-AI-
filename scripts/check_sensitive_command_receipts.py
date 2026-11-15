@@ -76,20 +76,20 @@ REQUIRED_POLICY_MARKERS = {
     ),
     ("local_search.rs", "find_local_files"): (
         "register_active_task",
-        "get_capability_snapshot_for_task",
+        "get_selected_folder_capability_snapshot_for_task",
         "run_selected_folder_preflight",
         '"file.search.local"',
         '"file.search.pdf_text"',
     ),
     ("everyday_tools.rs", "find_duplicate_files"): (
         "register_active_task",
-        "get_capability_snapshot_for_task",
+        "get_selected_folder_capability_snapshot_for_task",
         "run_selected_folder_preflight",
         '"file.duplicates.preview"',
     ),
     ("file_insights.rs", "find_large_files"): (
         "register_active_task",
-        "get_capability_snapshot_for_task",
+        "get_selected_folder_capability_snapshot_for_task",
         "run_selected_folder_preflight",
         '"file.large_files.preview"',
     ),
@@ -173,7 +173,7 @@ REQUIRED_ORDERED_MARKERS = {
     ),
     ("local_search.rs", "find_local_files"): (
         "register_active_task",
-        "get_capability_snapshot_for_task",
+        "get_selected_folder_capability_snapshot_for_task",
         "required_operations",
         '"file.search.local"',
         '"file.search.pdf_text"',
@@ -182,7 +182,7 @@ REQUIRED_ORDERED_MARKERS = {
     ),
     ("everyday_tools.rs", "find_duplicate_files"): (
         "register_active_task",
-        "get_capability_snapshot_for_task",
+        "get_selected_folder_capability_snapshot_for_task",
         "run_selected_folder_preflight",
         '"file.duplicates.preview"',
         "blocking_pick_folder()",
@@ -190,7 +190,7 @@ REQUIRED_ORDERED_MARKERS = {
     ),
     ("file_insights.rs", "find_large_files"): (
         "register_active_task",
-        "get_capability_snapshot_for_task",
+        "get_selected_folder_capability_snapshot_for_task",
         "run_selected_folder_preflight",
         '"file.large_files.preview"',
         "blocking_pick_folder()",
