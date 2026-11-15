@@ -62,7 +62,7 @@ pub async fn find_large_files(
                 .map_err(|_| "The selected folder is not a local filesystem path.".to_string())
         }),
     )?;
-    let selected = selected.await.map_err(|error| format!("Folder picker failed: {error}"))??;
+    let selected = selected.await.map_err(|error| format!("Folder picker failed: {error}"))?;
     let folder = super::require_selected_folder(selected, "Folder selection cancelled. Nothing was scanned.")?;
     if token.is_cancelled() {
         return Err("Large-file scan cancelled by user.".into());
