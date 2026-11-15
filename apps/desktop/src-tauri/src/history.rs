@@ -387,7 +387,7 @@ pub fn save_task_history(
         if !is_enabled(&db)? {
             return Err("Task history is disabled.".into());
         }
-        let key = history_key()?;
+        let key = history_key(&mut db)?;
         migrate_plaintext_rows(&db, &key)?;
         let id = save_secure(&mut db, &key, &prompt, &output, &mode, &model, &kind, now()?)?;
         Ok((id, id.to_be_bytes().to_vec()))
@@ -401,7 +401,7 @@ pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
     if !is_enabled(&db)? {
         return Ok(Vec::new());
     }
-    let key = history_key()?;
+    let key = history_key(&mut db)?;
     migrate_plaintext_rows(&db, &key)?;
     db.execute(
         "DELETE FROM task_history WHERE created_at < ?1",
