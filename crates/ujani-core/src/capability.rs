@@ -26,6 +26,8 @@ pub struct OperationDescriptor {
     pub description: String,
     pub required_capabilities: Vec<String>,
     pub minimum_available_memory_mb: u64,
+    /// Maximum wall-clock budget enforced by the native command or its managed worker.
+    pub max_runtime_seconds: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,13 +46,17 @@ pub struct TaskPlan {
 /// Trusted built-in operation catalogue. No arbitrary commands or model-authored tools.
 pub fn registered_operations() -> Vec<OperationDescriptor> {
     vec![
-        OperationDescriptor { id: "local.ai.generate".into(), description: "Generate a response with an installed local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
-        OperationDescriptor { id: "document.summarize".into(), description: "Summarise user-selected text with a local model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
-        OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
-        OperationDescriptor { id: "translate.text".into(), description: "Translate supplied text with a local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024 },
-        OperationDescriptor { id: "local.word_count".into(), description: "Count words in user-supplied text".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64 },
-        OperationDescriptor { id: "file.analyze_text".into(), description: "Analyse user-supplied text without a model".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64 },
-        OperationDescriptor { id: "image.inspect".into(), description: "Inspect supported image headers and metadata".into(), required_capabilities: vec!["cpu".into(), "image.header_inspection".into()], minimum_available_memory_mb: 64 },
+        OperationDescriptor { id: "local.ai.generate".into(), description: "Generate a response with an installed local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
+        OperationDescriptor { id: "document.summarize".into(), description: "Summarise user-selected text with a local model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
+        OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
+        OperationDescriptor { id: "translate.text".into(), description: "Translate supplied text with a local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
+        OperationDescriptor { id: "local.word_count".into(), description: "Count words in user-supplied text".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
+        OperationDescriptor { id: "file.analyze_text".into(), description: "Analyse user-supplied text without a model".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
+        OperationDescriptor { id: "image.inspect".into(), description: "Inspect supported image headers and metadata".into(), required_capabilities: vec!["cpu".into(), "image.header_inspection".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
+        OperationDescriptor { id: "file.search.local".into(), description: "Search metadata and supported text in one user-selected local folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 128, max_runtime_seconds: 600 },
+        OperationDescriptor { id: "file.search.pdf_text".into(), description: "Search text extracted from PDFs in one user-selected local folder".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into()], minimum_available_memory_mb: 256, max_runtime_seconds: 600 },
+        OperationDescriptor { id: "file.duplicates.preview".into(), description: "Preview duplicate files by bounded local content hashing in one user-selected folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 128, max_runtime_seconds: 60 },
+        OperationDescriptor { id: "file.large_files.preview".into(), description: "Preview large-file metadata in one user-selected local folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
     ]
 }
 
@@ -171,5 +177,32 @@ mod tests {
     fn deterministic_text_analysis_needs_no_model() {
         let p = plan_local_task("file.analyze_text", "fortress", 1024, &capabilities(false));
         assert!(p.accepted);
+    }
+
+    #[test]
+    fn selected_folder_operations_are_registered_and_resource_bounded() {
+        let cases = [
+            ("file.search.local", 128, 600),
+            ("file.search.pdf_text", 256, 600),
+            ("file.duplicates.preview", 128, 60),
+            ("file.large_files.preview", 64, 60),
+        ];
+
+        for (operation_id, minimum_memory_mb, max_runtime_seconds) in cases {
+            let operation = registered_operations()
+                .into_iter()
+                .find(|candidate| candidate.id == operation_id)
+                .expect("selected-folder operation is registered");
+            assert_eq!(operation.minimum_available_memory_mb, minimum_memory_mb);
+            assert_eq!(operation.max_runtime_seconds, max_runtime_seconds);
+            assert!(operation.required_capabilities.contains(&"cpu".to_string()));
+
+            let accepted = plan_local_task(operation_id, "fortress", 4096, &capabilities(false));
+            assert!(accepted.accepted, "{operation_id}: {}", accepted.reason);
+            let low_memory = plan_local_task(operation_id, "fortress", minimum_memory_mb - 1, &capabilities(false));
+            assert!(!low_memory.accepted, "{operation_id} must fail closed below its memory floor");
+            let remote = plan_local_task(operation_id, "worker", 4096, &capabilities(false));
+            assert!(!remote.accepted, "{operation_id} must remain local-only");
+        }
     }
 }
