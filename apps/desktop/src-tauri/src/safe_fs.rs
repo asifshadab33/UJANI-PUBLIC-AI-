@@ -3,35 +3,8 @@
 //! This module centralizes bounded no-follow directory traversal and platform-specific
 //! file opening; callers retain extension, content, size and task-specific error policy.
 use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
-#[cfg(any(unix, windows))]
+#[cfg(windows)]
 use std::fs::OpenOptions;
-
-/// Opens a regular file without following its final symlink/reparse point.
-pub(crate) fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
-    #[cfg(unix)]
-    let file = {
-        use std::os::unix::fs::OpenOptionsExt;
-        OpenOptions::new().read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path)?
-    };
-    #[cfg(windows)]
-    let file = {
-        use std::os::windows::fs::OpenOptionsExt;
-        // Open the reparse point itself so handle metadata can reject it.
-        OpenOptions::new().read(true).custom_flags(0x0020_0000).open(path)?
-    };
-    #[cfg(not(any(unix, windows)))]
-    let file = std::fs::File::open(path)?;
-
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || is_reparse_point(&metadata) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput,
-            "The selected path is not a regular non-reparse file."));
-    }
-    Ok(file)
-}
-
 
 
 /// Opens a file beneath a canonical selected root using handle-relative, no-follow
@@ -66,6 +39,38 @@ pub(crate) fn open_regular_file_under_root(
         Ok(unsafe { std::fs::File::from_raw_fd(fd) })
     }
 
+    // Linux O_PATH handles require search permission but not directory read
+    // permission. They remain valid dirfds for component-wise openat traversal.
+    // Other Unix targets retain O_RDONLY because O_PATH is Linux-specific.
+    fn directory_open_flags() -> i32 {
+        #[cfg(target_os = "linux")]
+        {
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        }
+    }
+
+    fn open_root_directory() -> io::Result<std::fs::File> {
+        #[cfg(target_os = "linux")]
+        {
+            let name = CString::new("/").expect("static root path has no NUL");
+            // SAFETY: name is NUL-terminated and remains alive for the call.
+            let fd = unsafe { libc::open(name.as_ptr(), directory_open_flags()) };
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: fd is a fresh descriptor returned by open and ownership is transferred.
+            Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            std::fs::File::open("/")
+        }
+    }
+
     if !root.is_absolute() || !path.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -93,14 +98,14 @@ pub(crate) fn open_regular_file_under_root(
         }
     }).peekable();
 
-    let mut directory = std::fs::File::open("/")?;
+    let mut directory = open_root_directory()?;
     while let Some(component) = components.next() {
         let name = component?;
         let final_component = components.peek().is_none();
         let flags = if final_component {
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
         } else {
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY
+            directory_open_flags()
         };
         let opened = open_at(&directory, name, flags)?;
         if final_component {
@@ -125,6 +130,52 @@ pub(crate) fn open_regular_file_under_root(
         io::ErrorKind::InvalidInput,
         "selected path does not name a file",
     ))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_search_only_ancestor_tests {
+    use super::open_regular_file_under_root;
+    use std::{
+        fs,
+        io::Read,
+        os::unix::fs::PermissionsExt,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn opens_through_searchable_but_unreadable_ancestor() {
+        // Root can bypass directory mode checks, so this regression must run as
+        // an unprivileged user (as on GitHub-hosted Linux runners).
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping permission regression when running as root");
+            return;
+        }
+
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base = std::env::temp_dir().join(format!("ujani-search-only-{nonce}"));
+        let shared = base.join("shared");
+        let selected = shared.join("project");
+        fs::create_dir_all(&selected).unwrap();
+        let path = selected.join("data.txt");
+        fs::write(&path, b"search-only ancestor").unwrap();
+
+        // The owner may traverse the shared directory but may not list/read it.
+        // Opening ancestors with O_RDONLY would fail; Linux O_PATH is sufficient.
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o111)).unwrap();
+        fs::set_permissions(&selected, fs::Permissions::from_mode(0o755)).unwrap();
+        let root = fs::canonicalize(&selected).unwrap();
+
+        let result = (|| {
+            let mut handle = open_regular_file_under_root(&root, &path)?;
+            let mut contents = Vec::new();
+            handle.read_to_end(&mut contents)?;
+            Ok::<_, std::io::Error>(contents)
+        })();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(&base).unwrap();
+
+        assert_eq!(result.unwrap(), b"search-only ancestor");
+    }
 }
 
 #[cfg(windows)]
@@ -425,6 +476,22 @@ pub(crate) fn open_regular_file_under_root(
     windows_handle::open_regular_file_under_root(root, path)
 }
 
+/// Best-effort fallback for targets without Unix/Windows handle-relative APIs.
+/// The caller performs canonical containment first; this check rejects links and
+/// non-regular files before opening, but cannot provide race-free handle-relative
+/// confinement on platforms without the required primitives.
+#[cfg(not(any(unix, windows)))]
+fn open_regular_file(path: &Path) -> io::Result<std::fs::File> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected path is not a regular non-symlink file",
+        ));
+    }
+    std::fs::File::open(path)
+}
+
 /// Non-Unix/non-Windows fallback retains final-component no-follow checks and verifies
 /// canonical containment. Windows uses native handle-relative traversal above.
 #[cfg(not(any(unix, windows)))]
@@ -459,7 +526,7 @@ pub(crate) fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::open_regular_file;
+    use super::open_regular_file_under_root;
     #[cfg(unix)]
     use super::is_reparse_point;
     use std::{fs, io::Read, time::{SystemTime, UNIX_EPOCH}};
@@ -471,11 +538,14 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let file = root.join("data.txt");
         fs::write(&file, b"local data").unwrap();
-        let mut handle = open_regular_file(&file).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let canonical_file = canonical_root.join("data.txt");
+        let mut handle =
+            open_regular_file_under_root(&canonical_root, &canonical_file).unwrap();
         let mut contents = Vec::new();
         handle.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"local data");
-        assert!(open_regular_file(&root).is_err());
+        assert!(open_regular_file_under_root(&canonical_root, &canonical_root).is_err());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -546,7 +616,8 @@ mod tests {
         let link = root.join("link.txt");
         fs::write(&target, b"secret").unwrap();
         symlink(&target, &link).unwrap();
-        assert!(open_regular_file(&link).is_err());
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        assert!(open_regular_file_under_root(&canonical_root, &canonical_root.join("link.txt")).is_err());
         assert!(is_reparse_point(&fs::symlink_metadata(&link).unwrap()));
         let _ = fs::remove_dir_all(root);
     }
@@ -612,6 +683,16 @@ pub(crate) fn walk_directory(
     options: WalkOptions,
     cancellation: &CancellationToken,
 ) -> Result<WalkResult, String> {
+    // The Windows handle-relative implementation intentionally supports local
+    // fixed/removable/RAM drives only. Validate this before either importer or
+    // search starts enumeration, so UNC and mapped network selections fail
+    // explicitly instead of becoming silently skipped/truncated results.
+    #[cfg(windows)]
+    let _validated_root = windows_handle::open_directory_path_no_reparse(selected_root)
+        .map_err(|error| format!(
+            "Cannot safely access the selected Windows folder: {error}"
+        ))?;
+
     let root_metadata = std::fs::symlink_metadata(selected_root)
         .map_err(|error| format!("Cannot inspect selected folder: {error}"))?;
     if is_reparse_point(&root_metadata) || !root_metadata.is_dir() {
@@ -724,9 +805,10 @@ pub(crate) fn walk_directory(
             if options.file_filter.is_some_and(|filter| !filter(&path)) {
                 continue;
             }
-            // Open the final path without following links before canonicalizing it.
-            // This closes the final-component symlink/reparse race at the file boundary.
-            let handle = match open_regular_file(&path) {
+            // Reopen from the selected root with handle-relative, no-follow traversal.
+            // A final-component no-follow open is insufficient if an ancestor is replaced
+            // after enumeration; pin every component again before trusting file metadata.
+            let handle = match open_regular_file_under_root(&root, &path) {
                 Ok(handle) => handle,
                 Err(error) if options.errors == WalkErrorPolicy::Reject || options.links == LinkPolicy::Reject => {
                     return Err(format!("Cannot safely open selected file: {error}"));
@@ -776,6 +858,37 @@ pub(crate) fn walk_directory(
 
 #[cfg(test)]
 mod walk_tests {
+    #[cfg(windows)]
+    #[test]
+    fn rejects_unsupported_network_and_device_roots_before_enumeration() {
+        let unsupported = [
+            r"\\server\share\folder",
+            r"\\?\UNC\server\share\folder",
+            r"\\.\PhysicalDrive0",
+            r"C:relative\folder",
+        ];
+        for value in unsupported {
+            let error = super::walk_directory(
+                std::path::Path::new(value),
+                super::WalkOptions {
+                    max_depth: 1,
+                    max_entries: 10,
+                    recursive: false,
+                    links: super::LinkPolicy::Reject,
+                    errors: super::WalkErrorPolicy::Reject,
+                    file_filter: None,
+                    max_duration: None,
+                },
+                &CancellationToken::new(),
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("Cannot safely access the selected Windows folder"),
+                "unsupported root should be rejected before enumeration: {value}: {error}"
+            );
+        }
+    }
+
     use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
     use tokio_util::sync::CancellationToken;
