@@ -121,6 +121,14 @@ fn settings_from_db(db: &Connection) -> Result<ReminderSettings, String> {
     })
 }
 
+fn ensure_capacity(current_count: i64) -> Result<(), String> {
+    if !(0..MAX_REMINDERS).contains(&current_count) {
+        Err("Local reminder limit reached. Delete an old reminder first.".into())
+    } else {
+        Ok(())
+    }
+}
+
 fn require_enabled(db: &Connection) -> Result<(), String> {
     if settings_from_db(db)?.enabled { Ok(()) }
     else { Err("Local reminders are disabled. Enable them before creating or changing reminders.".into()) }
@@ -263,7 +271,7 @@ fn create(app: AppHandle, title: String, notes: Option<String>, due_at_unix_ms: 
         require_enabled(&tx)?;
         let count: i64 = tx.query_row("SELECT COUNT(*) FROM local_reminders", [], |row| row.get(0))
             .map_err(|error| error.to_string())?;
-        if count >= MAX_REMINDERS { return Err("Local reminder limit reached. Delete an old reminder first.".into()); }
+        ensure_capacity(count)?;
         let key = reminder_key(count == 0)?;
         save_record(&tx, &key, &reminder)?;
         tx.commit().map_err(|error| error.to_string())?;
@@ -331,6 +339,9 @@ fn snooze(app: AppHandle, id: String, until_unix_ms: i64) -> Result<ReminderResp
         let key = reminder_key(false)?;
         let mut reminder = load_one(&tx, &key, &id)?;
         if reminder.state != ReminderState::Active { return Err("Completed reminders cannot be snoozed.".into()); }
+        if until_unix_ms <= reminder.effective_due_at_unix_ms() {
+            return Err("Snooze time must move the reminder later than its current due instant.".into());
+        }
         reminder.snoozed_until_unix_ms = Some(until_unix_ms);
         reminder.updated_at_unix_ms = now.max(reminder.updated_at_unix_ms);
         save_record(&tx, &key, &reminder)?;
@@ -482,7 +493,9 @@ mod tests {
         assert!(valid_id(&"x".repeat(97)).is_err());
         let item = reminder();
         assert!(item.validate().is_ok());
-        assert!(MAX_REMINDERS <= 500);
+        assert!(ensure_capacity(MAX_REMINDERS - 1).is_ok());
+        assert!(ensure_capacity(MAX_REMINDERS).is_err());
+        assert!(ensure_capacity(-1).is_err());
     }
 
     #[test]
