@@ -196,6 +196,15 @@ REQUIRED_ORDERED_MARKERS = {
         "blocking_pick_folder()",
         "require_selected_folder",
     ),
+    ("search_cache.rs", "store"): (
+        "with_local_state_receipt",
+        "transaction_with_behavior(TransactionBehavior::Immediate)",
+        "settings_from_db(&tx)",
+        "scope_for_path_in_transaction",
+        "tx.execute(",
+        "trim_cache(&tx",
+        "tx.commit()",
+    ),
 }
 
 REQUIRED_MARKERS = {
