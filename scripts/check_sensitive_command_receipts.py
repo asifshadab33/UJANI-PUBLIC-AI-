@@ -36,6 +36,13 @@ REQUIRED_POLICY_MARKERS = {
         "validate_security_provider_ids",
         "native_consent::confirm_native",
     ),
+    ("lib.rs", "execute_document_workflow"): (
+        "validate_document_workflow_content(&content)?;",
+        "register_active_task(&control, &task_id)?;",
+        "ensure_task_not_cancelled(&token)?;",
+        "run_managed_task_registered(",
+        "plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities)",
+    ),
     ("lib.rs", "execute_cloud_ai_task"): (
         "ujani_core::policy_gate::parse_data_class",
         "ujani_core::policy_gate::evaluate_registered_external_transfer",
@@ -214,6 +221,10 @@ REQUIRED_ORDERED_MARKERS = {
 }
 
 REQUIRED_MARKERS = {
+    ("lib.rs", "execute_local_ai_task"): (
+        'persist_receipt_or_warn("Local inference"',
+        "outcome: Some(outcome)",
+    ),
     ("lib.rs", "run_managed_task_registered"): (
         "execution_outcome(&result",
         "outcome: Some(outcome)",
