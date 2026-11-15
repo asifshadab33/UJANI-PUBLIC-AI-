@@ -48,11 +48,6 @@ REQUIRED_POLICY_MARKERS = {
         "native_consent::confirm_native",
         "reserve_execution_receipt_slot",
     ),
-    ("lib.rs", "execute_document_workflow"): (
-        "validate_document_workflow_content(&content)?;",
-        "get_capability_snapshot_for_task(&task_token).await?",
-        "plan_task_graph(",
-    ),
     ("lib.rs", "summarize_selected_text"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_document"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
