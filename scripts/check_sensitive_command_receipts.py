@@ -174,10 +174,10 @@ REQUIRED_ORDERED_MARKERS = {
     ("local_search.rs", "find_local_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
-        "run_selected_folder_preflight",
         "required_operations",
         '"file.search.local"',
         '"file.search.pdf_text"',
+        "run_selected_folder_preflight",
         "blocking_pick_folder()",
     ),
     ("everyday_tools.rs", "find_duplicate_files"): (
@@ -204,7 +204,7 @@ REQUIRED_MARKERS = {
         "outcome: Some(outcome)",
         "persist_receipt_or_warn",
     ),
-    ("lib.rs", "execute_document_workflow"): ("run_managed_task(",),
+    ("lib.rs", "execute_document_workflow"): ("run_managed_task_registered(",),
     ("lib.rs", "execute_cloud_ai_task"): (
         "execution_outcome(&result",
         "persist_receipt_or_warn(\"Cloud inference\"",
