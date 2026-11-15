@@ -169,3 +169,8 @@
 .reminder-item-actions button:disabled{opacity:.45;cursor:not-allowed}
 .reminder-footnote{display:block;margin-top:12px;color:#7f9084;font-size:9px;line-height:1.5}
 @media(max-width:620px){.reminder-form{grid-template-columns:1fr}.reminder-notes,.reminder-form-actions{grid-column:1}.reminder-consent{align-items:flex-start}.reminder-toggle{padding-top:2px}.reminder-item{gap:7px}.reminder-item-actions{gap:3px}.reminder-item-actions button{width:27px;height:27px}}
+
+.reminder-maintenance{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px}
+.reminder-maintenance small{color:#7f9084;font-size:9px;line-height:1.4}
+.reminder-maintenance button{display:flex;align-items:center;gap:6px;flex-shrink:0;border:1px solid #624746;background:#2c201f;color:#e6b7ad;border-radius:7px;padding:7px 9px;font-size:9px}
+.reminder-maintenance button:disabled{opacity:.45;cursor:not-allowed}
