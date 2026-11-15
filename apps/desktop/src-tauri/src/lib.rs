@@ -1025,7 +1025,8 @@ fn execution_outcome<T>(result: &Result<T, String>, timeout_marker: &str) -> Exe
         Err(error)
             if error
                 .to_ascii_lowercase()
-                .contains(&timeout_marker.to_ascii_lowercase()) =>
+                .contains(&timeout_marker.to_ascii_lowercase())
+                || error.to_ascii_lowercase().contains("stalled for") =>
         {
             ExecutionOutcome::TimedOut
         }
@@ -1068,6 +1069,10 @@ mod receipt_outcome_tests {
         );
         assert_eq!(
             execution_outcome::<()>(&Err("operation exceeded 95-second budget".into()), "95-second"),
+            ExecutionOutcome::TimedOut
+        );
+        assert_eq!(
+            execution_outcome::<()>(&Err("Local Ollama chat stream stalled for 35 seconds.".into()), "140-second"),
             ExecutionOutcome::TimedOut
         );
         assert_eq!(
@@ -1707,7 +1712,7 @@ async fn execute_local_ai_task(
         input_sha256: input_digest,
         output_sha256: local_ai_output_digest(
             result.as_ref().ok().map(|value| value.output.as_str()),
-            outcome.clone(),
+            outcome,
         ),
         started_at_unix_ms,
         completed_at_unix_ms,
@@ -1716,11 +1721,17 @@ async fn execute_local_ai_task(
         outcome: Some(outcome),
     };
     let receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
-    match &result {
-        Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
-        Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
-        Err(error) if error.contains("140-second") => emit_task_progress(&app, &task_id, "timed_out", error, 0),
-        Err(error) => emit_task_progress(&app, &task_id, "failed", error, 0),
+    match outcome {
+        ExecutionOutcome::Completed => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
+        ExecutionOutcome::Cancelled => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
+        ExecutionOutcome::TimedOut => {
+            let message = result.as_ref().err().map(String::as_str).unwrap_or("Local inference timed out.");
+            emit_task_progress(&app, &task_id, "timed_out", message, 0);
+        }
+        ExecutionOutcome::Failed => {
+            let message = result.as_ref().err().map(String::as_str).unwrap_or("Local inference failed.");
+            emit_task_progress(&app, &task_id, "failed", message, 0);
+        }
     }
     if let Some(message) = receipt_warning { emit_task_progress(&app, &task_id, "receipt_warning", &message, 100); }
     result
