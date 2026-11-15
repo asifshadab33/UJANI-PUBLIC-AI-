@@ -154,3 +154,12 @@ The document/PDF and translation commands now share the native task registry use
 - Read-only duplicate-file preview is implemented for a user-selected desktop folder. It groups same-size candidates and verifies content with SHA-256; traversal, file size, total hashed bytes, duplicate-group count and task duration are bounded. Symlinks/reparse points are skipped/rejected by the shared filesystem helpers. The feature never deletes, moves, renames or overwrites files.
 - Android currently returns an explicit unsupported result for folder duplicate scanning because Storage Access Framework integration is not yet implemented. Do not claim duplicate scanning works on Android.
 - This closes the initial Phase 1 slice of issue #44 for desktop only; remaining OS-backed utilities and the wider Everyday Tools roadmap in issue #46 remain open.
+
+
+## 2026-11-15 Self-Evolution patch-validation boundary
+
+- Main already contains the user-opt-in and approved-model policy, protected-path proposal validation, signed short-lived proposal approvals, and a SQLite-backed single-use approval-nonce store with reopen/replay regression coverage.
+- This change adds a pure validator that binds each exact add/modify/delete artifact, base-file digest and replacement content to the approved proposal digest and trusted workspace snapshot. It rejects stale snapshots, path/scope mismatches, duplicate or missing artifacts, unsafe text and oversized bundles.
+- Patch validation performs no filesystem writes, staging, code execution, installation or rollback. The host must obtain workspace hashes through a root-bound, no-follow filesystem reader. A validated bundle is data, not an install permit.
+- Staging in an isolated workspace, diff review, atomic installation, backup, rollback, build validation and release signing are not implemented. The action gate remains closed for staging and application.
+- Core crates, native runtime code, build scripts, CI workflows, dependency manifests and signing material remain outside the model's permitted change scope. No self-modification is enabled in production builds.
