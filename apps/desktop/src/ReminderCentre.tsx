@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { BellOff, CalendarClock, Check, Clock3, Pencil, Plus, Trash2 } from "lucide-react";
 
@@ -116,7 +116,7 @@ export default function ReminderCentre() {
     });
   }
 
-  async function saveReminder(event: React.FormEvent<HTMLFormElement>) {
+  async function saveReminder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const dueAt = new Date(dueInput).getTime();
     if (!Number.isFinite(dueAt) || dueAt <= 0) {
