@@ -93,6 +93,11 @@ REQUIRED_POLICY_MARKERS = {
         "run_selected_folder_preflight",
         '"file.large_files.preview"',
     ),
+    ("lib.rs", "get_selected_folder_capability_snapshot_for_task"): (
+        "ensure_task_not_cancelled",
+        "spawn_blocking",
+        "await_task_with_limits",
+    ),
     ("folder_import.rs", "collect_selected_folder"): (
         "collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)",
     ),
@@ -197,6 +202,7 @@ REQUIRED_ORDERED_MARKERS = {
         "require_selected_folder",
     ),
     ("search_cache.rs", "store"): (
+        "settings_from_db(&db)?.enabled",
         "with_local_state_receipt",
         "transaction_with_behavior(TransactionBehavior::Immediate)",
         "settings_from_db(&tx)",
@@ -299,6 +305,7 @@ def main() -> None:
             "pdf_pipeline_requires_parser_and_local_model_capabilities",
             "worker_and_partner_are_not_scheduled_by_the_local_policy",
             "cancellation_drops_the_in_flight_preflight_future",
+            "selected_folder_tools_do_not_require_ollama",
             "missing_capability_denies_before_folder_picker",
             "unknown_or_stale_capability_denies_before_folder_picker",
             "optional_pdf_search_requires_its_own_capability_before_picker",
