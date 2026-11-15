@@ -1520,18 +1520,22 @@ fn selected_folder_capability_snapshot(
 pub(crate) async fn get_selected_folder_capability_snapshot_for_task(
     token: &CancellationToken,
 ) -> Result<CapabilitySnapshot, String> {
+    ensure_task_not_cancelled(token)?;
+    let probe = tauri::async_runtime::spawn_blocking(|| {
+        let mut system = System::new();
+        system.refresh_memory();
+        Ok(selected_folder_capability_snapshot(
+            system.available_memory() / (1024 * 1024),
+            std::thread::available_parallelism().is_ok(),
+            !cfg!(target_os = "android"),
+        ))
+    });
     await_task_with_limits(
         token,
         Duration::from_secs(2),
         "Local file capability discovery exceeded its 2-second time budget.",
-        async {
-            let mut system = System::new();
-            system.refresh_memory();
-            Ok(selected_folder_capability_snapshot(
-                system.available_memory() / (1024 * 1024),
-                std::thread::available_parallelism().is_ok(),
-                !cfg!(target_os = "android"),
-            ))
+        async move {
+            probe.await.map_err(|error| format!("Local file capability worker failed: {error}"))?
         },
     ).await
 }
