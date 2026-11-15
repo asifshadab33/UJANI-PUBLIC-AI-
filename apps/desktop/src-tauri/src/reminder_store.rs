@@ -175,7 +175,7 @@ fn encrypt_record(key: &[u8; 32], reminder: &LocalReminder) -> Result<String, St
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid reminder encryption key.".to_string())?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let plaintext = Zeroizing::new(serde_json::to_vec(reminder).map_err(|error| format!("Could not encode local reminder: {error}"))?);
-    let encrypted = cipher.encrypt(&nonce, Payload { msg: &plaintext, aad: &aad(&reminder.id) })
+    let encrypted = cipher.encrypt(&nonce, Payload { msg: plaintext.as_slice(), aad: &aad(&reminder.id) })
         .map_err(|_| "Could not encrypt local reminder.".to_string())?;
     let mut payload = nonce.to_vec();
     payload.extend_from_slice(&encrypted);
@@ -191,7 +191,7 @@ fn decrypt_record(key: &[u8; 32], id: &str, value: &str) -> Result<LocalReminder
     let (nonce, ciphertext) = payload.split_at(12);
     let plaintext = Zeroizing::new(cipher.decrypt(Nonce::from_slice(nonce), Payload { msg: ciphertext, aad: &aad(id) })
         .map_err(|_| "Reminder authentication failed; the OS key may have changed or data was altered.".to_string())?);
-    let reminder: LocalReminder = serde_json::from_slice(&plaintext)
+    let reminder: LocalReminder = serde_json::from_slice(plaintext.as_slice())
         .map_err(|error| format!("Encrypted reminder payload is invalid: {error}"))?;
     if reminder.id != id { return Err("Reminder identifier does not match its encrypted record.".into()); }
     reminder.validate().map_err(|_| "Stored reminder failed validation.".to_string())?;
