@@ -47,6 +47,7 @@ pub enum ReminderRequest {
     Complete { id: String },
     Snooze { id: String, until_unix_ms: i64 },
     Delete { id: String },
+    ClearAll,
     Agenda { now_unix_ms: i64, horizon_ms: i64 },
 }
 
@@ -58,6 +59,7 @@ pub enum ReminderResponse {
     Reminder(LocalReminder),
     Agenda(Vec<LocalReminder>),
     Deleted,
+    Cleared { deleted: usize },
 }
 
 fn now_unix_ms() -> Result<i64, String> {
@@ -365,6 +367,19 @@ fn delete(app: AppHandle, id: String) -> Result<ReminderResponse, String> {
     })
 }
 
+fn clear_all(app: AppHandle) -> Result<ReminderResponse, String> {
+    let metadata = audit_metadata("clear_all", "all", None);
+    crate::with_local_state_receipt(&app, "reminder.clear_all", &metadata, || {
+        let mut db = open(&app)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+        let deleted = tx.execute("DELETE FROM local_reminders", [])
+            .map_err(|error| error.to_string())?;
+        tx.commit().map_err(|error| error.to_string())?;
+        let output = serde_json::to_vec(&("cleared", deleted)).map_err(|error| error.to_string())?;
+        Ok((ReminderResponse::Cleared { deleted }, output))
+    })
+}
+
 fn manage_blocking(app: AppHandle, request: ReminderRequest) -> Result<ReminderResponse, String> {
     match request {
         ReminderRequest::GetSettings => Ok(ReminderResponse::Settings(settings_from_db(&open(&app)?)?)),
@@ -396,6 +411,7 @@ fn manage_blocking(app: AppHandle, request: ReminderRequest) -> Result<ReminderR
         ReminderRequest::Complete { id } => complete(app, id),
         ReminderRequest::Snooze { id, until_unix_ms } => snooze(app, id, until_unix_ms),
         ReminderRequest::Delete { id } => delete(app, id),
+        ReminderRequest::ClearAll => clear_all(app),
         ReminderRequest::Agenda { now_unix_ms, horizon_ms } => {
             if now_unix_ms <= 0 || !(0..=MAX_AGENDA_HORIZON_MS).contains(&horizon_ms) {
                 return Err("Agenda time or horizon is invalid.".into());
