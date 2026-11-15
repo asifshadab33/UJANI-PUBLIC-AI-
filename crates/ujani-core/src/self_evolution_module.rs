@@ -1,9 +1,10 @@
 //! Optional user-controlled Self-Evolution module policy.
 //!
 //! Installing the optional module does not enable it. This evaluator permits
-//! local analysis and proposal preparation only. Staging and applying changes
-//! remain unavailable until a separate typed approval-and-replay host pipeline
-//! is integrated. This module performs no filesystem or process operations.
+//! local analysis and proposal preparation only. A typed approval verifier and durable single-use nonce store are integrated,
+//! and exact patch bundles can now be validated. Staging and applying changes
+//! remain unavailable until a host staging store and atomic rollback installer
+//! are reviewed. This module performs no filesystem or process operations.
 
 use std::collections::BTreeSet;
 
@@ -19,7 +20,7 @@ pub enum SelfEvolutionBlock {
     UserOptInRequired,
     ApprovedModelRequired,
     TrustedBuildEnvironmentRequired,
-    ApprovalPipelineUnavailable,
+    PatchWorkflowUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,12 +38,12 @@ pub struct SelfEvolutionUserSettings {
 pub struct SelfEvolutionPermission {
     pub may_analyse: bool,
     pub may_prepare_proposals: bool,
-    /// Always false until typed host approval and durable replay consumption
-    /// are wired into a separate, reviewed staging workflow.
+    /// Always false until the host staging store and atomic rollback installer
+    /// are integrated and reviewed.
     pub may_stage_approved_proposal: bool,
     /// Why analysis/proposal preparation is unavailable, if applicable.
     pub blocked_by: Option<SelfEvolutionBlock>,
-    /// Staging remains unavailable until the host approval pipeline is integrated.
+    /// Staging remains unavailable until a host patch workflow is integrated.
     pub staging_blocked_by: Option<SelfEvolutionBlock>,
 }
 
@@ -72,7 +73,7 @@ pub fn evaluate_self_evolution_permission(
         may_stage_approved_proposal: false,
         blocked_by,
         staging_blocked_by: Some(
-            blocked_by.unwrap_or(SelfEvolutionBlock::ApprovalPipelineUnavailable),
+            blocked_by.unwrap_or(SelfEvolutionBlock::PatchWorkflowUnavailable),
         ),
     }
 }
@@ -149,7 +150,7 @@ mod tests {
         assert_eq!(result.blocked_by, None);
         assert_eq!(
             result.staging_blocked_by,
-            Some(SelfEvolutionBlock::ApprovalPipelineUnavailable)
+            Some(SelfEvolutionBlock::PatchWorkflowUnavailable)
         );
     }
 }
