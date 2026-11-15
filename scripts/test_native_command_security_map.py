@@ -53,7 +53,6 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         source = """
         fn unrelated() {
             let quote = '"';
-            let escaped = '\\'';
         }
         fn guarded<'a>(value: &'a str) {
             if !debug_demo_commands_enabled() { return; }
