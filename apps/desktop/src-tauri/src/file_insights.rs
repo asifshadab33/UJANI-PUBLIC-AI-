@@ -46,30 +46,27 @@ pub async fn find_large_files(
     let registration = super::register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     super::ensure_task_not_cancelled(&token)?;
-    let snapshot = super::get_capability_snapshot_for_task(&token).await?;
-    super::ensure_task_not_cancelled(&token)?;
-    super::require_local_operation(&snapshot, "file.large_files.preview", "fortress")?;
-    super::ensure_task_not_cancelled(&token)?;
-    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to find large files.", 1);
-
+    let snapshot = super::get_capability_snapshot_for_task(&token).await;
+    super::emit_task_progress(&app, &task_id, "starting", "Checking local permissions and choosing a folder for large-file preview.", 1);
     let picker_app = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to find large files").blocking_pick_folder() else {
-            return Ok(None);
-        };
-        folder.into_path()
-            .map(Some)
-            .map_err(|_| "The selected folder is not a local filesystem path.".to_string())
-    })
-    .await
-    .map_err(|error| format!("Folder picker failed: {error}"))??;
-
+    let selected = super::run_selected_folder_preflight(
+        &token,
+        snapshot.as_ref().map_err(Clone::clone),
+        &["file.large_files.preview"],
+        move || tauri::async_runtime::spawn_blocking(move || {
+            let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to find large files").blocking_pick_folder() else {
+                return Ok(None);
+            };
+            folder.into_path()
+                .map(Some)
+                .map_err(|_| "The selected folder is not a local filesystem path.".to_string())
+        }),
+    )?;
+    let selected = selected.await.map_err(|error| format!("Folder picker failed: {error}"))??;
+    let folder = super::require_selected_folder(selected, "Folder selection cancelled. Nothing was scanned.")?;
     if token.is_cancelled() {
         return Err("Large-file scan cancelled by user.".into());
     }
-    let Some(folder) = selected else {
-        return Err("Folder selection cancelled. Nothing was scanned.".into());
-    };
     super::emit_task_progress(&app, &task_id, "scanning", "Reading file metadata in the selected folder.", 10);
 
     let worker_token = token.clone();
