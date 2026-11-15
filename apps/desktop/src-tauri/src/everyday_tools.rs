@@ -65,19 +65,13 @@ pub async fn find_duplicate_files(
     control: State<'_, super::TaskControlState>,
     task_id: String,
 ) -> Result<DuplicateScanResult, String> {
-    if !super::valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
-    }
-
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
+    let registration = super::register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    super::ensure_task_not_cancelled(&token)?;
+    let snapshot = super::get_capability_snapshot_for_task(&token).await?;
+    super::ensure_task_not_cancelled(&token)?;
+    super::require_local_operation(&snapshot, "file.duplicates.preview", "fortress")?;
+    super::ensure_task_not_cancelled(&token)?;
     super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to scan for duplicate files.", 1);
 
     let picker_app = app.clone();
