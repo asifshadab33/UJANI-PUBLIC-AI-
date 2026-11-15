@@ -20,10 +20,17 @@ class CommandTokenTests(unittest.TestCase):
             ["command_one", "module::command_two"],
         )
 
-    def test_does_not_treat_comment_text_as_registered_commands(self):
-        self.assertEqual(command_tokens("command_one, // command_two\nmodule::command_three"), [
-            "command_one", "module::command_three"
-        ])
+    def test_does_not_treat_comments_or_literals_as_registered_commands(self):
+        source = r'''command_one, // command_two
+            "string_fake_command",
+            r#"raw_fake_command ]"#,
+            '"',
+            module::command_three
+        '''
+        self.assertEqual(
+            command_tokens(source),
+            ["command_one", "module::command_three"],
+        )
 
 
 class InventoryTableTests(unittest.TestCase):
