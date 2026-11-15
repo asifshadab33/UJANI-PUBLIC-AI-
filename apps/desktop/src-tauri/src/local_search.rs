@@ -169,24 +169,23 @@ pub async fn find_local_files(
     let registration = super::register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     super::ensure_task_not_cancelled(&token)?;
-    let snapshot = super::get_capability_snapshot_for_task(&token).await?;
-    super::ensure_task_not_cancelled(&token)?;
-    super::require_local_operation(&snapshot, "file.search.local", "fortress")?;
-    if search_pdf_text {
-        super::require_local_operation(&snapshot, "file.search.pdf_text", "fortress")?;
-    }
-    super::ensure_task_not_cancelled(&token)?;
-    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to search.", 1);
-
+    let snapshot = super::get_capability_snapshot_for_task(&token).await;
+    super::emit_task_progress(&app, &task_id, "starting", "Checking local permissions and choosing a folder.", 1);
     let picker_app = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
-        let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
-            return Ok(None);
-        };
-        let path = folder.into_path()
-            .map_err(|_| "The selected folder is not a local filesystem path.".to_string())?;
-        Ok(Some(path))
-    }).await.map_err(|e| format!("Folder picker failed: {e}"))??;
+    let selected = super::run_selected_folder_preflight(
+        &token,
+        snapshot.as_ref().map_err(Clone::clone),
+        if search_pdf_text { &["file.search.local", "file.search.pdf_text"] } else { &["file.search.local"] },
+        move || tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
+            let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
+                return Ok(None);
+            };
+            let path = folder.into_path()
+                .map_err(|_| "The selected folder is not a local filesystem path.".to_string())?;
+            Ok(Some(path))
+        }),
+    )?;
+    let selected = selected.await.map_err(|e| format!("Folder picker failed: {e}"))??;
 
     if token.is_cancelled() {
         return Err("File search cancelled by user.".into());
