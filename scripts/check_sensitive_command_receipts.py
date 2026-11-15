@@ -155,6 +155,15 @@ REQUIRED_ORDERED_MARKERS = {
         "crate::ensure_task_not_cancelled(&task_token)?;",
         "crate::run_managed_task_registered(",
     ),
+    ("lib.rs", "execute_document_workflow"): (
+        "validate_document_workflow_content(&content)?;",
+        "let registration = register_active_task(&control, &task_id)?;",
+        "ensure_task_not_cancelled(&token)?;",
+        "local_receipt_context(",
+        "run_managed_task_registered(",
+        "get_capability_snapshot_for_task(&task_token).await?",
+        "plan_task_graph(",
+    ),
 }
 
 REQUIRED_MARKERS = {
@@ -168,7 +177,7 @@ REQUIRED_MARKERS = {
         "outcome: Some(outcome)",
         "persist_receipt_or_warn",
     ),
-    ("lib.rs", "execute_document_workflow"): ("run_managed_task(",),
+    ("lib.rs", "execute_document_workflow"): ("run_managed_task_registered(",),
     ("lib.rs", "execute_cloud_ai_task"): (
         "execution_outcome(&result",
         "persist_receipt_or_warn(\"Cloud inference\"",
