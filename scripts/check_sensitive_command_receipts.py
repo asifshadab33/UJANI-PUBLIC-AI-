@@ -105,6 +105,9 @@ REQUIRED_ORDERED_MARKERS = {
         "await_task_with_limits(",
         "ollama::list_models()",
         "ensure_task_not_cancelled(&token)?;",
+        'execution_outcome(&result, "140-second")',
+        "outcome: Some(outcome)",
+        'persist_receipt_or_warn("Local inference"',
     ),
     ("lib.rs", "summarize_selected_text"): (
         "let registration = register_active_task(&control, &task_id)?;",
@@ -155,6 +158,11 @@ REQUIRED_ORDERED_MARKERS = {
 }
 
 REQUIRED_MARKERS = {
+    ("lib.rs", "execute_local_ai_task"): (
+        'execution_outcome(&result, "140-second")',
+        "outcome: Some(outcome)",
+        'persist_receipt_or_warn("Local inference"',
+    ),
     ("lib.rs", "run_managed_task_registered"): (
         "execution_outcome(&result",
         "outcome: Some(outcome)",
@@ -242,6 +250,7 @@ def main() -> None:
             "pdf_pipeline_requires_parser_and_local_model_capabilities",
             "worker_and_partner_are_not_scheduled_by_the_local_policy",
             "cancellation_drops_the_in_flight_preflight_future",
+            "local_ai_failure_receipt_digest_does_not_include_error_text",
         ),
         "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
         "security_store.rs": ("immediate_local_state_transaction_commits_and_rolls_back",),
