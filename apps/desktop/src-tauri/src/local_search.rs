@@ -172,10 +172,15 @@ pub async fn find_local_files(
     let snapshot = super::get_capability_snapshot_for_task(&token).await;
     super::emit_task_progress(&app, &task_id, "starting", "Checking local permissions and choosing a folder.", 1);
     let picker_app = app.clone();
+    let required_operations: &[&str] = if search_pdf_text {
+        &["file.search.local", "file.search.pdf_text"]
+    } else {
+        &["file.search.local"]
+    };
     let selected = super::run_selected_folder_preflight(
         &token,
         snapshot.as_ref().map_err(Clone::clone),
-        if search_pdf_text { &["file.search.local", "file.search.pdf_text"] } else { &["file.search.local"] },
+        required_operations,
         move || tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
             let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
                 return Ok(None);
