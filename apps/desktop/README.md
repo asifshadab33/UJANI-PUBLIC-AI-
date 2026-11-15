@@ -82,8 +82,8 @@ npm run tauri build
 ## Using local Ollama
 
 1. Install Ollama separately from its official distribution and start the service on the same device.
-2. Open UJANI's Local AI workspace and refresh Ollama status. UJANI-managed in-app model pulls are currently disabled. Install a model directly through your trusted Ollama interface or Ollama CLI, using the exact model identifier you reviewed, then refresh UJANI's model inventory.
-3. Review the model's size, license and hardware requirements before downloading. Downloads use your network and disk space and are performed by Ollama from its configured model registry.
+2. Open UJANI's Local AI workspace, refresh Ollama status, and review the candidate model's exact registry artifact, licence, download size, storage needs and device capability before installing anything.
+3. UJANI-managed in-app model pulls are currently disabled. If you choose to install the reviewed model, use your trusted Ollama interface or Ollama CLI directly, then refresh UJANI's model inventory. The installation uses your network and disk space through Ollama.
 4. Select the installed model and choose Fortress or Smart. Inference is sent only to `127.0.0.1:11434`; there is no cloud fallback.
 
 Ollama must remain bound to the local loopback interface. Do not expose its API to an untrusted network. Fortress here means no cloud AI transfer through UJANI; it does not currently apply an OS-level firewall rule, and the local Ollama HTTP service is still contacted over loopback.
