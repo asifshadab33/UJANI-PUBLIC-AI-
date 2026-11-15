@@ -23,7 +23,7 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, sampl
             Use {choice.model} as my manual Ollama setup choice
           </button>
         )}
-        <small className="muted">This is a conservative starting recommendation, not a performance guarantee. Available-memory evidence older than five minutes is ignored. UJANI-managed downloads are currently disabled until exact artifact and Ollama storage preflight can be verified. Selecting a candidate only fills its name for manual setup; it does not download or select it for inference.</small>
+        <small className="muted">This is a conservative starting recommendation, not a performance guarantee. Available-memory evidence older than five minutes is ignored. Selecting a candidate only fills its model identifier into local setup; it does not install, download or select it for inference. UJANI-managed in-app model pulls are currently disabled because the native preflight cannot yet verify the exact upstream artifact and the Ollama daemon's actual model-store path and free space. If you choose to install a model, use your trusted Ollama interface or CLI directly, verify the exact registry artifact and licence, check available disk space, then refresh UJANI's model inventory. UJANI does not independently pin or verify the quantised artifact, publisher digest or final installed size.</small>
       </div>
       <p>These are optional model candidates. Exact artifact, quantisation, publisher, licence, digest, download size and disk-space requirements must be verified before any manual installation.</p>
       <div className="model-catalogue-list">
@@ -39,7 +39,7 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, sampl
             <p><b>Useful for:</b> {model.tasks.join(", ").replace(/_/g, " ")}.</p>
             <p><b>Candidate platforms:</b> Windows, macOS and Linux with a compatible, installed Ollama desktop runtime. Android and iOS are not supported by this desktop profile; UJANI must verify the exact runtime and architecture before recommending installation.</p>
             <p><b>Limitations:</b> {model.limitations.join(" ")}</p>
-            <p><b>Storage:</b> Exact download and installed sizes depend on the verified quantised artifact and will be shown before download.</p>
+            <p><b>Storage:</b> Exact download and installed sizes vary by registry artifact and quantisation. Check the current Ollama registry entry and local free disk space before installing directly through your trusted Ollama interface or CLI; the in-app pull is currently disabled and this catalogue does not yet provide a verified size estimate.</p>
             <p><b>Licence:</b> {model.license}</p>
             <small className="muted">Candidate only · {model.runtime_status.replace(/_/g, " ")} · RAM figures are advisory planning guidance, not a fit guarantee.</small>
           </details>
