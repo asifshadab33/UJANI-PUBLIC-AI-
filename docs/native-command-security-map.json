@@ -674,7 +674,7 @@
       "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
       "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
     },
-    "manage_local_reminders": {
+    "reminder_store::manage_local_reminders": {
       "classification": "encrypted_local_state_mutation",
       "capability": "reminder.local.manage",
       "scope": "User-authored one-time reminders, their validated identifiers, due instants and the local feature-enabled setting",
