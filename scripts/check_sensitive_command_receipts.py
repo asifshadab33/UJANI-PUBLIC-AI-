@@ -77,17 +77,20 @@ REQUIRED_POLICY_MARKERS = {
     ("local_search.rs", "find_local_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
         '"file.search.local"',
         '"file.search.pdf_text"',
     ),
     ("everyday_tools.rs", "find_duplicate_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
         '"file.duplicates.preview"',
     ),
     ("file_insights.rs", "find_large_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
         '"file.large_files.preview"',
     ),
     ("folder_import.rs", "collect_selected_folder"): (
@@ -171,6 +174,8 @@ REQUIRED_ORDERED_MARKERS = {
     ("local_search.rs", "find_local_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
+        "required_operations",
         '"file.search.local"',
         '"file.search.pdf_text"',
         "blocking_pick_folder()",
@@ -178,14 +183,18 @@ REQUIRED_ORDERED_MARKERS = {
     ("everyday_tools.rs", "find_duplicate_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
         '"file.duplicates.preview"',
         "blocking_pick_folder()",
+        "require_selected_folder",
     ),
     ("file_insights.rs", "find_large_files"): (
         "register_active_task",
         "get_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
         '"file.large_files.preview"',
         "blocking_pick_folder()",
+        "require_selected_folder",
     ),
 }
 
@@ -281,6 +290,13 @@ def main() -> None:
             "pdf_pipeline_requires_parser_and_local_model_capabilities",
             "worker_and_partner_are_not_scheduled_by_the_local_policy",
             "cancellation_drops_the_in_flight_preflight_future",
+            "missing_capability_denies_before_folder_picker",
+            "unknown_or_stale_capability_denies_before_folder_picker",
+            "optional_pdf_search_requires_its_own_capability_before_picker",
+            "capability_discovery_failure_denies_before_folder_picker",
+            "cancellation_before_picker_denies_without_side_effect",
+            "registered_local_preflight_invokes_picker_only_after_all_checks",
+            "missing_or_malformed_native_folder_scope_fails_before_traversal",
         ),
         "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
         "security_store.rs": ("immediate_local_state_transaction_commits_and_rolls_back",),
