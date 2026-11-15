@@ -155,9 +155,11 @@ export default function ReminderCentre() {
     });
   }
 
-  async function snoozeReminder(id: string) {
+  async function snoozeReminder(reminder: LocalReminder) {
     await run(async () => {
-      const response = await manage({ action: "snooze", id, until_unix_ms: Date.now() + 60 * 60 * 1000 });
+      const currentDue = reminder.snoozed_until_unix_ms ?? reminder.due_at_unix_ms;
+      const until = Math.max(Date.now(), currentDue) + 60 * 60 * 1000;
+      const response = await manage({ action: "snooze", id: reminder.id, until_unix_ms: until });
       if (response.kind !== "reminder") throw new Error("Reminder could not be snoozed.");
     });
   }
@@ -239,7 +241,7 @@ export default function ReminderCentre() {
               <div className="reminder-item-actions">
                 {settings?.enabled && reminder.state === "active" && <>
                   <button type="button" title="Edit reminder" aria-label={"Edit " + reminder.title} disabled={busy} onClick={() => beginEdit(reminder)}><Pencil size={14}/></button>
-                  <button type="button" title="Snooze one hour" aria-label={"Snooze " + reminder.title + " for one hour"} disabled={busy} onClick={() => void snoozeReminder(reminder.id)}><Clock3 size={14}/></button>
+                  <button type="button" title="Snooze one hour" aria-label={"Snooze " + reminder.title + " for one hour"} disabled={busy} onClick={() => void snoozeReminder(reminder)}><Clock3 size={14}/></button>
                   <button type="button" title="Mark complete" aria-label={"Complete " + reminder.title} disabled={busy} onClick={() => void completeReminder(reminder.id)}><Check size={14}/></button>
                 </>}
                 <button type="button" title="Delete reminder" aria-label={"Delete " + reminder.title} disabled={busy} onClick={() => void deleteReminder(reminder.id)}><Trash2 size={14}/></button>
