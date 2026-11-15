@@ -387,6 +387,31 @@ async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
 #[derive(Serialize)]
 struct WorkflowExecutionResult { plan: TaskGraphPlan, result: task_engine::DocumentPipelineResult }
 
+const MAX_DOCUMENT_WORKFLOW_CONTENT_BYTES: usize = 256 * 1024;
+
+/// Enforces the workflow input bound before hashing, task scheduling or model/runtime probes.
+fn validate_document_workflow_content(content: &str) -> Result<(), String> {
+ if content.len() > MAX_DOCUMENT_WORKFLOW_CONTENT_BYTES {
+  return Err("Workflow input exceeds the 256 KiB document limit.".into());
+ }
+ Ok(())
+}
+
+#[cfg(test)]
+mod document_workflow_input_tests {
+ use super::{validate_document_workflow_content, MAX_DOCUMENT_WORKFLOW_CONTENT_BYTES};
+
+ #[test]
+ fn document_workflow_content_limit_is_checked_before_processing() {
+  assert!(validate_document_workflow_content(&"x".repeat(MAX_DOCUMENT_WORKFLOW_CONTENT_BYTES)).is_ok());
+  assert_eq!(
+   validate_document_workflow_content(&"x".repeat(MAX_DOCUMENT_WORKFLOW_CONTENT_BYTES + 1)),
+   Err("Workflow input exceeds the 256 KiB document limit.".into())
+  );
+ }
+}
+
+
 /// Validates and executes only the fixed local analyse → summarise → optional translate workflow.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Preserve the stable named Tauri IPC argument contract.
@@ -400,33 +425,45 @@ async fn execute_document_workflow(
  model: String,
  translation_language: Option<String>,
 ) -> Result<WorkflowExecutionResult, String> {
+ // Reject oversized input before hashing it or scheduling work; register early so
+ // duplicate IDs and cancellation are enforced across capability discovery too.
+ validate_document_workflow_content(&content)?;
+ let registration = register_active_task(&control, &task_id)?;
+ let token = registration.token.clone();
+ ensure_task_not_cancelled(&token)?;
+ let task_token = token.clone();
  let language = translation_language.as_deref().unwrap_or("");
  let receipt = local_receipt_context(
   "document.workflow",
   &model,
   &[file_name.as_bytes(), content.as_bytes(), mode.as_bytes(), language.as_bytes()],
  )?;
- run_managed_task(app, &control, task_id, "Document workflow", receipt, NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]), async move {
-  if content.len() > 256 * 1024 {
-   return Err("Workflow input exceeds the 256 KiB document limit.".into());
-  }
-  if mode != "fortress" && mode != "smart" {
-   return Err("Executable document workflows are local-only (Fortress or Smart).".into());
-  }
-  let snapshot = get_capability_snapshot().await?;
-  let graph = TaskGraph { schema_version: 1, nodes: vec![
-   TaskNode { id: "analyse".into(), operation_id: "file.analyze_text".into(), depends_on: vec![] },
-   TaskNode { id: "summarise".into(), operation_id: "document.summarize".into(), depends_on: vec!["analyse".into()] },
-   TaskNode { id: "translate".into(), operation_id: "translate.text".into(), depends_on: vec!["summarise".into()] },
-  ] };
-  let plan = plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities);
-  if !plan.accepted {
-   return Err(format!("Workflow preflight rejected execution: {}", plan.reason));
-  }
-  // Only the fixed validated sequence is executable; arbitrary graph data is never interpreted as code.
-  let result = LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await?;
-  Ok(WorkflowExecutionResult { plan, result })
- }).await
+ run_managed_task_registered(
+  app,
+  task_id,
+  "Document workflow",
+  receipt,
+  NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+  async move {
+   if mode != "fortress" && mode != "smart" {
+    return Err("Executable document workflows are local-only (Fortress or Smart).".into());
+   }
+   let snapshot = get_capability_snapshot_for_task(&task_token).await?;
+   let graph = TaskGraph { schema_version: 1, nodes: vec![
+    TaskNode { id: "analyse".into(), operation_id: "file.analyze_text".into(), depends_on: vec![] },
+    TaskNode { id: "summarise".into(), operation_id: "document.summarize".into(), depends_on: vec!["analyse".into()] },
+    TaskNode { id: "translate".into(), operation_id: "translate.text".into(), depends_on: vec!["summarise".into()] },
+   ] };
+   let plan = plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities);
+   if !plan.accepted {
+    return Err(format!("Workflow preflight rejected execution: {}", plan.reason));
+   }
+   // Only the fixed validated sequence is executable; arbitrary graph data is never interpreted as code.
+   let result = LocalTaskEngine::process_document(file_name, content, mode, model, translation_language).await?;
+   Ok(WorkflowExecutionResult { plan, result })
+  },
+  registration,
+ ).await
 }
 
 
@@ -1303,24 +1340,6 @@ pub(crate) async fn get_capability_snapshot_for_task(
         "Local capability discovery exceeded its 8-second time budget.",
         get_capability_snapshot(),
     ).await
-}
-
-/// Registers and executes a managed task with cancellation, resource admission, and provenance handling.
-async fn run_managed_task<T, F>(
-    app: AppHandle,
-    control: &TaskControlState,
-    task_id: String,
-    label: &'static str,
-    receipt_context: LocalReceiptContext,
-    network_activity: NetworkActivity,
-    future: F,
-) -> Result<T, String>
-where
-    T: Serialize,
-    F: std::future::Future<Output = Result<T, String>>,
-{
-    let registration = register_active_task(control, &task_id)?;
-    run_managed_task_registered(app, task_id, label, receipt_context, network_activity, future, registration).await
 }
 
 /// Runs a task using an existing cancellation registration through admission, execution, and receipt handling.
