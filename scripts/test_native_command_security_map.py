@@ -49,6 +49,30 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         source = 'alpha, "fake::command", r#"other::fake"#, beta'
         self.assertEqual(command_tokens(source), ["alpha", "beta"])
 
+    def test_character_literals_are_masked_without_masking_lifetimes(self):
+        source = """
+        fn unrelated() {
+            let quote = '"';
+            let escaped = '\\'';
+        }
+        fn guarded<'a>(value: &'a str) {
+            if !debug_demo_commands_enabled() { return; }
+            let _ = value;
+        }
+        """
+        cleaned = __import__("check_native_command_security_map").strip_rust_noncode(source)
+        self.assertNotIn('"', cleaned)
+        self.assertIn("&'a str", cleaned)
+        self.assertEqual(
+            missing_demo_command_guards(
+                source + """
+                fn list_local_models() { if !debug_demo_commands_enabled() { return; } }
+                fn run_local_model_task() { if !debug_demo_commands_enabled() { return; } }
+                """
+            ),
+            ["run_local_task"],
+        )
+
     def test_unterminated_comment_fails_closed(self):
         with self.assertRaises(ValueError):
             find_matching_delimiter("call(/* never closes", 4, "(", ")")
