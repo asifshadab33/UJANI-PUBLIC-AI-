@@ -24,7 +24,7 @@ class CommandTokenTests(unittest.TestCase):
         source = r'''command_one, // command_two
             "string_fake_command",
             r#"raw_fake_command ]"#,
-            '\\"',
+            '"',
             module::command_three
         '''
         self.assertEqual(
