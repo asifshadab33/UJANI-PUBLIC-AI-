@@ -269,7 +269,7 @@ export default function ReminderCentre() {
           ))}
         </div>
       )}
-      <small className="reminder-footnote">This first release supports one-time reminders and manual snoozing only. Recurrence, strict IANA timezone/DST validation, OS notifications and calendar/email integrations remain future work and are not silently simulated.</small>
+      <small className="reminder-footnote">This first release supports one-time reminders and manual snoozing only. Recurrence, strict IANA timezone/DST validation, OS notifications and calendar/email integrations remain future work and are not silently simulated. Key rotation, backup and recovery are not yet implemented; if the OS vault key is lost, saved reminders cannot be recovered, but their encrypted rows can still be cleared.</small>
     </section>
   );
 }
