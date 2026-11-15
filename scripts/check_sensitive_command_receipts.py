@@ -289,7 +289,7 @@ def main() -> None:
 
     required_tests = {
         "search_cache.rs": (
-            "cache_store_receipt_input_is_digest_only_and_scope_specific",
+            "cache_store_receipt_input_uses_only_non_sensitive_flags",
         ),
         "lib.rs": (
             "managed_task_outcomes_are_classified_for_receipts",
