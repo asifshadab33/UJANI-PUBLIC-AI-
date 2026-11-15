@@ -209,6 +209,37 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     })
 }
 
+/// Runs local policy/capability checks before invoking a selected-folder side effect.
+/// The callback is deliberately lazy: denied, cancelled or unavailable preflight never starts the OS picker.
+pub(crate) fn run_selected_folder_preflight<T>(
+    token: &CancellationToken,
+    snapshot: Result<&CapabilitySnapshot, String>,
+    operation_ids: &[&str],
+    start_picker: impl FnOnce() -> T,
+) -> Result<T, String> {
+    ensure_task_not_cancelled(token)?;
+    let snapshot = snapshot?;
+    ensure_task_not_cancelled(token)?;
+    for operation_id in operation_ids {
+        require_local_operation(snapshot, operation_id, "fortress")?;
+    }
+    ensure_task_not_cancelled(token)?;
+    Ok(start_picker())
+}
+
+/// Converts a native picker result into a required selected-folder scope.
+/// A missing selection and an unconvertible/non-local path both fail before traversal.
+pub(crate) fn require_selected_folder<T>(
+    selected: Result<Option<T>, String>,
+    cancelled_message: &str,
+) -> Result<T, String> {
+    match selected {
+        Ok(Some(folder)) => Ok(folder),
+        Ok(None) => Err(cancelled_message.to_string()),
+        Err(error) => Err(error),
+    }
+}
+
 /// Enforce the shared local capability plan before a sensitive local inference begins.
 /// A successful plan is only a preflight; the managed-task resource reservation still follows.
 pub(crate) fn require_local_operation(
@@ -231,6 +262,103 @@ pub(crate) fn require_local_operation(
     Ok(())
 }
 
+
+#[cfg(test)]
+mod selected_folder_preflight_regressions {
+    use super::*;
+    use std::cell::Cell;
+
+    fn snapshot(capabilities: Vec<CapabilityRecord>, available_memory_mb: u64) -> CapabilitySnapshot {
+        CapabilitySnapshot { capabilities, operations: registered_operations(), available_memory_mb }
+    }
+
+    fn capability(id: &str, state: CapabilityState) -> CapabilityRecord {
+        CapabilityRecord {
+            id: id.into(), category: "test".into(), state,
+            source: "synthetic regression fixture".into(), detail: "not device telemetry".into(),
+        }
+    }
+
+    fn cpu_ready() -> Vec<CapabilityRecord> {
+        vec![capability("cpu", CapabilityState::Available)]
+    }
+
+    #[test]
+    fn missing_capability_denies_before_folder_picker() {
+        let snapshot = snapshot(Vec::new(), 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.search.local"], || picker_started.set(true));
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn unknown_or_stale_capability_denies_before_folder_picker() {
+        let snapshot = snapshot(vec![capability("cpu", CapabilityState::Unknown)], 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.duplicates.preview"], || picker_started.set(true));
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn optional_pdf_search_requires_its_own_capability_before_picker() {
+        let snapshot = snapshot(cpu_ready(), 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(
+            &token, Ok(&snapshot), &["file.search.local", "file.search.pdf_text"],
+            || picker_started.set(true),
+        );
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn capability_discovery_failure_denies_before_folder_picker() {
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(
+            &token, Err("capability discovery unavailable".into()), &["file.large_files.preview"],
+            || picker_started.set(true),
+        );
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn cancellation_before_picker_denies_without_side_effect() {
+        let snapshot = snapshot(cpu_ready(), 4096);
+        let token = CancellationToken::new();
+        token.cancel();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.large_files.preview"], || picker_started.set(true));
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn registered_local_preflight_invokes_picker_only_after_all_checks() {
+        let snapshot = snapshot(cpu_ready(), 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.large_files.preview"], || {
+            picker_started.set(true);
+            7usize
+        });
+        assert_eq!(result.unwrap(), 7);
+        assert!(picker_started.get());
+    }
+
+    #[test]
+    fn missing_or_malformed_native_folder_scope_fails_before_traversal() {
+        assert!(require_selected_folder::<()>(Ok(None), "Folder selection cancelled.").is_err());
+        assert!(require_selected_folder::<()>(Err("The selected folder is not a local filesystem path.".into()), "Folder selection cancelled.").is_err());
+        assert_eq!(require_selected_folder(Ok(Some(7usize)), "Folder selection cancelled.").unwrap(), 7);
+    }
+}
 
 /// Returns the bounded, built-in tool catalogue. Listing metadata never executes a tool or grants permissions.
 #[tauri::command]
