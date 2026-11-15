@@ -421,7 +421,26 @@ pub async fn chat(
 /// Stream local chat deltas from Ollama's NDJSON response. The callback receives
 /// plain text only; output and per-event sizes are bounded before forwarding.
 /// Streams bounded local Ollama chat deltas with per-event, total-output, and idle-time limits.
+/// Stream local chat deltas from Ollama's NDJSON response. The managed-task
+/// caller cancels by dropping this future; dropping the response closes the
+/// in-flight HTTP body rather than waiting for another progress event.
 pub async fn chat_stream<F>(
+    model: &str,
+    system: Option<&str>,
+    turns: &[Turn<'_>],
+    on_chunk: F,
+) -> Result<String, String>
+where
+    F: FnMut(&str),
+{
+    chat_stream_with_client(client()?, BASE_URL, model, system, turns, on_chunk).await
+}
+
+/// Private transport seam so cancellation of the production chat future can be
+/// verified against a real HTTP response stream without contacting a user service.
+async fn chat_stream_with_client<F>(
+    client: &reqwest::Client,
+    base_url: &str,
     model: &str,
     system: Option<&str>,
     turns: &[Turn<'_>],
@@ -432,7 +451,11 @@ where
 {
     const MAX_STREAM_EVENT_BYTES: usize = 64 * 1024;
     let body = build_chat_body(model, system, turns, true)?;
-    let response = client()?.post(format!("{BASE_URL}/api/chat")).json(&body).send().await
+    let response = client
+        .post(format!("{base_url}/api/chat"))
+        .json(&body)
+        .send()
+        .await
         .map_err(|error| format!("Local Ollama streaming request failed: {error}"))?;
     if !response.status().is_success() {
         return Err(format!("Local Ollama returned HTTP {} while starting chat.", response.status()));
@@ -897,6 +920,102 @@ mod tests {
         let cpu = RunningModels { models: vec![RunningModel { size_vram: 0 }] };
         assert_eq!(cpu.models.iter().fold(0_u64, |total, m| total.saturating_add(m.size_vram)), 0);
     } 
+    #[tokio::test]
+    async fn cancelling_chat_drops_the_active_http_response_stream() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            let mut header_end = None;
+            let mut content_length = 0usize;
+            loop {
+                let count = stream.read(&mut buffer).await.unwrap();
+                if count == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if header_end.is_none() {
+                    if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&request[..position]);
+                        content_length = header.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        }).unwrap_or(0);
+                        header_end = Some(position + 4);
+                    }
+                }
+                if header_end.is_some_and(|end| request.len() >= end.saturating_add(content_length)) {
+                    break;
+                }
+            }
+
+            let event = b"{\"message\":{\"role\":\"assistant\",\"content\":\"first\"},\"done\":false}\n";
+            let response_header = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n{:X}\r\n",
+                event.len()
+            );
+            stream.write_all(response_header.as_bytes()).await.unwrap();
+            stream.write_all(event).await.unwrap();
+            stream.write_all(b"\r\n").await.unwrap();
+            stream.flush().await.unwrap();
+
+            // The response deliberately remains incomplete. The client must close
+            // the body when its managed-task cancellation future wins the select.
+            let mut probe = [0_u8; 1];
+            let closed = match tokio::time::timeout(Duration::from_secs(3), stream.read(&mut probe)).await {
+                Ok(Ok(0)) | Ok(Err(_)) => true,
+                _ => false,
+            };
+            let _ = closed_tx.send(closed);
+        });
+
+        let client = build_client(Some(Duration::from_secs(30))).unwrap();
+        let base_url = format!("http://{address}");
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel();
+        let stream_task = tokio::spawn(async move {
+            let turns = [Turn { role: "user", content: "hello" }];
+            tokio::select! {
+                biased;
+                _ = worker_cancellation.cancelled() => Err("Task cancelled by user.".to_string()),
+                result = chat_stream_with_client(
+                    &client,
+                    &base_url,
+                    "llama3.2",
+                    None,
+                    &turns,
+                    move |delta| { let _ = delta_tx.send(delta.to_string()); },
+                ) => result,
+            }
+        });
+
+        let first_delta = tokio::time::timeout(Duration::from_secs(3), delta_rx.recv())
+            .await.unwrap().unwrap();
+        assert_eq!(first_delta, "first");
+        cancellation.cancel();
+
+        let result = tokio::time::timeout(Duration::from_secs(3), stream_task)
+            .await.unwrap().unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), closed_rx)
+                .await.unwrap().unwrap(),
+            "cancellation must close the in-flight Ollama HTTP response"
+        );
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn pull_cancellation_aborts_a_pending_http_response() {
         use tokio::io::AsyncReadExt;
