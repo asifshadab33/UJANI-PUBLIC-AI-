@@ -55,7 +55,6 @@ REQUIRED_POLICY_MARKERS = {
         "native_consent::confirm_native",
         "reserve_execution_receipt_slot",
     ),
-    ("lib.rs", "execute_document_workflow"): ("plan_task_graph(",),
     ("lib.rs", "summarize_selected_text"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_document"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
@@ -136,6 +135,15 @@ REQUIRED_ORDERED_MARKERS = {
         "await_task_with_limits(",
         "ollama::list_models()",
         "ensure_task_not_cancelled(&token)?;",
+    ),
+    ("lib.rs", "execute_document_workflow"): (
+        "validate_document_workflow_content(&content)?;",
+        "register_active_task(&control, &task_id)?;",
+        "ensure_task_not_cancelled(&token)?;",
+        "local_receipt_context(",
+        "run_managed_task_registered(",
+        "get_capability_snapshot_for_task(&task_token).await?",
+        "plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities)",
     ),
     ("lib.rs", "summarize_selected_text"): (
         "let registration = register_active_task(&control, &task_id)?;",
@@ -222,8 +230,9 @@ REQUIRED_ORDERED_MARKERS = {
 
 REQUIRED_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): (
-        'persist_receipt_or_warn("Local inference"',
+        "execution_outcome(&result",
         "outcome: Some(outcome)",
+        'persist_receipt_or_warn("Local inference"',
     ),
     ("lib.rs", "run_managed_task_registered"): (
         "execution_outcome(&result",
