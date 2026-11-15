@@ -183,7 +183,7 @@ export default function ReminderCentre() {
       <div className="reminder-consent">
         <div>
           <b>Local reminder storage</b>
-          <small>Off by default. Reminder titles and notes are encrypted with a key held in your operating-system credential vault. Turning this off stops new edits and agenda display; saved items remain encrypted until you delete them.</small>
+          <small>Off by default. Reminder titles and notes are encrypted with a key held in your operating-system credential vault. Turning this off stops new edits and upcoming-agenda results; saved items remain visible for deletion and encrypted until you delete them.</small>
         </div>
         <label className="reminder-toggle">
           <input
