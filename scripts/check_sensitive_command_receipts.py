@@ -131,9 +131,9 @@ REQUIRED_ORDERED_MARKERS = {
         "let registration = register_active_task(&control, &task_id)?;",
         "ensure_task_not_cancelled(&token)?;",
         "local_receipt_context(",
+        "run_managed_task_registered(",
         "get_capability_snapshot_for_task(&task_token).await?",
         "plan_task_graph(",
-        "run_managed_task_registered(",
     ),
     ("lib.rs", "process_selected_pdf"): (
         "let registration = register_active_task(&control, &task_id)?;",
