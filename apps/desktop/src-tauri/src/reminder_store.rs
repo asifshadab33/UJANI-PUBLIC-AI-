@@ -57,6 +57,7 @@ pub enum ReminderResponse {
     Settings(ReminderSettings),
     List(Vec<LocalReminder>),
     Reminder(LocalReminder),
+    ReminderSavedWithReceiptWarning { reminder: LocalReminder, warning: String },
     Agenda(Vec<LocalReminder>),
     Deleted,
     Cleared { deleted: usize },
@@ -267,7 +268,7 @@ fn create(app: AppHandle, title: String, notes: Option<String>, due_at_unix_ms: 
     };
     reminder.validate().map_err(|_| "Reminder details are invalid or exceed their limits.".to_string())?;
     let metadata = audit_metadata("create", &reminder.id, Some(reminder.due_at_unix_ms));
-    crate::with_local_state_receipt(&app, "reminder.create", &metadata, || {
+    let result = crate::with_local_state_receipt(&app, "reminder.create", &metadata, || {
         let mut db = open(&app)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
         require_enabled(&tx)?;
@@ -279,7 +280,23 @@ fn create(app: AppHandle, title: String, notes: Option<String>, due_at_unix_ms: 
         tx.commit().map_err(|error| error.to_string())?;
         let output = audit_metadata("created", &reminder.id, Some(reminder.due_at_unix_ms));
         Ok((ReminderResponse::Reminder(reminder.clone()), output))
-    })
+    });
+    match result {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            // Verify a committed row before returning success after receipt persistence fails.
+            let committed = open(&app).ok().and_then(|db| {
+                let key = reminder_key(false).ok()?;
+                load_one(&db, &key, &reminder.id).ok()
+            });
+            match committed {
+                Some(saved) if saved == reminder => Ok(
+                    ReminderResponse::ReminderSavedWithReceiptWarning { reminder: saved, warning: error }
+                ),
+                _ => Err(error),
+            }
+        }
+    }
 }
 
 fn update(app: AppHandle, id: String, title: String, notes: Option<String>, due_at_unix_ms: i64, timezone: String) -> Result<ReminderResponse, String> {
@@ -464,6 +481,10 @@ mod tests {
         db
     }
 
+    fn test_key() -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)))
+    }
+
     #[test]
     fn reminders_are_disabled_by_default_and_notification_delivery_is_off() {
         let db = memory_db();
@@ -473,7 +494,7 @@ mod tests {
 
     #[test]
     fn encrypted_record_round_trips_and_binds_identifier() {
-        let key = [7u8; 32];
+        let key = test_key();
         let item = reminder();
         let encrypted = encrypt_record(&key, &item).unwrap();
         assert!(encrypted.starts_with(CIPHER_PREFIX));
@@ -485,7 +506,7 @@ mod tests {
 
     #[test]
     fn ciphertext_tampering_fails_authentication() {
-        let key = [7u8; 32];
+        let key = test_key();
         let encrypted = encrypt_record(&key, &reminder()).unwrap();
         let mut bytes = B64.decode(encrypted.strip_prefix(CIPHER_PREFIX).unwrap()).unwrap();
         let last = bytes.len() - 1;
@@ -498,12 +519,13 @@ mod tests {
     fn database_persists_only_encrypted_reminder_payloads() {
         let mut db = memory_db();
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
-        save_record(&tx, &[7u8; 32], &reminder()).unwrap();
+        let key = test_key();
+        save_record(&tx, &key, &reminder()).unwrap();
         tx.commit().unwrap();
         let ciphertext: String = db.query_row("SELECT ciphertext FROM local_reminders WHERE id='r-test'", [], |row| row.get(0)).unwrap();
         assert!(!ciphertext.contains("Renew policy"));
         assert!(!ciphertext.contains("Check the renewal date"));
-        assert_eq!(load_all(&db, &[7u8; 32]).unwrap(), vec![reminder()]);
+        assert_eq!(load_all(&db, &key).unwrap(), vec![reminder()]);
     }
 
     #[test]
