@@ -1707,7 +1707,7 @@ async fn execute_local_ai_task(
         input_sha256: input_digest,
         output_sha256: local_ai_output_digest(
             result.as_ref().ok().map(|value| value.output.as_str()),
-            outcome,
+            outcome.clone(),
         ),
         started_at_unix_ms,
         completed_at_unix_ms,
