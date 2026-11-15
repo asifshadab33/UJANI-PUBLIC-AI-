@@ -393,6 +393,20 @@ pub fn load(
 }
 
 /// Persist a metadata-only result. Oversized, truncated or unavailable cache states are skipped.
+/// Returns digest-only receipt input; neither folder paths nor search phrases enter the ledger.
+fn cache_store_receipt_input(root: &Path, query: &str, search_pdf_text: bool, is_negative: bool) -> String {
+    let context = format!(
+        "UJANI-LOCAL-SEARCH-CACHE-STORE-V1\0{}\0{}\0{}\0{}",
+        root.display(),
+        query,
+        search_pdf_text,
+        is_negative,
+    );
+    super::sha256_hex(context.as_bytes())
+}
+
+/// Persist a metadata-only result. Oversized, truncated or unavailable cache states are skipped.
+/// When caching is enabled, reserve and persist a metadata-only execution receipt around the write.
 pub fn store(
     app: &AppHandle,
     root: &Path,
@@ -405,41 +419,55 @@ pub fn store(
     if inventory_json.len() > MAX_CACHE_ROW_BYTES || payload_json.len() > MAX_CACHE_ROW_BYTES {
         return Ok(());
     }
-    let mut db = open(app)?;
-    let settings = settings_from_db(&db)?;
-    if !settings.enabled { return Ok(()); }
-    let key = cache_key()?;
-    let scope_id = scope_for_path(&mut db, &key, root, true)?
-        .ok_or_else(|| "Could not register the selected local search scope.".to_string())?;
-    let request_key = request_key(&scope_id, query, search_pdf_text);
-    let encrypted_inventory = encrypt(&key, inventory_json.as_bytes(), &entry_aad(&scope_id, &request_key, "inventory"))?;
-    let encrypted_payload = encrypt(&key, payload_json.as_bytes(), &entry_aad(&scope_id, &request_key, "payload"))?;
-    let now = now_seconds()?;
-    let encrypted_query = encrypt(&key, query.as_bytes(), &entry_aad(&scope_id, &request_key, "query"))?;
-    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-    tx.execute(
-        "INSERT INTO search_cache(scope_id,request_key,inventory_ciphertext,payload_ciphertext,is_negative,created_at,last_access)
-         VALUES(?1,?2,?3,?4,?5,?6,?6)
-         ON CONFLICT(scope_id,request_key) DO UPDATE SET
-           inventory_ciphertext=excluded.inventory_ciphertext,
-           payload_ciphertext=excluded.payload_ciphertext,
-           is_negative=excluded.is_negative,
-           created_at=excluded.created_at,
-           last_access=excluded.last_access",
-        params![scope_id,request_key,encrypted_inventory,encrypted_payload,if is_negative {1} else {0},now]
-    ).map_err(|error| error.to_string())?;
-    tx.execute(
-        "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
-         VALUES(?1,?2,?3,?4,?5,?5)
-         ON CONFLICT(scope_id,request_key) DO UPDATE SET
-           encrypted_query=excluded.encrypted_query,
-           is_negative=excluded.is_negative,
-           created_at=excluded.created_at,
-           last_access=excluded.last_access",
-        params![scope_id,request_key,encrypted_query,if is_negative {1} else {0},now]
-    ).map_err(|error| error.to_string())?;
-    tx.commit().map_err(|error| error.to_string())?;
-    trim_cache(&db, &settings, now)
+    let enabled = {
+        let db = open(app)?;
+        settings_from_db(&db)?.enabled
+    };
+    if !enabled {
+        return Ok(());
+    }
+
+    let input_metadata = cache_store_receipt_input(root, query, search_pdf_text, is_negative);
+    crate::with_local_state_receipt(app, "search_cache.store", input_metadata.as_bytes(), || {
+        let mut db = open(app)?;
+        let settings = settings_from_db(&db)?;
+        if !settings.enabled {
+            return Ok(((), b"cache-disabled-before-write".to_vec()));
+        }
+        let key = cache_key()?;
+        let scope_id = scope_for_path(&mut db, &key, root, true)?
+            .ok_or_else(|| "Could not register the selected local search scope.".to_string())?;
+        let request_key = request_key(&scope_id, query, search_pdf_text);
+        let encrypted_inventory = encrypt(&key, inventory_json.as_bytes(), &entry_aad(&scope_id, &request_key, "inventory"))?;
+        let encrypted_payload = encrypt(&key, payload_json.as_bytes(), &entry_aad(&scope_id, &request_key, "payload"))?;
+        let now = now_seconds()?;
+        let encrypted_query = encrypt(&key, query.as_bytes(), &entry_aad(&scope_id, &request_key, "query"))?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
+        tx.execute(
+            "INSERT INTO search_cache(scope_id,request_key,inventory_ciphertext,payload_ciphertext,is_negative,created_at,last_access)
+             VALUES(?1,?2,?3,?4,?5,?6,?6)
+             ON CONFLICT(scope_id,request_key) DO UPDATE SET
+               inventory_ciphertext=excluded.inventory_ciphertext,
+               payload_ciphertext=excluded.payload_ciphertext,
+               is_negative=excluded.is_negative,
+               created_at=excluded.created_at,
+               last_access=excluded.last_access",
+            params![scope_id,request_key,encrypted_inventory,encrypted_payload,if is_negative {1} else {0},now]
+        ).map_err(|error| error.to_string())?;
+        tx.execute(
+            "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+             VALUES(?1,?2,?3,?4,?5,?5)
+             ON CONFLICT(scope_id,request_key) DO UPDATE SET
+               encrypted_query=excluded.encrypted_query,
+               is_negative=excluded.is_negative,
+               created_at=excluded.created_at,
+               last_access=excluded.last_access",
+            params![scope_id,request_key,encrypted_query,if is_negative {1} else {0},now]
+        ).map_err(|error| error.to_string())?;
+        tx.commit().map_err(|error| error.to_string())?;
+        trim_cache(&db, &settings, now)?;
+        Ok(((), b"encrypted-cache-upserted".to_vec()))
+    })
 }
 
 /// Returns cache preferences without blocking Tauri's main thread.
@@ -597,6 +625,20 @@ mod tests {
     }
 
     /// Confirms scope, query, content preference, provider and parser versions partition cache entries.
+    #[test]
+    fn cache_store_receipt_input_is_digest_only_and_scope_specific() {
+        let root = Path::new("/home/user/documents");
+        let digest = cache_store_receipt_input(root, "sensitive search phrase", false, false);
+        assert_eq!(digest.len(), 64);
+        assert!(!digest.contains("/home"));
+        assert!(!digest.contains("sensitive"));
+        assert_ne!(digest, cache_store_receipt_input(root, "different phrase", false, false));
+        assert_ne!(
+            digest,
+            cache_store_receipt_input(Path::new("/other/folder"), "sensitive search phrase", false, false)
+        );
+    }
+
     #[test]
     fn cache_keys_are_isolated_by_scope_query_preferences_and_versions() {
         let first = request_key("scope-a", "invoice", false);

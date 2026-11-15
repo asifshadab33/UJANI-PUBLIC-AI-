@@ -74,6 +74,22 @@ REQUIRED_POLICY_MARKERS = {
         '"file.analyze_text"',
         '"document.summarize"',
     ),
+    ("local_search.rs", "find_local_files"): (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        '"file.search.local"',
+        '"file.search.pdf_text"',
+    ),
+    ("everyday_tools.rs", "find_duplicate_files"): (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        '"file.duplicates.preview"',
+    ),
+    ("file_insights.rs", "find_large_files"): (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        '"file.large_files.preview"',
+    ),
     ("folder_import.rs", "collect_selected_folder"): (
         "collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)",
     ),
@@ -152,6 +168,25 @@ REQUIRED_ORDERED_MARKERS = {
         "crate::ensure_task_not_cancelled(&task_token)?;",
         "crate::run_managed_task_registered(",
     ),
+    ("local_search.rs", "find_local_files"): (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        '"file.search.local"',
+        '"file.search.pdf_text"',
+        "blocking_pick_folder()",
+    ),
+    ("everyday_tools.rs", "find_duplicate_files"): (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        '"file.duplicates.preview"',
+        "blocking_pick_folder()",
+    ),
+    ("file_insights.rs", "find_large_files"): (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        '"file.large_files.preview"',
+        "blocking_pick_folder()",
+    ),
 }
 
 REQUIRED_MARKERS = {
@@ -171,6 +206,7 @@ REQUIRED_MARKERS = {
         "outcome: Some(outcome)",
     ),
     ("folder_import.rs", "process_selected_folder"): ("run_managed_task_registered(",),
+    ("search_cache.rs", "store"): ("with_local_state_receipt", '"search_cache.store"'),
     ("search_cache.rs", "set_local_search_cache_settings"): ("with_local_state_receipt",),
     ("search_cache.rs", "clear_local_search_cache"): ("with_local_state_receipt",),
     ("history.rs", "set_task_history_enabled"): ("with_local_state_receipt",),
@@ -234,6 +270,9 @@ def main() -> None:
         )
 
     required_tests = {
+        "search_cache.rs": (
+            "cache_store_receipt_input_is_digest_only_and_scope_specific",
+        ),
         "lib.rs": (
             "managed_task_outcomes_are_classified_for_receipts",
             "failed_receipt_digest_does_not_include_error_text",
@@ -251,6 +290,10 @@ def main() -> None:
         for test_name in test_names:
             if test_name not in tests:
                 raise SystemExit(f"missing receipt/policy regression test in {path}: {test_name}")
+    core_capability_tests = (ROOT / "crates/ujani-core/src/capability.rs").read_text(encoding="utf-8")
+    if "selected_folder_operations_are_registered_and_resource_bounded" not in core_capability_tests:
+        raise SystemExit("missing selected-folder operation catalogue/resource regression test")
+
     policy_gate_tests = (ROOT / "crates/ujani-core/src/policy_gate.rs").read_text(encoding="utf-8")
     for test_name in (
         "data_classification_parser_rejects_unknown_and_unclassified_values",
