@@ -39,7 +39,7 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, sampl
             <p><b>Useful for:</b> {model.tasks.join(", ").replace(/_/g, " ")}.</p>
             <p><b>Candidate platforms:</b> Windows, macOS and Linux with a compatible, installed Ollama desktop runtime. Android and iOS are not supported by this desktop profile; UJANI must verify the exact runtime and architecture before recommending installation.</p>
             <p><b>Limitations:</b> {model.limitations.join(" ")}</p>
-            <p><b>Storage:</b> Exact download and installed sizes vary by registry artifact and quantisation. Check the current Ollama registry entry and local free disk space before using the separate download action; this catalogue does not yet provide a verified size estimate.</p>
+            <p><b>Storage:</b> Exact download and installed sizes vary by registry artifact and quantisation. Check the current Ollama registry entry and local free disk space before installing directly through your trusted Ollama interface or CLI; the in-app pull is currently disabled and this catalogue does not yet provide a verified size estimate.</p>
             <p><b>Licence:</b> {model.license}</p>
             <small className="muted">Candidate only · {model.runtime_status.replace(/_/g, " ")} · RAM figures are advisory planning guidance, not a fit guarantee.</small>
           </details>
