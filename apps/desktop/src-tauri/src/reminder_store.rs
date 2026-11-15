@@ -305,7 +305,7 @@ fn complete(app: AppHandle, id: String) -> Result<ReminderResponse, String> {
         let mut db = open(&app)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
         require_enabled(&tx)?;
-        let key = reminder_key()?;
+        let key = reminder_key(false)?;
         let mut reminder = load_one(&tx, &key, &id)?;
         reminder.state = ReminderState::Completed;
         reminder.snoozed_until_unix_ms = None;
@@ -328,7 +328,7 @@ fn snooze(app: AppHandle, id: String, until_unix_ms: i64) -> Result<ReminderResp
         let mut db = open(&app)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
         require_enabled(&tx)?;
-        let key = reminder_key()?;
+        let key = reminder_key(false)?;
         let mut reminder = load_one(&tx, &key, &id)?;
         if reminder.state != ReminderState::Active { return Err("Completed reminders cannot be snoozed.".into()); }
         reminder.snoozed_until_unix_ms = Some(until_unix_ms);
@@ -375,7 +375,7 @@ fn manage_blocking(app: AppHandle, request: ReminderRequest) -> Result<ReminderR
             let count: i64 = db.query_row("SELECT COUNT(*) FROM local_reminders", [], |row| row.get(0))
                 .map_err(|error| error.to_string())?;
             if count == 0 { return Ok(ReminderResponse::List(Vec::new())); }
-            let key = reminder_key()?;
+            let key = reminder_key(false)?;
             Ok(ReminderResponse::List(load_all(&db, &key)?))
         }
         ReminderRequest::Create { title, notes, due_at_unix_ms, timezone } =>
@@ -394,7 +394,7 @@ fn manage_blocking(app: AppHandle, request: ReminderRequest) -> Result<ReminderR
             let count: i64 = db.query_row("SELECT COUNT(*) FROM local_reminders", [], |row| row.get(0))
                 .map_err(|error| error.to_string())?;
             if count == 0 { return Ok(ReminderResponse::Agenda(Vec::new())); }
-            let key = reminder_key()?;
+            let key = reminder_key(false)?;
             let reminders = load_all(&db, &key)?;
             let agenda = upcoming_reminders(&reminders, now_unix_ms, horizon_ms)
                 .into_iter().cloned().collect();
