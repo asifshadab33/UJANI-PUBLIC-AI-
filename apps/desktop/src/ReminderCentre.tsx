@@ -19,6 +19,7 @@ type ReminderResponse =
   | { kind: "settings"; value: ReminderSettings }
   | { kind: "list"; value: LocalReminder[] }
   | { kind: "reminder"; value: LocalReminder }
+  | { kind: "reminder_saved_with_receipt_warning"; value: { reminder: LocalReminder; warning: string } }
   | { kind: "agenda"; value: LocalReminder[] }
   | { kind: "deleted" }
   | { kind: "cleared"; value: { deleted: number } };
@@ -61,6 +62,7 @@ export default function ReminderCentre() {
   const [dueInput, setDueInput] = useState(() => localDateTimeInput(Date.now() + 60 * 60 * 1000));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
@@ -86,12 +88,15 @@ export default function ReminderCentre() {
         setReminders(nextList.value);
       } catch (reason) {
         if (active) setError("Local reminders are unavailable: " + String(reason));
+      } finally {
+        if (active) setLoading(false);
       }
     })();
     return () => { active = false; };
   }, []);
 
   async function run(action: () => Promise<void>) {
+    if (loading) return;
     setBusy(true);
     setError(null);
     try {
@@ -134,7 +139,11 @@ export default function ReminderCentre() {
       const response = editingId
         ? await manage({ action: "update", id: editingId, ...common })
         : await manage({ action: "create", ...common });
-      if (response.kind !== "reminder") throw new Error("Reminder was not saved.");
+      if (response.kind === "reminder_saved_with_receipt_warning") {
+        setError("Reminder was saved, but its local audit receipt needs attention: " + response.value.warning);
+      } else if (response.kind !== "reminder") {
+        throw new Error("Reminder was not saved.");
+      }
       setEditingId(null);
       setTitle("");
       setNotes("");
@@ -203,7 +212,7 @@ export default function ReminderCentre() {
           <input
             type="checkbox"
             checked={settings?.enabled ?? false}
-            disabled={busy || settings === null}
+            disabled={busy || loading || settings === null}
             onChange={(event) => void toggleEnabled(event.target.checked)}
           />
           <span>{settings?.enabled ? "Enabled" : "Disabled"}</span>
@@ -213,7 +222,7 @@ export default function ReminderCentre() {
       {settings && (
         <div className="reminder-maintenance">
           <small>Saved reminders remain encrypted until deleted, even when the feature is disabled.</small>
-          <button type="button" disabled={busy} onClick={() => void clearAllReminders()}><Trash2 size={13}/> Clear all</button>
+          <button type="button" disabled={busy || loading} onClick={() => void clearAllReminders()}><Trash2 size={13}/> Clear all</button>
         </div>
       )}
 
@@ -221,22 +230,22 @@ export default function ReminderCentre() {
         <form className="reminder-form" onSubmit={saveReminder}>
           <label className="reminder-field">
             Reminder title
-            <input value={title} maxLength={160} required onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Renew vehicle insurance"/>
+            <input value={title} maxLength={160} required disabled={busy || loading} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Renew vehicle insurance"/>
           </label>
           <label className="reminder-field">
             Date and time
-            <input type="datetime-local" required value={dueInput} onChange={(event) => setDueInput(event.target.value)}/>
+            <input type="datetime-local" required value={dueInput} disabled={busy || loading} onChange={(event) => setDueInput(event.target.value)}/>
           </label>
           <label className="reminder-field reminder-notes">
             Notes (optional)
-            <textarea rows={2} maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Add a short note"/>
+            <textarea rows={2} maxLength={2000} value={notes} disabled={busy || loading} onChange={(event) => setNotes(event.target.value)} placeholder="Add a short note"/>
           </label>
           <div className="reminder-form-actions">
-            <button className="model-run" type="submit" disabled={busy || !title.trim()}>
+            <button className="model-run" type="submit" disabled={busy || loading || !title.trim()}>
               {editingId ? <Check size={14}/> : <Plus size={14}/>}
               {editingId ? "Save changes" : "Add reminder"}
             </button>
-            {editingId && <button className="reminder-secondary" type="button" disabled={busy} onClick={() => { setEditingId(null); setTitle(""); setNotes(""); }}>Cancel edit</button>}
+            {editingId && <button className="reminder-secondary" type="button" disabled={busy || loading} onClick={() => { setEditingId(null); setTitle(""); setNotes(""); }}>Cancel edit</button>}
           </div>
         </form>
       )}
@@ -259,11 +268,11 @@ export default function ReminderCentre() {
               </div>
               <div className="reminder-item-actions">
                 {settings?.enabled && reminder.state === "active" && <>
-                  <button type="button" title="Edit reminder" aria-label={"Edit " + reminder.title} disabled={busy} onClick={() => beginEdit(reminder)}><Pencil size={14}/></button>
-                  <button type="button" title="Snooze one hour" aria-label={"Snooze " + reminder.title + " for one hour"} disabled={busy} onClick={() => void snoozeReminder(reminder)}><Clock3 size={14}/></button>
-                  <button type="button" title="Mark complete" aria-label={"Complete " + reminder.title} disabled={busy} onClick={() => void completeReminder(reminder.id)}><Check size={14}/></button>
+                  <button type="button" title="Edit reminder" aria-label={"Edit " + reminder.title} disabled={busy || loading} onClick={() => beginEdit(reminder)}><Pencil size={14}/></button>
+                  <button type="button" title="Snooze one hour" aria-label={"Snooze " + reminder.title + " for one hour"} disabled={busy || loading} onClick={() => void snoozeReminder(reminder)}><Clock3 size={14}/></button>
+                  <button type="button" title="Mark complete" aria-label={"Complete " + reminder.title} disabled={busy || loading} onClick={() => void completeReminder(reminder.id)}><Check size={14}/></button>
                 </>}
-                <button type="button" title="Delete reminder" aria-label={"Delete " + reminder.title} disabled={busy} onClick={() => void deleteReminder(reminder.id)}><Trash2 size={14}/></button>
+                <button type="button" title="Delete reminder" aria-label={"Delete " + reminder.title} disabled={busy || loading} onClick={() => void deleteReminder(reminder.id)}><Trash2 size={14}/></button>
               </div>
             </article>
           ))}
