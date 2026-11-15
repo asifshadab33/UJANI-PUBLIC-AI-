@@ -123,10 +123,20 @@ fn pdf_worker_network_isolation_state() -> CapabilityState {
 /// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
-    let mut system = System::new();
-    system.refresh_cpu();
-    system.refresh_memory();
-    let cpu_available = std::thread::available_parallelism().is_ok();
+    // sysinfo probes are synchronous and may block on the host OS. Keep them off
+    // the async executor so cancellation and the task deadline can return.
+    let (logical_cpu_threads, available_memory_bytes) = tauri::async_runtime::spawn_blocking(|| {
+        let mut system = System::new();
+        system.refresh_memory();
+        let logical_cpu_threads = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(0);
+        (logical_cpu_threads, system.available_memory())
+    })
+    .await
+    .map_err(|error| format!("System capability probe worker failed: {error}"))?;
+    let cpu_available = logical_cpu_threads > 0;
+    let available_memory_mb = available_memory_bytes / (1024 * 1024);
     let ollama_available = ollama::is_available().await;
     let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
     let capabilities = vec![
@@ -134,13 +144,13 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             id: "cpu".into(), category: "compute".into(),
             state: if cpu_available { CapabilityState::Available } else { CapabilityState::Unavailable },
             source: "Rust standard library / OS".into(),
-            detail: format!("{} logical CPU threads reported by the OS", system.cpus().len()),
+            detail: format!("{logical_cpu_threads} logical CPU threads reported by the OS"),
         },
         CapabilityRecord {
             id: "memory".into(), category: "system".into(),
-            state: if system.available_memory() > 0 { CapabilityState::Available } else { CapabilityState::Unknown },
+            state: if available_memory_bytes > 0 { CapabilityState::Available } else { CapabilityState::Unknown },
             source: "sysinfo / OS".into(),
-            detail: format!("{} MiB currently available; varies with other applications", system.available_memory() / (1024 * 1024)),
+            detail: format!("{available_memory_mb} MiB currently available; varies with other applications"),
         },
         CapabilityRecord {
             id: "ollama.local".into(), category: "model_runtime".into(),
@@ -205,7 +215,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     ];
     Ok(CapabilitySnapshot {
         capabilities, operations: registered_operations(),
-        available_memory_mb: system.available_memory() / (1024 * 1024),
+        available_memory_mb,
     })
 }
 
