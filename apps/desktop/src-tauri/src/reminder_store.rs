@@ -5,7 +5,7 @@
 //! connect to calendar/email apps, or wake the device. Those are separate gates.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit, Payload},
+    aead::{Aead, AeadCore, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
