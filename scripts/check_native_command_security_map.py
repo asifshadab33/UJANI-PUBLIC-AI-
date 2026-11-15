@@ -19,6 +19,7 @@ CORE_POLICY_GATE = ROOT / "crates/ujani-core/src/policy_gate.rs"
 CORE_TASK_GRAPH = ROOT / "crates/ujani-core/src/task_graph.rs"
 APP_SOURCE = ROOT / "apps/desktop/src/App.tsx"
 FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
+REMINDER_STORE = ROOT / "apps/desktop/src-tauri/src/reminder_store.rs"
 
 
 def find_matching_delimiter(source: str, opening_index: int, opening: str, closing: str) -> int:
@@ -323,6 +324,24 @@ def main() -> int:
     )
     if folder_source and folder_source.find("register_active_task") > folder_source.find("blocking_pick_folder"):
         errors.append("folder import: task registration must precede the native folder picker")
+
+    # Reminder storage must stay encrypted, explicitly disabled by default and bounded.
+    require_tokens(
+        REMINDER_STORE,
+        (
+            "with_local_state_receipt",
+            "transaction_with_behavior(TransactionBehavior::Immediate)",
+            "require_enabled",
+            "encrypt_record",
+            "decrypt_record",
+            "MAX_REMINDERS",
+            "MAX_SNOOZE_MS",
+            "notifications_enabled: false",
+            "upcoming_reminders",
+        ),
+        errors,
+        "local reminder storage",
+    )
 
     if errors:
         print("Native command security-map check FAILED:")
