@@ -1038,9 +1038,18 @@ fn outcome_receipt_digest(domain: &str, outcome: ExecutionOutcome) -> String {
     sha256_hex(format!("{domain}:{outcome:?}").as_bytes())
 }
 
+/// Hash successful local output bytes or a stable outcome label for failures.
+/// Error text is deliberately excluded because it may contain paths or provider details.
+fn local_ai_output_digest(output: Option<&str>, outcome: ExecutionOutcome) -> String {
+    match output {
+        Some(output) => sha256_hex(output.as_bytes()),
+        None => outcome_receipt_digest("UJANI-LOCAL-TASK-OUTCOME-V1", outcome),
+    }
+}
+
 #[cfg(test)]
 mod receipt_outcome_tests {
-    use super::{execution_outcome, outcome_receipt_digest};
+    use super::{execution_outcome, local_ai_output_digest, outcome_receipt_digest};
     use ujani_core::{ExecutionOutcome, ExecutionReceipt, NetworkActivity, ReceiptExecutionLocation};
 
     #[test]
@@ -1075,6 +1084,17 @@ mod receipt_outcome_tests {
         assert_eq!(first, second);
         assert_ne!(first, cancelled);
         assert_eq!(first.len(), 64);
+    }
+
+    #[test]
+    fn local_ai_failure_receipt_digest_does_not_include_error_text() {
+        let first = local_ai_output_digest(None, ExecutionOutcome::Failed);
+        let second = local_ai_output_digest(None, ExecutionOutcome::Failed);
+        let cancelled = local_ai_output_digest(None, ExecutionOutcome::Cancelled);
+        let successful = local_ai_output_digest(Some("local output"), ExecutionOutcome::Completed);
+        assert_eq!(first, second);
+        assert_ne!(first, cancelled);
+        assert_ne!(first, successful);
     }
 
     #[test]
@@ -1660,32 +1680,42 @@ async fn execute_local_ai_task(
             }
         }
     };
-    let mut receipt_warning = None;
-    if let Ok(value) = &result {
-        let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?.as_millis() as u64;
-        let receipt = ExecutionReceipt {
-            schema_version: 2,
-            task_id: task_id.clone(),
-            operation_id: "local.ai.generate".into(),
-            location: match ollama::accelerator_observation().await.ok() {
-                Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
-                _ => ReceiptExecutionLocation::LocalUnverified,
-            },
-            adapter_id: "ollama.local".into(),
-            adapter_version: env!("CARGO_PKG_VERSION").into(),
-            model_id: Some(receipt_model_id),
-            model_version: Some("unknown".into()),
-            input_sha256: input_digest,
-            output_sha256: sha256_hex(value.output.as_bytes()),
-            started_at_unix_ms,
-            completed_at_unix_ms,
-            user_approval_id: None,
-            network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
-            outcome: None,
-        };
-        receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
-    }
+    let outcome = execution_outcome(&result, "140-second");
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let location = if outcome == ExecutionOutcome::Completed {
+        match ollama::accelerator_observation().await.ok() {
+            Some(observation) if observation.gpu_vram_allocated_bytes > 0 => ReceiptExecutionLocation::LocalGpu,
+            _ => ReceiptExecutionLocation::LocalUnverified,
+        }
+    } else {
+        ReceiptExecutionLocation::LocalUnverified
+    };
+    let receipt = ExecutionReceipt {
+        schema_version: 3,
+        task_id: task_id.clone(),
+        operation_id: "local.ai.generate".into(),
+        location,
+        adapter_id: "ollama.local".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: Some(receipt_model_id),
+        model_version: Some("unknown".into()),
+        input_sha256: input_digest,
+        output_sha256: local_ai_output_digest(
+            result.as_ref().ok().map(|value| value.output.as_str()),
+            outcome,
+        ),
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        user_approval_id: None,
+        network_activity: NetworkActivity::inferred(vec!["127.0.0.1:11434".into()]),
+        outcome: Some(outcome),
+    };
+    let receipt_warning = persist_receipt_or_warn("Local inference", receipt_slot, receipt);
     match &result {
         Ok(_) => emit_task_progress(&app, &task_id, "completed", "Local task completed.", 100),
         Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Task cancelled.", 0),
