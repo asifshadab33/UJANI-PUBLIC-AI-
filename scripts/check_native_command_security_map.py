@@ -136,7 +136,7 @@ def strip_rust_noncode(text: str) -> str:
         # literal such as '"' must not open a string that consumes later code.
         # The closing quote is required, so lifetimes like &'a str do not match.
         char_literal = re.match(
-            r"'(?:\\\\(?:u\\{[0-9A-Fa-f_]+\\}|x[0-9A-Fa-f]{2}|.)|[^\\\\'\\n])'",
+            r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'",
             text[index:],
         )
         if char_literal:
