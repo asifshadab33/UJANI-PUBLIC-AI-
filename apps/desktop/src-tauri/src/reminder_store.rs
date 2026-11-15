@@ -367,13 +367,16 @@ fn delete(app: AppHandle, id: String) -> Result<ReminderResponse, String> {
     })
 }
 
+fn clear_all_records(tx: &Transaction<'_>) -> Result<usize, String> {
+    tx.execute("DELETE FROM local_reminders", []).map_err(|error| error.to_string())
+}
+
 fn clear_all(app: AppHandle) -> Result<ReminderResponse, String> {
     let metadata = audit_metadata("clear_all", "all", None);
     crate::with_local_state_receipt(&app, "reminder.clear_all", &metadata, || {
         let mut db = open(&app)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|error| error.to_string())?;
-        let deleted = tx.execute("DELETE FROM local_reminders", [])
-            .map_err(|error| error.to_string())?;
+        let deleted = clear_all_records(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         let output = serde_json::to_vec(&("cleared", deleted)).map_err(|error| error.to_string())?;
         Ok((ReminderResponse::Cleared { deleted }, output))
@@ -512,6 +515,17 @@ mod tests {
         assert!(ensure_capacity(MAX_REMINDERS - 1).is_ok());
         assert!(ensure_capacity(MAX_REMINDERS).is_err());
         assert!(ensure_capacity(-1).is_err());
+    }
+
+    #[test]
+    fn clear_all_removes_encrypted_rows_without_needing_the_vault_key() {
+        let mut db = memory_db();
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+        tx.execute("INSERT INTO local_reminders(id,ciphertext) VALUES('r-corrupt','not-decryptable')", []).unwrap();
+        assert_eq!(clear_all_records(&tx).unwrap(), 1);
+        tx.commit().unwrap();
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM local_reminders", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
