@@ -402,12 +402,11 @@ pub fn load(
     Ok(Some(payload))
 }
 
-/// Builds a non-reversible receipt input digest; folder paths and search phrases are not stored.
-fn cache_store_receipt_input(root: &Path, query: &str, search_pdf_text: bool, is_negative: bool) -> String {
+/// Builds a receipt digest from non-sensitive operation flags only.
+/// Folder paths and search phrases are excluded, not merely hashed.
+fn cache_store_receipt_input(search_pdf_text: bool, is_negative: bool) -> String {
     let context = format!(
-        "UJANI-LOCAL-SEARCH-CACHE-STORE-V1\0{}\0{}\0{}\0{}",
-        root.display(),
-        query,
+        "UJANI-LOCAL-SEARCH-CACHE-STORE-V1\0pdf_text={}\0negative={}",
         search_pdf_text,
         is_negative,
     );
@@ -429,7 +428,7 @@ pub fn store(
         return Ok(());
     }
 
-    let input_metadata = cache_store_receipt_input(root, query, search_pdf_text, is_negative);
+    let input_metadata = cache_store_receipt_input(search_pdf_text, is_negative);
     crate::with_local_state_receipt(app, "search_cache.store", input_metadata.as_bytes(), || {
         let mut db = open(app)?;
         // The consent read, scope registration, upserts and eviction share one
@@ -632,19 +631,14 @@ mod tests {
         assert!(decrypt(&key, &encrypted_query, &entry_aad("scope-b", "request-a", "query")).is_err());
     }
 
-    /// Confirms scope, query, content preference, provider and parser versions partition cache entries.
+    /// Confirms receipt digests depend only on non-sensitive cache-operation flags.
     #[test]
     fn cache_store_receipt_input_is_digest_only_and_scope_specific() {
-        let root = Path::new("/home/user/documents");
-        let digest = cache_store_receipt_input(root, "sensitive search phrase", false, false);
+        let digest = cache_store_receipt_input(false, false);
         assert_eq!(digest.len(), 64);
-        assert!(!digest.contains("/home"));
-        assert!(!digest.contains("sensitive"));
-        assert_ne!(digest, cache_store_receipt_input(root, "different phrase", false, false));
-        assert_ne!(
-            digest,
-            cache_store_receipt_input(Path::new("/other/folder"), "sensitive search phrase", false, false)
-        );
+        assert_eq!(digest, cache_store_receipt_input(false, false));
+        assert_ne!(digest, cache_store_receipt_input(true, false));
+        assert_ne!(digest, cache_store_receipt_input(false, true));
     }
 
     #[test]
