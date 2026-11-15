@@ -82,8 +82,8 @@ npm run tauri build
 ## Using local Ollama
 
 1. Install Ollama separately from its official distribution and start the service on the same device.
-2. Open UJANI's Local AI workspace, refresh Ollama status, and use **Download model through Ollama** to enter a library identifier (for example, `llama3.2` or `qwen2.5:3b`). You can also use the Ollama CLI.
-3. Review the model's size, license and hardware requirements before downloading. Downloads use your network and disk space and are performed by Ollama from its configured model registry.
+2. Open UJANI's Local AI workspace, refresh Ollama status, and review the candidate model's exact registry artifact, licence, download size, storage needs and device capability before installing anything.
+3. UJANI-managed in-app model pulls are currently disabled. If you choose to install the reviewed model, use your trusted Ollama interface or Ollama CLI directly, then refresh UJANI's model inventory. The installation uses your network and disk space through Ollama.
 4. Select the installed model and choose Fortress or Smart. Inference is sent only to `127.0.0.1:11434`; there is no cloud fallback.
 
 Ollama must remain bound to the local loopback interface. Do not expose its API to an untrusted network. Fortress here means no cloud AI transfer through UJANI; it does not currently apply an OS-level firewall rule, and the local Ollama HTTP service is still contacted over loopback.
@@ -91,7 +91,7 @@ Ollama must remain bound to the local loopback interface. Do not expose its API 
 ## Not implemented yet
 
 - GPU-use evidence: when Ollama is available, UJANI reads its local `/api/ps` runtime telemetry. It reports active GPU model use only when a running model has positive `size_vram`; this is allocated VRAM, not total device VRAM or a full GPU/driver compatibility inventory. NPU and free storage remain Unknown until supported OS/runtime APIs provide reliable evidence. The inventory inspects metadata for at most 32 models per refresh (four concurrent requests, eight-second aggregate deadline); remaining/unsupported model capabilities remain Unknown.
-- UJANI now offers an explicit, cancellable Ollama model pull from the local loopback service, with bounded progress parsing and a 30-minute task limit. Ollama model removal, updates and automatic runtime installation are not included.
+- UJANI-managed in-app model pulls are currently disabled. The native preflight remains fail-closed until UJANI can verify the exact upstream artifact and the Ollama daemon's actual model-store path and free space. Users may install models directly through a trusted Ollama interface or CLI, then refresh UJANI's inventory. Model removal, updates and automatic runtime installation are not included.
 - Task decomposition and model-based planning.
 - OCR for scanned PDFs and images (image-only PDFs return a clear unsupported message).
 - Visual image understanding (the current image tool reads basic metadata only).
@@ -138,3 +138,27 @@ See [Security review](../../docs/SECURITY_REVIEW_2026-11.md) and [Fuzzing guide]
 ## Platform support policy
 
 See [the proposed platform support baseline and release gates](../../docs/PLATFORM_SUPPORT.md). The matrix is a proposed policy, not certification: minimum-version installation and launch tests must pass before a platform/version is advertised as supported.
+
+
+## What to expect after installing UJANI
+
+This is the current desktop-preview user journey. The installer installs UJANI; it does **not** bundle Ollama or download an AI model automatically.
+
+1. **Launch UJANI.** The desktop opens with the local-first workspace. The browser preview is only a UI demo and cannot access native device capabilities.
+2. **Check local readiness.** Install Ollama separately from its official source, start its local service, then use the Local AI workspace to refresh the connection. If Ollama is not running, local inference is unavailable; UJANI should show a recoverable status rather than silently switching to a cloud provider.
+3. **Choose whether to install a model.** Review the model identifier, registry artifact, licence, hardware fit and available disk space. UJANI's in-app pull is currently disabled; if you choose to install a model, do so directly through your trusted Ollama interface or CLI. That action uses your network and disk space. No model is downloaded merely because UJANI is installed or launched.
+4. **Choose a task and execution mode.** Fortress blocks UJANI cloud task-data transfer; Smart prefers the available local route. Worker and Partner are policy/protocol previews, not functioning distributed compute modes. Mode selection is not permission to send data externally.
+5. **Run a local task.** Start with chat or a supported user-selected text/PDF workflow. UJANI shows task progress and bounded errors. Text/PDF processing is subject to the limits listed above; scanned-PDF OCR, image understanding, audio/video analysis and arbitrary shell actions are not available.
+6. **Decide on history.** Persistent task history is optional and off by default. If enabled, prompt/output fields use AES-256-GCM with an OS credential-vault key; metadata remains visible. Exported JSON history is plaintext and must be protected separately.
+7. **Use cloud AI only if you choose.** Configure your own compatible HTTPS provider, model and API key. Review provider privacy and pricing. Approve the specific request before sending it. UJANI does not provide API credits, save the key, or automatically fall back to cloud when local inference fails.
+8. **Update deliberately.** In a signed production build, UJANI checks for a signed update and asks before downloading/installing it. Unsigned preview builds and browser preview do not provide the same update assurance.
+
+### First-launch troubleshooting
+
+- **Local AI unavailable:** confirm Ollama is installed and its local service is running; refresh the status in UJANI. Do not expose the Ollama API to the LAN or internet.
+- **No model available:** install a reviewed model directly through your trusted Ollama interface or CLI, then refresh UJANI's model inventory. Check the exact registry artifact, licence and available disk space first. UJANI's in-app model pull is currently disabled. A successful installation does not guarantee acceptable speed on every computer.
+- **Task rejected or cancelled:** read the displayed reason; input-size, capability, timeout and policy limits are intentional safeguards. Reduce the input or choose a supported task rather than bypassing the guard.
+- **Cloud request unavailable:** check the HTTPS endpoint/model configuration and provider limits. A failed local task does not authorise cloud transfer.
+- **Hardware capability says Unknown:** this is deliberate when the OS/runtime cannot provide trustworthy evidence. UJANI must not guess GPU/NPU support.
+
+The app remains a **pre-alpha controlled preview**. Installation success is not proof of native inference compatibility, OS-enforced sandboxing, platform certification or production readiness. Check [implementation status](../../docs/IMPLEMENTATION_STATUS.md) and [release gates](../../docs/PROJECT_STATUS_AND_RELEASE_GATES.md) before relying on a capability.
