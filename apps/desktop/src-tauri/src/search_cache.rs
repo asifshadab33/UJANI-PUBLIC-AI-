@@ -392,8 +392,7 @@ pub fn load(
     Ok(Some(payload))
 }
 
-/// Persist a metadata-only result. Oversized, truncated or unavailable cache states are skipped.
-/// Returns digest-only receipt input; neither folder paths nor search phrases enter the ledger.
+/// Builds a non-reversible receipt input digest; folder paths and search phrases are not stored.
 fn cache_store_receipt_input(root: &Path, query: &str, search_pdf_text: bool, is_negative: bool) -> String {
     let context = format!(
         "UJANI-LOCAL-SEARCH-CACHE-STORE-V1\0{}\0{}\0{}\0{}",
