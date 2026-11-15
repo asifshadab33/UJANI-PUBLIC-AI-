@@ -132,6 +132,18 @@ def strip_rust_noncode(text: str) -> str:
             output.append(blank(text[start:index]))
             continue
 
+        # Rust character literals must be masked before string handling: a
+        # literal such as '"' must not open a string that consumes later code.
+        # The closing quote is required, so lifetimes like &'a str do not match.
+        char_literal = re.match(
+            r"'(?:\\\\(?:u\\{[0-9A-Fa-f_]+\\}|x[0-9A-Fa-f]{2}|.)|[^\\\\'\\n])'",
+            text[index:],
+        )
+        if char_literal:
+            output.append(blank(char_literal.group(0)))
+            index += char_literal.end()
+            continue
+
         if text[index] == '"':
             start = index
             index += 1
