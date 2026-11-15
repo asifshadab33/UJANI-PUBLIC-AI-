@@ -1,5 +1,5 @@
 //! Optional local SQLite task history. Recording is disabled by default.
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager}; 
@@ -27,35 +27,73 @@ pub struct HistoryEntry { pub id:i64, pub prompt:String, pub output:String, pub 
 pub struct HistorySettings { pub enabled:bool, pub retention_days:i64, pub max_entries:i64 }
 
 
+/// Refuse to create a replacement key when any stored field is already encrypted.
+/// A missing OS-vault key is a recovery condition, not permission to orphan existing ciphertext.
+#[cfg(not(target_os = "android"))]
+fn ensure_history_key_can_be_initialized(db: &Connection) -> Result<(), String> {
+    let has_encrypted_rows: bool = db.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM task_history
+            WHERE prompt LIKE 'ujani:%' OR output LIKE 'ujani:%'
+        )",
+        [],
+        |row| row.get(0),
+    ).map_err(|error| format!("Could not inspect encrypted history before key initialization: {error}"))?;
+
+    if has_encrypted_rows {
+        return Err(
+            "The OS credential vault no longer contains the key for existing encrypted history. UJANI will not generate a replacement key or overwrite ciphertext. Restore the original vault entry if available, or explicitly clear the history database before starting a new history store.".into(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "android")]
-fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(_db: &mut Connection) -> Result<Zeroizing<[u8; 32]>, String> {
     Err("Encrypted task history is disabled on Android until Android Keystore integration is validated.".into())
 }
 
 #[cfg(not(target_os = "android"))]
-fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
- let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-  .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;
- match entry.get_password() {
-  Ok(encoded) => {
-   let encoded = Zeroizing::new(encoded);
-   // Decode into caller-owned zeroizing storage so even a partially written
-   // output buffer is erased if the decoder reports malformed base64.
-   let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
-   let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
-       .map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
-   decoded.truncate(decoded_len);
-   let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
-   Ok(Zeroizing::new(key))
-  }
-  Err(keyring::Error::NoEntry) => {
-   let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
-   let encoded = Zeroizing::new(B64.encode(*key));
-   entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
-   Ok(key)
-  }
-  Err(e) => Err(format!("Could not read history key from OS credential vault: {e}")),
- }
+fn history_key(db: &mut Connection) -> Result<Zeroizing<[u8; 32]>, String> {
+    // Serialize key initialization across UJANI processes. Without the immediate
+    // SQLite writer lock, two fresh windows could each generate a different key
+    // and the last credential-vault write would make the first window's rows unreadable.
+    let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("Could not lock local history before key access: {error}"))?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|error| format!("OS credential vault is unavailable; encrypted history is disabled: {error}"))?;
+
+    let key = match entry.get_password() {
+        Ok(encoded) => {
+            let encoded = Zeroizing::new(encoded);
+            // Decode into caller-owned zeroizing storage so even a partially written
+            // output buffer is erased if the decoder reports malformed base64.
+            let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
+            let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
+                .map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
+            decoded.truncate(decoded_len);
+            let key: [u8; 32] = decoded.as_slice().try_into()
+                .map_err(|_| "Stored history key has an invalid length.".to_string())?;
+            Zeroizing::new(key)
+        }
+        Err(keyring::Error::NoEntry) => {
+            // Existing ciphertext cannot be recovered with a newly generated key.
+            // Fail closed before touching the credential vault or history rows.
+            ensure_history_key_can_be_initialized(&transaction)?;
+            let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
+            let encoded = Zeroizing::new(B64.encode(*key));
+            entry.set_password(encoded.as_str())
+                .map_err(|error| format!("Could not store history key in the OS credential vault: {error}"))?;
+            key
+        }
+        Err(error) => {
+            return Err(format!("Could not read history key from OS credential vault: {error}"));
+        }
+    };
+
+    transaction.commit()
+        .map_err(|error| format!("Could not finish local history key access: {error}"))?;
+    Ok(key)
 }
 
 fn legacy_row_aad(id: i64, column: &str) -> Vec<u8> {
@@ -308,9 +346,9 @@ pub fn set_task_history_enabled(app: AppHandle, enabled_value: bool) -> Result<H
     let input = serde_json::to_vec(&enabled_value)
         .map_err(|error| format!("Could not encode history setting audit metadata: {error}"))?;
     crate::with_local_state_receipt(&app, "history.settings.update", &input, || {
-        let db = open(&app)?;
+        let mut db = open(&app)?;
         if enabled_value {
-            let key = history_key()?;
+            let key = history_key(&mut db)?;
             migrate_plaintext_rows(&db, &key)?;
         }
         db.execute(
@@ -358,7 +396,7 @@ pub fn save_task_history(
 
 #[tauri::command]
 pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
-    let db = open(&app)?;
+    let mut db = open(&app)?;
     // Fresh installs must not prompt for or initialize an OS keyring when history is off.
     if !is_enabled(&db)? {
         return Ok(Vec::new());
@@ -548,6 +586,36 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
 
  #[test] fn disabled_by_default(){let mut c=db();assert!(!is_enabled(&c).unwrap());assert!(save(&mut c,"p","o","smart","m","chat",1).is_err());}
  #[test] fn disabled_history_does_not_require_a_credential_key(){let c=db();assert!(!is_enabled(&c).unwrap());assert!(list(&c).unwrap().is_empty());}
+ #[cfg(not(target_os = "android"))]
+ #[test]
+ fn missing_history_key_is_not_recreated_when_encrypted_rows_exist() {
+  let db = db();
+  db.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES(?1,?2,'smart','m','chat',1)",
+   params!["ujani:v3:existing-ciphertext", "legacy plaintext sibling"],
+  ).unwrap();
+
+  let error = ensure_history_key_can_be_initialized(&db).unwrap_err();
+  assert!(error.contains("will not generate a replacement key"));
+  let (prompt, output): (String, String) = db.query_row(
+   "SELECT prompt,output FROM task_history WHERE id=1", [], |row| Ok((row.get(0)?, row.get(1)?))
+  ).unwrap();
+  assert_eq!(prompt, "ujani:v3:existing-ciphertext");
+  assert_eq!(output, "legacy plaintext sibling");
+ }
+
+ #[cfg(not(target_os = "android"))]
+ #[test]
+ fn missing_history_key_can_be_initialized_for_empty_or_plaintext_only_store() {
+  let db = db();
+  assert!(ensure_history_key_can_be_initialized(&db).is_ok());
+  db.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('legacy prompt','legacy output','smart','m','chat',1)",
+   [],
+  ).unwrap();
+  assert!(ensure_history_key_can_be_initialized(&db).is_ok());
+ }
+
  #[test] fn saves_lists_and_deletes(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let id=save(&mut c,"p","o","smart","m","chat",100).unwrap();assert_eq!(list(&c).unwrap().len(),1);c.execute("DELETE FROM task_history WHERE id=?1",params![id]).unwrap();assert!(list(&c).unwrap().is_empty());}
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
  #[test] fn stored_results_are_bounded(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let large="x".repeat(MAX_STORED_OUTPUT+100);save(&mut c,"p",&large,"smart","m","chat",1).unwrap();let row=list(&c).unwrap().remove(0);assert!(row.output.len()<=MAX_STORED_OUTPUT+64);assert!(row.output.contains("truncated to 64 KiB"));}
