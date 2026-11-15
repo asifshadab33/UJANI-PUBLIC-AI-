@@ -284,6 +284,19 @@ mod selected_folder_preflight_regressions {
     }
 
     #[test]
+    fn selected_folder_tools_do_not_require_ollama() {
+        let snapshot = selected_folder_capability_snapshot(4096, true, false);
+        assert!(!snapshot.capabilities.iter().any(|item| item.id == "ollama.local"));
+        assert!(plan_local_task("file.search.local", "smart", 4096, &snapshot.capabilities).accepted);
+        assert!(plan_local_task("file.duplicates.preview", "smart", 4096, &snapshot.capabilities).accepted);
+        assert!(plan_local_task("file.large_files.preview", "smart", 4096, &snapshot.capabilities).accepted);
+        assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &snapshot.capabilities).accepted);
+
+        let pdf_ready = selected_folder_capability_snapshot(4096, true, true);
+        assert!(plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
+    }
+
+    #[test]
     fn missing_capability_denies_before_folder_picker() {
         let snapshot = snapshot(Vec::new(), 4096);
         let token = CancellationToken::new();
@@ -1467,6 +1480,59 @@ pub(crate) async fn get_capability_snapshot_for_task(
         Duration::from_secs(8),
         "Local capability discovery exceeded its 8-second time budget.",
         get_capability_snapshot(),
+    ).await
+}
+
+/// Build the minimal capability view needed by OS-native selected-folder tools.
+/// These operations must not depend on Ollama, GPU probes or model availability.
+fn selected_folder_capability_snapshot(
+    available_memory_mb: u64,
+    cpu_available: bool,
+    pdf_available: bool,
+) -> CapabilitySnapshot {
+    CapabilitySnapshot {
+        capabilities: vec![
+            CapabilityRecord {
+                id: "cpu".into(),
+                category: "compute".into(),
+                state: if cpu_available { CapabilityState::Available } else { CapabilityState::Unavailable },
+                source: "Rust standard library / OS".into(),
+                detail: "Local filesystem work uses the device CPU; no model runtime is required.".into(),
+            },
+            CapabilityRecord {
+                id: "pdf.text_extraction".into(),
+                category: "document".into(),
+                state: if pdf_available { CapabilityState::Available } else { CapabilityState::Unavailable },
+                source: if pdf_available { "Bundled PDF text parser".into() } else { "Platform capability gate".into() },
+                detail: if pdf_available {
+                    "Text-based PDFs only; scanned-page OCR is not implemented.".into()
+                } else {
+                    "PDF text extraction is unavailable on this platform build.".into()
+                },
+            },
+        ],
+        operations: registered_operations(),
+        available_memory_mb,
+    }
+}
+
+/// Bounded capability discovery for local file operations without probing Ollama.
+pub(crate) async fn get_selected_folder_capability_snapshot_for_task(
+    token: &CancellationToken,
+) -> Result<CapabilitySnapshot, String> {
+    await_task_with_limits(
+        token,
+        Duration::from_secs(2),
+        "Local file capability discovery exceeded its 2-second time budget.",
+        async {
+            let mut system = System::new();
+            system.refresh_memory();
+            Ok(selected_folder_capability_snapshot(
+                system.available_memory() / (1024 * 1024),
+                std::thread::available_parallelism().is_ok(),
+                !cfg!(target_os = "android"),
+            ))
+        },
     ).await
 }
 
