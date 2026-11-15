@@ -20,7 +20,8 @@ type ReminderResponse =
   | { kind: "list"; value: LocalReminder[] }
   | { kind: "reminder"; value: LocalReminder }
   | { kind: "agenda"; value: LocalReminder[] }
-  | { kind: "deleted" };
+  | { kind: "deleted" }
+  | { kind: "cleared"; value: { deleted: number } };
 
 async function manage(request: Record<string, unknown>): Promise<ReminderResponse> {
   return invoke<ReminderResponse>("manage_local_reminders", { request });
@@ -65,9 +66,9 @@ export default function ReminderCentre() {
   async function refresh() {
     const nextSettings = await manage({ action: "get_settings" });
     if (nextSettings.kind !== "settings") throw new Error("Reminder settings response was invalid.");
+    setSettings(nextSettings.value);
     const nextList = await manage({ action: "list" });
     if (nextList.kind !== "list") throw new Error("Reminder list response was invalid.");
-    setSettings(nextSettings.value);
     setReminders(nextList.value);
   }
 
@@ -76,12 +77,12 @@ export default function ReminderCentre() {
     (async () => {
       try {
         const nextSettings = await manage({ action: "get_settings" });
+        if (!active) return;
+        if (nextSettings.kind !== "settings") throw new Error("Reminder service returned an unexpected settings response.");
+        setSettings(nextSettings.value);
         const nextList = await manage({ action: "list" });
         if (!active) return;
-        if (nextSettings.kind !== "settings" || nextList.kind !== "list") {
-          throw new Error("Reminder service returned an unexpected response.");
-        }
-        setSettings(nextSettings.value);
+        if (nextList.kind !== "list") throw new Error("Reminder service returned an unexpected list response.");
         setReminders(nextList.value);
       } catch (reason) {
         if (active) setError("Local reminders are unavailable: " + String(reason));
@@ -172,6 +173,17 @@ export default function ReminderCentre() {
     });
   }
 
+  async function clearAllReminders() {
+    if (!window.confirm("Delete every saved local reminder? This cannot be undone.")) return;
+    await run(async () => {
+      const response = await manage({ action: "clear_all" });
+      if (response.kind !== "cleared") throw new Error("Local reminders could not be cleared.");
+      setEditingId(null);
+      setTitle("");
+      setNotes("");
+    });
+  }
+
   return (
     <section className="task-panel reminder-centre" aria-labelledby="reminder-centre-title">
       <div className="section-heading">
@@ -197,6 +209,13 @@ export default function ReminderCentre() {
           <span>{settings?.enabled ? "Enabled" : "Disabled"}</span>
         </label>
       </div>
+
+      {settings && (
+        <div className="reminder-maintenance">
+          <small>Saved reminders remain encrypted until deleted, even when the feature is disabled.</small>
+          <button type="button" disabled={busy} onClick={() => void clearAllReminders()}><Trash2 size={13}/> Clear all</button>
+        </div>
+      )}
 
       {settings?.enabled && (
         <form className="reminder-form" onSubmit={saveReminder}>
