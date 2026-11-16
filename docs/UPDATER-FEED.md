@@ -10,6 +10,6 @@ The release workflow publishes the feed only after the release has passed its si
 
 The feed contains signed artifact metadata and release URLs; the updater still verifies the artifact signature against the public key injected into the signed production build. The feed itself is not a substitute for Tauri artifact signature verification.
 
-If feed publication fails, the already-published release remains available through its release page, but automatic update discovery may remain on the previous version until the workflow is repaired and rerun. The release checklist must verify that the feed's version and platform artifact URLs match the approved release.
+If feed publication fails, the already-published release remains available through its release page, but automatic update discovery may remain on the previous version until the workflow is repaired and rerun. The `updates` branch must exist and the release workflow's `GITHUB_TOKEN` must be permitted to push to it; branch rules should restrict ordinary writes and the release job should be the only automated publisher. Verify this permission before the first production release. The initial branch may have no `latest.json`; the first approved release seeds it. The release checklist must verify that the feed's version and platform artifact URLs match the approved release.
 
 Do not publish a manifest from an unapproved draft release, and do not put signing private keys or passwords in this branch.
