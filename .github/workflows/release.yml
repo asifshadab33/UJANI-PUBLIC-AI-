@@ -585,6 +585,8 @@ jobs:
         shell: bash
         env:
           INCOMING_MANIFEST: ${{ runner.temp }}/ujani-updater-feed/latest.json
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           decision="$(node scripts/publish-updater-feed.mjs "$INCOMING_MANIFEST" latest.json)"
