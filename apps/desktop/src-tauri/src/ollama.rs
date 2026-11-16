@@ -1107,6 +1107,22 @@ mod tests {
     }
 
 
+    #[test]
+    fn ollama_client_stays_on_loopback_and_ignores_proxy_environment() {
+        assert_eq!(BASE_URL, "http://127.0.0.1:11434");
+        let source = include_str!("ollama.rs");
+        let start = source.find("fn build_client(").expect("local client builder exists");
+        let end = source[start..]
+            .find("\nfn client()")
+            .map(|offset| start + offset)
+            .expect("local client builder has a bounded end");
+        let builder = &source[start..end];
+        assert!(builder.contains(".redirect(reqwest::redirect::Policy::none())"));
+        assert!(builder.contains(".no_proxy()"));
+        assert!(builder.contains(".connect_timeout(Duration::from_secs(2))"));
+        assert!(builder.contains("builder.timeout(timeout)"));
+    }
+
     #[tokio::test]
     async fn local_client_does_not_follow_redirect_responses() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
