@@ -8,7 +8,7 @@ type ProviderStatus = {
   status: string;
   source: string;
   detail: string;
-  observed_at_unix_ms: number;
+  observed_at_unix_ms: number | null;
 };
 
 const providers = [
@@ -99,7 +99,9 @@ export default function SecurityCentre() {
           return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <small>Source: {result.source}</small>}</div>;
         })}
         {plannedProviders.map((p) => <div className="security-provider" key={p.name}><b>{p.name}</b><small>{p.os} · Planned, not connected</small><p>{p.detail}</p></div>)}
-        {statuses.length > 0 && <p className="security-muted">Last checked: {new Date(Math.max(...statuses.map((s) => s.observed_at_unix_ms))).toLocaleString()}</p>}
+        {statuses.length > 0 && <p className="security-muted">{statuses.every((status) => status.observed_at_unix_ms !== null)
+          ? `Last checked: ${new Date(Math.max(...statuses.map((status) => status.observed_at_unix_ms as number))).toLocaleString()}`
+          : "Last checked: device clock timestamp unavailable"}</p>}
         {error && <p className="security-error" role="alert">{error}</p>}
       </div>
       <div className="security-panel"><h3>Privacy and permissions</h3>
