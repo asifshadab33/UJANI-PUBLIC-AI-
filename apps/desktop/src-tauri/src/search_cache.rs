@@ -703,7 +703,13 @@ mod tests {
         db.execute("DELETE FROM approved_scopes WHERE scope_id='revoked-scope'", []).unwrap();
         let cached: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
         let recent: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        let future_access: i64 = db.query_row(
+            "SELECT COUNT(*) FROM search_cache WHERE request_key='future-access'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
         assert_eq!(cached, 0);
+        assert_eq!(future_access, 0);
         assert_eq!(recent, 0);
     }
 
@@ -830,9 +836,10 @@ mod tests {
         let db = memory_db();
         insert_scope(&db, "scope");
         insert_cache_row(&db, "scope", "future-cache", 101, 101, false, 8);
+        insert_cache_row(&db, "scope", "future-access", 99, 101, false, 8);
         db.execute(
             "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
-             VALUES('scope','future-query','encrypted',0,101,101)",
+             VALUES('scope','future-query','encrypted',0,99,101)",
             [],
         ).unwrap();
 
