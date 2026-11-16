@@ -577,8 +577,8 @@ async fn execute_document_workflow(
  model: String,
  translation_language: Option<String>,
 ) -> Result<WorkflowExecutionResult, String> {
- // Reject oversized input before hashing it or scheduling work; register early so
- // duplicate IDs and cancellation are enforced across capability discovery too.
+ // Reject invalid metadata/content before task registration, receipts or capability probes.
+ task_engine::validate_document_request(&file_name, &content, &mode)?;
  validate_document_workflow_content(&content)?;
  let registration = register_active_task(&control, &task_id)?;
  let token = registration.token.clone();
@@ -2049,6 +2049,7 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    task_engine::validate_document_request(&file_name, &content, &mode)?;
     let registration = register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     ensure_task_not_cancelled(&token)?;
@@ -2076,12 +2077,17 @@ async fn process_selected_document(
 const MAX_PDF_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 
 /// Decode base64 IPC data with an encoded and decoded size bound.
-fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
+fn validate_bounded_pdf_encoded_length(data_base64: &str, max_bytes: usize) -> Result<(), String> {
     let max_base64_bytes = max_bytes.div_ceil(3) * 4;
     if data_base64.len() > max_base64_bytes {
         return Err("PDF upload exceeds the 10 MiB limit.".into());
     }
+    Ok(())
+}
+
+fn decode_bounded_pdf_payload(data_base64: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    validate_bounded_pdf_encoded_length(data_base64, max_bytes)?;
     let data = STANDARD.decode(data_base64.as_bytes())
         .map_err(|_| "PDF upload could not be decoded. Please select the PDF again.".to_string())?;
     if data.is_empty() || data.len() > max_bytes {
@@ -2338,6 +2344,10 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    // Reject caller-controlled metadata and oversized base64 before registration,
+    // capability discovery, receipt creation or the blocking decode worker.
+    task_engine::validate_pdf_metadata(&file_name, &mode)?;
+    validate_bounded_pdf_encoded_length(&data_base64, MAX_PDF_UPLOAD_BYTES)?;
     // Reserve before capability probes and decoding so cancellation covers the
     // entire preparation path and duplicate task IDs cause no runtime requests.
     let registration = register_active_task(&control, &task_id)?;
