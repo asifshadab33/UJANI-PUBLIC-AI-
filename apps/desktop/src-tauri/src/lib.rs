@@ -9,6 +9,7 @@ mod folder_import;
 mod local_search;
 mod search_cache;
 mod history;
+mod reminder_store;
 mod model_runtime;
 mod model_inventory;
 mod ollama;
@@ -2561,6 +2562,7 @@ macro_rules! ujani_invoke_handler {
             file_insights::find_large_files, history::get_task_history_settings,
             history::set_task_history_enabled, history::save_task_history, history::list_task_history,
             history::delete_task_history, history::clear_task_history,
+            reminder_store::manage_local_reminders,
             security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
             security_store::get_cloud_budget_status,
             security_store::set_cloud_budget_limit,
