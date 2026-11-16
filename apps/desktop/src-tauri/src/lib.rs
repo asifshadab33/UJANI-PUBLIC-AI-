@@ -166,7 +166,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             detail: if cfg!(target_os = "android") {
                 "PDF extraction is not available in the Android preview; the desktop sidecar is not bundled".into()
             } else {
-                "Text-based PDFs only; scanned-page OCR is not implemented".into()
+                "Bundled parser is present for text-based PDFs only; PDF operations remain blocked until worker resource limits, filesystem isolation and network isolation are verified on this platform. Scanned-page OCR is not implemented".into()
             },
         },
         CapabilityRecord {
@@ -1664,6 +1664,27 @@ mod local_operation_policy_tests {
                     source: "test".into(),
                     detail: "test PDF parser".into(),
                 },
+                CapabilityRecord {
+                    id: "pdf.worker.resource_limits".into(),
+                    category: "security".into(),
+                    state: CapabilityState::Available,
+                    source: "test".into(),
+                    detail: "verified worker limits".into(),
+                },
+                CapabilityRecord {
+                    id: "pdf.worker.filesystem_isolation".into(),
+                    category: "security".into(),
+                    state: CapabilityState::Available,
+                    source: "test".into(),
+                    detail: "verified filesystem isolation".into(),
+                },
+                CapabilityRecord {
+                    id: "pdf.worker.network_isolation".into(),
+                    category: "security".into(),
+                    state: CapabilityState::Available,
+                    source: "test".into(),
+                    detail: "verified network isolation".into(),
+                },
             ],
             operations: registered_operations(),
             available_memory_mb: 4096,
@@ -1686,6 +1707,29 @@ mod local_operation_policy_tests {
         assert!(require_local_operation(&no_model, "pdf.extract_and_summarize", "smart").is_err());
         let ready = snapshot(true, true);
         assert!(require_local_operation(&ready, "pdf.extract_and_summarize", "smart").is_ok());
+    }
+
+    #[test]
+    fn pdf_pipeline_fails_closed_when_worker_security_is_unverified() {
+        for capability in [
+            "pdf.worker.resource_limits",
+            "pdf.worker.filesystem_isolation",
+            "pdf.worker.network_isolation",
+        ] {
+            let mut unverified = snapshot(true, true);
+            unverified.capabilities.iter_mut()
+                .find(|record| record.id == capability)
+                .expect("PDF worker security capability is registered")
+                .state = CapabilityState::Unknown;
+            assert!(
+                require_local_operation(&unverified, "pdf.extract_and_summarize", "smart").is_err(),
+                "PDF summary must fail closed without {capability}"
+            );
+            assert!(
+                require_local_operation(&unverified, "file.search.pdf_text", "fortress").is_err(),
+                "PDF folder search must fail closed without {capability}"
+            );
+        }
     }
 
     #[test]
