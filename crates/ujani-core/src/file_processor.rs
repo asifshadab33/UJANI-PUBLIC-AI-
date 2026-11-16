@@ -14,13 +14,13 @@ pub struct FileAnalysis {
     pub top_keywords: Vec<String>,
 }
 
-fn valid_display_file_name(file_name: &str) -> bool {
+pub(crate) fn valid_display_file_name(file_name: &str) -> bool {
     !file_name.trim().is_empty()
         && file_name.len() <= 255
         && file_name != "."
         && file_name != ".."
         && !file_name.chars().any(|character| {
-            character.is_control() || character == '/' || (cfg!(windows) && character == char::from(92))
+            character.is_control() || character == '/' || (cfg!(windows) && (character == char::from(92) || character == ':'))
         })
 }
 
