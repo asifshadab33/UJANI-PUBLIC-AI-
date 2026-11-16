@@ -82,6 +82,10 @@ class ExecutionModeContractTests(unittest.TestCase):
             APP,
         )
         self.assertIn(
+            "Fortress — local-only policy (OS isolation pending)",
+            APP,
+        )
+        self.assertIn(
             "OS-wide network isolation is not yet enforced.",
             APP,
         )
