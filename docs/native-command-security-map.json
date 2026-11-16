@@ -537,14 +537,14 @@
       "effects": "Encrypted local history write; no external transfer",
       "boundary": "Validate prompt (32 KiB), output (2 MiB) and metadata before receipt reservation; persist AES-256-GCM v3 with row/column/metadata AAD",
       "receipt": "metadata-outcome-receipt",
-      "tests": "History AES-GCM v3 AAD and legacy migration tests; pre-receipt input-bound tests; static content-free receipt guard",
-      "status": "source-reviewed targeted privacy slice: bounded validation before receipt reservation and metadata-only receipt input; full IPC authorization review pending",
+      "tests": "History AES-GCM v3 AAD and legacy migration tests; pre-receipt input-bound tests; static content-free receipt guard; missing-key detection and no-silent-key-replacement tests",
+      "status": "source-reviewed targeted privacy slice: bounded validation before receipt reservation and metadata-only receipt input; full IPC authorization review pending; if the vault key is missing while history rows exist, the DB is preserved and no replacement key is generated",
       "caller": "Registered Tauri IPC command; caller arguments are untrusted; recording requires history enabled and the OS credential vault; no external transfer",
       "data_classification": "Prompt/output remain encrypted local content; receipt digest covers only mode/model/kind and byte lengths, never content or content hashes",
       "consent": "Explicit opt-in history setting; no external transfer; history is disabled by default",
       "cancellation": "Synchronous bounded local DB operation with a 3-second SQLite busy timeout; no asynchronous runtime or network work",
       "resource_limits": "Prompt max 32 KiB and output max 2 MiB before receipt reservation; stored output capped at 64 KiB; 100 entries/30 days",
-      "failure_mode": "Reject invalid or oversized fields before receipt reservation; fail closed on key, AEAD, database or receipt errors"
+      "failure_mode": "Reject invalid or oversized fields before receipt reservation; fail closed on key, AEAD, database or receipt errors; missing key with existing rows fails closed pending trusted key recovery or explicit history clearing"
     },
     "history::list_task_history": {
       "classification": "persistent_local_maintenance",
@@ -553,14 +553,14 @@
       "effects": "Local SQLite read/decrypt; may migrate legacy rows and delete entries beyond the 30-day retention window; metadata-only execution receipt",
       "boundary": "User-initiated local listing only; no external transfer; maintenance effects are reserved through the local receipt wrapper before execution",
       "receipt": "metadata-outcome-receipt",
-      "tests": "History decryption/AAD and legacy migration tests; native command guard requires receipt wrapping for migration and retention writes and count-only output metadata",
-      "status": "Source-reviewed history listing maintenance receipt slice; full command-level authorization and denial matrix remains pending",
+      "tests": "History decryption/AAD and legacy migration tests; native command guard requires receipt wrapping for migration and retention writes and count-only output metadata; missing-key detection and no-silent-key-replacement tests",
+      "status": "Source-reviewed history listing maintenance receipt slice; full command-level authorization and denial matrix remains pending; if the vault key is missing while history rows exist, the DB is preserved and no replacement key is generated",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited",
       "data_classification": "Returned prompt/output remain encrypted at rest and are decrypted only for the user-requested local view; receipt metadata contains a static operation marker and entry count only, never history content, identifiers, paths or key material",
       "consent": "User-initiated history view; recording is opt-in and disabled by default; maintenance is local only",
       "cancellation": "Synchronous bounded SQLite/keyring work; SQLite busy timeout is three seconds; no asynchronous runtime or network work",
       "resource_limits": "Maximum 100 entries; 30-day retention; bounded legacy row migration; no caller-supplied input",
-      "failure_mode": "Fail closed on receipt reservation, key-vault, AEAD, migration or database errors; no plaintext fallback"
+      "failure_mode": "Fail closed on receipt reservation, key-vault, AEAD, migration or database errors; no plaintext fallback; missing key with existing rows fails closed pending trusted key recovery or explicit history clearing"
     },
     "history::delete_task_history": {
       "classification": "persistent_local_mutation",
