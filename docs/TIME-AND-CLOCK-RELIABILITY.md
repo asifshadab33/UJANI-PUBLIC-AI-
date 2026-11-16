@@ -14,6 +14,7 @@ The native local-clock command returns Unix-epoch milliseconds. The current Ever
 - Store history timestamps in the supported signed SQLite integer range. Reject an out-of-range value; never cast and wrap it.
 - If the wall clock is unavailable or before the Unix epoch, preserve local work where safe, but do not invent timestamps. Encrypted history, model-inventory generation and time-bound security actions must return an explicit clock error when they cannot create a valid timestamp; read-only security-provider status may still be shown with its observation time marked unavailable.
 - A timezone/DST change must alter display only; it must not change stored UTC instants or monotonic task durations.
+- Persistent search-cache and recent-search rows dated later than the current wall clock are discarded; a backward clock step must not extend their retention period.
 
 ## Clock-jump behaviour
 
