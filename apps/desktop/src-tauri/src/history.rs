@@ -83,7 +83,7 @@ fn history_key(db: &Connection) -> Result<Zeroizing<[u8; 32]>, String> {
    // output buffer is erased if the decoder reports malformed base64.
    let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
    let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
-       .map_err(|_| "Stored history key is invalid; existing history is preserved. Restore the original key from a trusted credential backup before attempting recovery.".to_string())?;
+       .map_err(|_| "Stored history key is invalid; existing history is preserved. Restore the original key through your OS credential-vault recovery process before attempting recovery.".to_string())?;
    decoded.truncate(decoded_len);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
    mark_history_key_initialized(db)?;
@@ -112,7 +112,7 @@ fn missing_history_key_error(
  has_encrypted_rows: bool,
 ) -> Option<&'static str> {
  if has_rows && (key_was_initialized || has_encrypted_rows) {
-  Some("The OS credential vault no longer contains the key for existing history. Existing rows have been preserved and no replacement key was created. Restore the original key from a trusted backup; otherwise clear history only after explicit confirmation.")
+  Some("The OS credential vault no longer contains the key for existing history. Existing rows have been preserved and no replacement key was created. Restore the original key through your OS credential-vault recovery process; if no backup exists, the encrypted rows remain unreadable and should only be removed through an explicit history-clear action.")
  } else {
   None
  }
