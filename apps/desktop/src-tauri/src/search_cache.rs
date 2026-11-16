@@ -368,6 +368,17 @@ fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(),
     Ok(())
 }
 
+/// Run cleanup under one writer transaction and sample wall time only after
+/// acquiring the lock. A concurrent store therefore cannot commit a newer row
+/// between the clock sample and the future-dated-row purge.
+fn trim_cache_current(db: &mut Connection, settings: &CacheSettings) -> Result<(), String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| error.to_string())?;
+    let now = now_seconds()?;
+    trim_cache(&tx, settings, now)?;
+    tx.commit().map_err(|error| error.to_string())
+}
+
 /// Return a cached payload only when the full current metadata inventory matches exactly.
 /// Any keyring, database, decryption or freshness failure is a cache miss at the call site.
 pub fn load(
@@ -381,7 +392,7 @@ pub fn load(
     let mut db = open(app)?;
     let settings = settings_from_db(&db)?;
     if !settings.enabled { return Ok(None); }
-    trim_cache(&db, &settings, now_seconds()?)?;
+    trim_cache_current(&mut db, &settings)?;
     let key = cache_key()?;
     let scope_id = match scope_for_path(&mut db, &key, root, false) {
         Ok(Some(value)) => value,
@@ -508,9 +519,9 @@ pub fn store(
 #[tauri::command]
 pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSettings, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
+        let mut db = open(&app)?;
         let settings = settings_from_db(&db)?;
-        trim_cache(&db, &settings, now_seconds()?)?;
+        trim_cache_current(&mut db, &settings)?;
         Ok(settings)
     }).await.map_err(|error| format!("Cache settings worker failed: {error}"))?
 }
@@ -522,7 +533,7 @@ pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSear
         let db = open(&app)?;
         let settings = settings_from_db(&db)?;
         if !settings.enabled { return Ok(Vec::new()); }
-        trim_cache(&db, &settings, now_seconds()?)?;
+        trim_cache_current(&mut db, &settings)?;
         // Do not prompt for or create a credential-vault key when no query needs decrypting.
         let has_rows: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM recent_searches)", [], |row| row.get(0)
