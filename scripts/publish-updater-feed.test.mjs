@@ -23,7 +23,11 @@ test("orders stable releases after prereleases and compares prerelease identifie
 test("rejects invalid versions and malformed updater artifacts", () => {
   assert.throws(() => parseSemver("01.0.0"));
   assert.throws(() => parseSemver("1.0.0-01"));
+  assert.throws(() => parseSemver("1.0.0-alpha..1"));
+  assert.throws(() => parseSemver("1.0.0+build..1"));
+  assert.doesNotThrow(() => parseSemver("1.0.0-alpha.1+build.2"));
   assert.throws(() => validateManifest({ version: "1.0.0", platforms: {} }));
+  assert.throws(() => validateManifest({ version: "1.0.0", platforms: [] }));
   assert.throws(() => validateManifest({ version: "1.0.0", platforms: { linux: { url: "http://example.test/a", signature: "sig" } } }));
   assert.throws(() => validateManifest({ version: "1.0.0", platforms: { linux: { url: "https://example.test/a", signature: "" } } }));
 });
@@ -88,4 +92,16 @@ test("fails closed when the existing feed is malformed", (t) => {
   fs.writeFileSync(output, "{broken");
   assert.throws(() => publishManifest(incoming, output));
   assert.equal(fs.readFileSync(output, "utf8"), "{broken");
+});
+
+
+test("rejects an invalid newer manifest without replacing the current feed", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ujani-updater-feed-invalid-newer-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const incoming = path.join(directory, "incoming.json");
+  const output = path.join(directory, "latest.json");
+  fs.writeFileSync(output, JSON.stringify(manifest("1.0.0")));
+  fs.writeFileSync(incoming, JSON.stringify({ version: "1.1.0", platforms: [] }));
+  assert.throws(() => publishManifest(incoming, output));
+  assert.equal(JSON.parse(fs.readFileSync(output, "utf8")).version, "1.0.0");
 });
