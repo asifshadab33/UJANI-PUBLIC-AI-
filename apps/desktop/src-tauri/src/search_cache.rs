@@ -316,9 +316,9 @@ fn request_key_for_versions(
 fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(), String> {
     // A backward wall-clock step can make entries appear to come from the future.
     // Cache data is disposable: purge future-dated entries instead of extending their lifetime.
-    db.execute("DELETE FROM search_cache WHERE created_at > ?1", params![now])
+    db.execute("DELETE FROM search_cache WHERE created_at > ?1 OR last_access > ?1", params![now])
         .map_err(|error| error.to_string())?;
-    db.execute("DELETE FROM recent_searches WHERE created_at > ?1", params![now])
+    db.execute("DELETE FROM recent_searches WHERE created_at > ?1 OR last_access > ?1", params![now])
         .map_err(|error| error.to_string())?;
     if settings.retention_days > 0 {
         let cutoff = now.saturating_sub(settings.retention_days.saturating_mul(86_400));
