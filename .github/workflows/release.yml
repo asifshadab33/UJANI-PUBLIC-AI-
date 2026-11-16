@@ -588,7 +588,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ujani-updater-feed"
           gh release download "$TAG" --pattern latest.json --dir "$RUNNER_TEMP/ujani-updater-feed" --repo "$REPOSITORY"
           test -s "$RUNNER_TEMP/ujani-updater-feed/latest.json"
-      - name: Validate and publish only a newer signed manifest
+      - name: Validate and publish only a newer approved updater manifest
         shell: bash
         env:
           INCOMING_MANIFEST: ${{ runner.temp }}/ujani-updater-feed/latest.json
