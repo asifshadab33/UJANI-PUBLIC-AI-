@@ -28,6 +28,10 @@ class ExecutionModeContractTests(unittest.TestCase):
             "Worker tasks must be structured and allow-listed",
             MODES,
         )
+        self.assertIn(
+            "schema validity is not identity authentication",
+            MODES,
+        )
 
     def test_partner_is_bounded_local_cloud_collaboration(self):
         self.assertIn(
