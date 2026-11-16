@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CLOCK_JUMP_THRESHOLD_MS, hasWallClockJump } from "./clockMonitor.js";
 
-test("does not report normal elapsed time or sub-threshold scheduling jitter", () => {
+test("does not report normal elapsed time or below/exact-threshold scheduling jitter", () => {
   assert.equal(hasWallClockJump(10_000, 11_000, 500, 1_001), false);
+  assert.equal(hasWallClockJump(10_000, 16_000, 500, 1_501), false);
   assert.equal(hasWallClockJump(10_000, 16_000, 500, 1_500), false);
 });
 
