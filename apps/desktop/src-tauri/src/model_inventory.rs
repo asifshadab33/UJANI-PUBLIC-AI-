@@ -125,12 +125,16 @@ fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
         .map_err(|_| "System clock exceeds the supported model-inventory timestamp range.".to_string())
 }
 
-pub(crate) fn now_unix_ms() -> Result<u64, String> {
-    let timestamp = unix_epoch_millis_at(SystemTime::now())?;
+fn model_inventory_timestamp_at(time: SystemTime) -> Result<u64, String> {
+    let timestamp = unix_epoch_millis_at(time)?;
     if timestamp == 0 {
         return Err("System clock must be later than the Unix epoch for model inventory.".to_string());
     }
     Ok(timestamp)
+}
+
+pub(crate) fn now_unix_ms() -> Result<u64, String> {
+    model_inventory_timestamp_at(SystemTime::now())
 }
 
 fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
@@ -313,13 +317,13 @@ mod tests {
     }
 
     #[test]
-    fn inventory_clock_rejects_pre_epoch_time_without_fabricating_a_timestamp() {
-        assert_eq!(unix_epoch_millis_at(UNIX_EPOCH).unwrap(), 0);
+    fn inventory_clock_rejects_epoch_and_pre_epoch_time_without_fabricating_a_timestamp() {
+        assert!(model_inventory_timestamp_at(UNIX_EPOCH).is_err());
         assert_eq!(
-            unix_epoch_millis_at(UNIX_EPOCH + std::time::Duration::from_millis(1_234)).unwrap(),
+            model_inventory_timestamp_at(UNIX_EPOCH + std::time::Duration::from_millis(1_234)).unwrap(),
             1_234
         );
-        assert!(unix_epoch_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
+        assert!(model_inventory_timestamp_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
     }
 
     #[test]
