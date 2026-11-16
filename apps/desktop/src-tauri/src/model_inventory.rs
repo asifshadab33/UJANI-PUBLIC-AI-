@@ -117,12 +117,12 @@ impl InventoryEvidence {
     }
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
+pub(crate) fn now_unix_ms() -> Result<u64, String> {
+    let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or(1)
-        .max(1)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    u64::try_from(duration.as_millis())
+        .map_err(|_| "System clock exceeds the supported model-inventory timestamp range.".to_string())
 }
 
 fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
@@ -166,7 +166,7 @@ pub(crate) fn normalize_memory_readings(
 /// Build inventory v1 from already-bounded OS and local-runtime observations.
 /// Unknown accelerator, storage, context and capability values remain unknown;
 /// this function never probes another endpoint or reads user content.
-pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory {
+pub fn build_inventory(input: ModelInventoryInput<'_>, observed_at: u64) -> ModelRuntimeInventory {
     let ModelInventoryInput {
         models,
         metadata,
@@ -180,7 +180,6 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         memory_available_mb,
         accelerator,
     } = input;
-    let observed_at = now_unix_ms();
     let (memory_total_mb, memory_available_mb) =
         normalize_memory_readings(memory_total_mb, memory_available_mb);
     let gpu_activity_confirmed = accelerator
@@ -330,7 +329,7 @@ mod tests {
             memory_total_mb: Some(16_384),
             memory_available_mb: Some(8_192),
             accelerator: None,
-        });
+        }, 1_000);
 
         assert_eq!(inventory.schema_version, 1);
         assert_eq!(inventory.runtimes[0].availability, "unavailable");
@@ -365,7 +364,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: None,
-        });
+        }, 1_000);
         assert_eq!(inventory.models[0].estimated_min_memory_mb, None);
     }
 
@@ -385,7 +384,7 @@ mod tests {
             memory_total_mb: Some(8_192),
             memory_available_mb: Some(16_384),
             accelerator: None,
-        });
+        }, 1_000);
 
         assert_eq!(inventory.hardware.memory_total_mb, Some(8_192));
         assert_eq!(inventory.hardware.memory_available_mb, None);
@@ -407,7 +406,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: Some(2_048),
             accelerator: None,
-        });
+        }, 1_000);
 
         assert_eq!(inventory.hardware.memory_total_mb, None);
         assert_eq!(inventory.hardware.memory_available_mb, Some(2_048));
@@ -429,7 +428,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: None,
-        });
+        }, 1_000);
         let value = serde_json::to_value(inventory).expect("inventory serializes");
         assert_eq!(value["schema_version"], 1);
         assert!(value["generated_at_unix_ms"].as_u64().unwrap_or(0) > 0);
@@ -476,7 +475,7 @@ mod tests {
             memory_total_mb: Some(32_768),
             memory_available_mb: Some(20_000),
             accelerator: Some(&accelerator),
-        });
+        }, 1_000);
 
         assert_eq!(inventory.runtimes[0].version.as_deref(), Some("0.5.12"));
         assert_eq!(inventory.models[0].version.as_deref(), Some("a".repeat(64).as_str()));
