@@ -1751,6 +1751,7 @@ mod model_inventory_recommendation_tests {
         }, 1_000);
         let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
 
+        assert_eq!(inventory["generated_at_unix_ms"], 1_000);
         assert_eq!(inventory["hardware"]["memory_total_mb"], 8_192);
         assert!(inventory["hardware"]["memory_available_mb"].is_null());
         assert_eq!(status.recommendation.available_memory_mb, 0);
