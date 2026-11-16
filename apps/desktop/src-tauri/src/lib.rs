@@ -123,10 +123,20 @@ fn pdf_worker_network_isolation_state() -> CapabilityState {
 /// Read-only capability inventory. Unknown GPU/NPU/isolation capability is never treated as available.
 #[tauri::command]
 async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
-    let mut system = System::new();
-    system.refresh_cpu();
-    system.refresh_memory();
-    let cpu_available = std::thread::available_parallelism().is_ok();
+    // sysinfo probes are synchronous and may block on the host OS. Keep them off
+    // the async executor so cancellation and the task deadline can return.
+    let (logical_cpu_threads, available_memory_bytes) = tauri::async_runtime::spawn_blocking(|| {
+        let mut system = System::new();
+        system.refresh_memory();
+        let logical_cpu_threads = std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(0);
+        (logical_cpu_threads, system.available_memory())
+    })
+    .await
+    .map_err(|error| format!("System capability probe worker failed: {error}"))?;
+    let cpu_available = logical_cpu_threads > 0;
+    let available_memory_mb = available_memory_bytes / (1024 * 1024);
     let ollama_available = ollama::is_available().await;
     let accelerator = if ollama_available { ollama::accelerator_observation().await.ok() } else { None };
     let capabilities = vec![
@@ -134,13 +144,13 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
             id: "cpu".into(), category: "compute".into(),
             state: if cpu_available { CapabilityState::Available } else { CapabilityState::Unavailable },
             source: "Rust standard library / OS".into(),
-            detail: format!("{} logical CPU threads reported by the OS", system.cpus().len()),
+            detail: format!("{logical_cpu_threads} logical CPU threads reported by the OS"),
         },
         CapabilityRecord {
             id: "memory".into(), category: "system".into(),
-            state: if system.available_memory() > 0 { CapabilityState::Available } else { CapabilityState::Unknown },
+            state: if available_memory_bytes > 0 { CapabilityState::Available } else { CapabilityState::Unknown },
             source: "sysinfo / OS".into(),
-            detail: format!("{} MiB currently available; varies with other applications", system.available_memory() / (1024 * 1024)),
+            detail: format!("{available_memory_mb} MiB currently available; varies with other applications"),
         },
         CapabilityRecord {
             id: "ollama.local".into(), category: "model_runtime".into(),
@@ -205,8 +215,39 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     ];
     Ok(CapabilitySnapshot {
         capabilities, operations: registered_operations(),
-        available_memory_mb: system.available_memory() / (1024 * 1024),
+        available_memory_mb,
     })
+}
+
+/// Runs local policy/capability checks before invoking a selected-folder side effect.
+/// The callback is deliberately lazy: denied, cancelled or unavailable preflight never starts the OS picker.
+pub(crate) fn run_selected_folder_preflight<T>(
+    token: &CancellationToken,
+    snapshot: Result<&CapabilitySnapshot, String>,
+    operation_ids: &[&str],
+    start_picker: impl FnOnce() -> T,
+) -> Result<T, String> {
+    ensure_task_not_cancelled(token)?;
+    let snapshot = snapshot?;
+    ensure_task_not_cancelled(token)?;
+    for operation_id in operation_ids {
+        require_local_operation(snapshot, operation_id, "fortress")?;
+    }
+    ensure_task_not_cancelled(token)?;
+    Ok(start_picker())
+}
+
+/// Converts a native picker result into a required selected-folder scope.
+/// A missing selection and an unconvertible/non-local path both fail before traversal.
+pub(crate) fn require_selected_folder<T>(
+    selected: Result<Option<T>, String>,
+    cancelled_message: &str,
+) -> Result<T, String> {
+    match selected {
+        Ok(Some(folder)) => Ok(folder),
+        Ok(None) => Err(cancelled_message.to_string()),
+        Err(error) => Err(error),
+    }
 }
 
 /// Enforce the shared local capability plan before a sensitive local inference begins.
@@ -231,6 +272,116 @@ pub(crate) fn require_local_operation(
     Ok(())
 }
 
+
+#[cfg(test)]
+mod selected_folder_preflight_regressions {
+    use super::*;
+    use std::cell::Cell;
+
+    fn snapshot(capabilities: Vec<CapabilityRecord>, available_memory_mb: u64) -> CapabilitySnapshot {
+        CapabilitySnapshot { capabilities, operations: registered_operations(), available_memory_mb }
+    }
+
+    fn capability(id: &str, state: CapabilityState) -> CapabilityRecord {
+        CapabilityRecord {
+            id: id.into(), category: "test".into(), state,
+            source: "synthetic regression fixture".into(), detail: "not device telemetry".into(),
+        }
+    }
+
+    fn cpu_ready() -> Vec<CapabilityRecord> {
+        vec![capability("cpu", CapabilityState::Available)]
+    }
+
+    #[test]
+    fn selected_folder_tools_do_not_require_ollama() {
+        let snapshot = selected_folder_capability_snapshot(4096, true, false);
+        assert!(!snapshot.capabilities.iter().any(|item| item.id == "ollama.local"));
+        assert!(plan_local_task("file.search.local", "smart", 4096, &snapshot.capabilities).accepted);
+        assert!(plan_local_task("file.duplicates.preview", "smart", 4096, &snapshot.capabilities).accepted);
+        assert!(plan_local_task("file.large_files.preview", "smart", 4096, &snapshot.capabilities).accepted);
+        assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &snapshot.capabilities).accepted);
+
+        let pdf_ready = selected_folder_capability_snapshot(4096, true, true);
+        assert!(plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
+    }
+
+    #[test]
+    fn missing_capability_denies_before_folder_picker() {
+        let snapshot = snapshot(Vec::new(), 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.search.local"], || picker_started.set(true));
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn unknown_or_stale_capability_denies_before_folder_picker() {
+        let snapshot = snapshot(vec![capability("cpu", CapabilityState::Unknown)], 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.duplicates.preview"], || picker_started.set(true));
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn optional_pdf_search_requires_its_own_capability_before_picker() {
+        let snapshot = snapshot(cpu_ready(), 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(
+            &token, Ok(&snapshot), &["file.search.local", "file.search.pdf_text"],
+            || picker_started.set(true),
+        );
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn capability_discovery_failure_denies_before_folder_picker() {
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(
+            &token, Err("capability discovery unavailable".into()), &["file.large_files.preview"],
+            || picker_started.set(true),
+        );
+        assert!(result.is_err());
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn cancellation_before_picker_denies_without_side_effect() {
+        let snapshot = snapshot(cpu_ready(), 4096);
+        let token = CancellationToken::new();
+        token.cancel();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.large_files.preview"], || picker_started.set(true));
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(!picker_started.get());
+    }
+
+    #[test]
+    fn registered_local_preflight_invokes_picker_only_after_all_checks() {
+        let snapshot = snapshot(cpu_ready(), 4096);
+        let token = CancellationToken::new();
+        let picker_started = Cell::new(false);
+        let result = run_selected_folder_preflight(&token, Ok(&snapshot), &["file.large_files.preview"], || {
+            picker_started.set(true);
+            7usize
+        });
+        assert_eq!(result.unwrap(), 7);
+        assert!(picker_started.get());
+    }
+
+    #[test]
+    fn missing_or_malformed_native_folder_scope_fails_before_traversal() {
+        assert!(require_selected_folder::<()>(Ok(None), "Folder selection cancelled.").is_err());
+        assert!(require_selected_folder::<()>(Err("The selected folder is not a local filesystem path.".into()), "Folder selection cancelled.").is_err());
+        assert_eq!(require_selected_folder(Ok(Some(7usize)), "Folder selection cancelled.").unwrap(), 7);
+    }
+}
 
 /// Returns the bounded, built-in tool catalogue. Listing metadata never executes a tool or grants permissions.
 #[tauri::command]
@@ -1339,6 +1490,63 @@ pub(crate) async fn get_capability_snapshot_for_task(
         Duration::from_secs(8),
         "Local capability discovery exceeded its 8-second time budget.",
         get_capability_snapshot(),
+    ).await
+}
+
+/// Build the minimal capability view needed by OS-native selected-folder tools.
+/// These operations must not depend on Ollama, GPU probes or model availability.
+fn selected_folder_capability_snapshot(
+    available_memory_mb: u64,
+    cpu_available: bool,
+    pdf_available: bool,
+) -> CapabilitySnapshot {
+    CapabilitySnapshot {
+        capabilities: vec![
+            CapabilityRecord {
+                id: "cpu".into(),
+                category: "compute".into(),
+                state: if cpu_available { CapabilityState::Available } else { CapabilityState::Unavailable },
+                source: "Rust standard library / OS".into(),
+                detail: "Local filesystem work uses the device CPU; no model runtime is required.".into(),
+            },
+            CapabilityRecord {
+                id: "pdf.text_extraction".into(),
+                category: "document".into(),
+                state: if pdf_available { CapabilityState::Available } else { CapabilityState::Unavailable },
+                source: if pdf_available { "Bundled PDF text parser".into() } else { "Platform capability gate".into() },
+                detail: if pdf_available {
+                    "Text-based PDFs only; scanned-page OCR is not implemented.".into()
+                } else {
+                    "PDF text extraction is unavailable on this platform build.".into()
+                },
+            },
+        ],
+        operations: registered_operations(),
+        available_memory_mb,
+    }
+}
+
+/// Bounded capability discovery for local file operations without probing Ollama.
+pub(crate) async fn get_selected_folder_capability_snapshot_for_task(
+    token: &CancellationToken,
+) -> Result<CapabilitySnapshot, String> {
+    ensure_task_not_cancelled(token)?;
+    let probe = tauri::async_runtime::spawn_blocking(|| {
+        let mut system = System::new();
+        system.refresh_memory();
+        Ok(selected_folder_capability_snapshot(
+            system.available_memory() / (1024 * 1024),
+            std::thread::available_parallelism().is_ok(),
+            !cfg!(target_os = "android"),
+        ))
+    });
+    await_task_with_limits(
+        token,
+        Duration::from_secs(2),
+        "Local file capability discovery exceeded its 2-second time budget.",
+        async move {
+            probe.await.map_err(|error| format!("Local file capability worker failed: {error}"))?
+        },
     ).await
 }
 

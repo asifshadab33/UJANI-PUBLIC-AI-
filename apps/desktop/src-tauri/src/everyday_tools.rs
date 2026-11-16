@@ -65,39 +65,30 @@ pub async fn find_duplicate_files(
     control: State<'_, super::TaskControlState>,
     task_id: String,
 ) -> Result<DuplicateScanResult, String> {
-    if !super::valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
-    }
-
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
-    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to scan for duplicate files.", 1);
-
+    let registration = super::register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    super::ensure_task_not_cancelled(&token)?;
+    let snapshot = super::get_selected_folder_capability_snapshot_for_task(&token).await;
+    super::emit_task_progress(&app, &task_id, "starting", "Checking local permissions and choosing a folder for duplicate preview.", 1);
     let picker_app = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to find duplicates").blocking_pick_folder() else {
-            return Ok(None);
-        };
-        folder.into_path()
-            .map(Some)
-            .map_err(|_| "The selected folder is not a local filesystem path.".to_string())
-    })
-    .await
-    .map_err(|error| format!("Folder picker failed: {error}"))??;
-
+    let selected = super::run_selected_folder_preflight(
+        &token,
+        snapshot.as_ref().map_err(Clone::clone),
+        &["file.duplicates.preview"],
+        move || tauri::async_runtime::spawn_blocking(move || {
+            let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to find duplicates").blocking_pick_folder() else {
+                return Ok(None);
+            };
+            folder.into_path()
+                .map(Some)
+                .map_err(|_| "The selected folder is not a local filesystem path.".to_string())
+        }),
+    )?;
+    let selected = selected.await.map_err(|error| format!("Folder picker failed: {error}"))?;
+    let folder = super::require_selected_folder(selected, "Folder selection cancelled. Nothing was scanned.")?;
     if token.is_cancelled() {
         return Err("Duplicate scan cancelled by user.".into());
     }
-    let Some(folder) = selected else {
-        return Err("Folder selection cancelled. Nothing was scanned.".into());
-    };
     super::emit_task_progress(&app, &task_id, "scanning", "Scanning the selected folder for duplicates.", 10);
 
     let worker_token = token.clone();

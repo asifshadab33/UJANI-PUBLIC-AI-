@@ -161,34 +161,36 @@ pub async fn find_local_files(
     search_pdf_text: bool,
     force_refresh: bool,
 ) -> Result<LocalSearchResult, String> {
-    if !super::valid_command_identifier(&task_id, 96) {
-        return Err("Invalid task identifier.".into());
-    }
     let query = query.trim().to_lowercase();
     if query.is_empty() || query.encode_utf16().count() > 160 || query.chars().any(char::is_control) {
         return Err("Enter a search phrase between 1 and 160 characters.".into());
     }
 
-    let token = CancellationToken::new();
-    {
-        let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-        if active.contains_key(&task_id) {
-            return Err("Task identifier is already active.".into());
-        }
-        active.insert(task_id.clone(), token.clone());
-    }
-    let _active_guard = super::ActiveTaskGuard { control: &control, task_id: task_id.clone() };
-    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder to search.", 1);
-
+    let registration = super::register_active_task(&control, &task_id)?;
+    let token = registration.token.clone();
+    super::ensure_task_not_cancelled(&token)?;
+    let snapshot = super::get_selected_folder_capability_snapshot_for_task(&token).await;
+    super::emit_task_progress(&app, &task_id, "starting", "Checking local permissions and choosing a folder.", 1);
     let picker_app = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
-        let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
-            return Ok(None);
-        };
-        let path = folder.into_path()
-            .map_err(|_| "The selected folder is not a local filesystem path.".to_string())?;
-        Ok(Some(path))
-    }).await.map_err(|e| format!("Folder picker failed: {e}"))??;
+    let required_operations: &[&str] = if search_pdf_text {
+        &["file.search.local", "file.search.pdf_text"]
+    } else {
+        &["file.search.local"]
+    };
+    let selected = super::run_selected_folder_preflight(
+        &token,
+        snapshot.as_ref().map_err(Clone::clone),
+        required_operations,
+        move || tauri::async_runtime::spawn_blocking(move || -> Result<Option<PathBuf>, String> {
+            let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to search").blocking_pick_folder() else {
+                return Ok(None);
+            };
+            let path = folder.into_path()
+                .map_err(|_| "The selected folder is not a local filesystem path.".to_string())?;
+            Ok(Some(path))
+        }),
+    )?;
+    let selected = selected.await.map_err(|e| format!("Folder picker failed: {e}"))??;
 
     if token.is_cancelled() {
         return Err("File search cancelled by user.".into());
@@ -382,12 +384,21 @@ pub async fn find_local_files(
             let store_inventory = inventory_json.to_owned();
             let store_payload = payload;
             let negative = result.matches.is_empty();
-            let _ = tauri::async_runtime::spawn_blocking(move || {
+            let cache_write = tauri::async_runtime::spawn_blocking(move || {
                 crate::search_cache::store(
                     &store_app, &store_root, &store_query, search_pdf_text,
                     &store_inventory, &store_payload, negative
                 )
             }).await;
+            if !matches!(cache_write, Ok(Ok(()))) {
+                super::emit_task_progress(
+                    &app,
+                    &task_id,
+                    "receipt_warning",
+                    "The search result is available, but the optional encrypted cache update or its provenance receipt needs attention.",
+                    100,
+                );
+            }
         }
     }
     Ok(result)

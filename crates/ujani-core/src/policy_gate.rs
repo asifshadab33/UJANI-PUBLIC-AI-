@@ -108,6 +108,10 @@ pub fn evaluate_local_registered_operation(operation_id: &str, available_memory_
   .as_ref()
   .map(|value| value.minimum_available_memory_mb.max(1))
   .unwrap_or(1);
+ let max_runtime_seconds = operation
+  .as_ref()
+  .map(|value| value.max_runtime_seconds)
+  .unwrap_or(0);
  let request = ExecutionRequest {
   task_id: "local-policy-preflight".into(),
   operation_id: operation_id.into(),
@@ -121,8 +125,8 @@ pub fn evaluate_local_registered_operation(operation_id: &str, available_memory_
   owner_opted_in: false,
   operation_registered,
   policy_version: 1,
-  max_runtime_seconds: 240,
-  requested_runtime_seconds: 240,
+  max_runtime_seconds,
+  requested_runtime_seconds: max_runtime_seconds,
   max_memory_mb: available_memory_mb,
   requested_memory_mb,
  };

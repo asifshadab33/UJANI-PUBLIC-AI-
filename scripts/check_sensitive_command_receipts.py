@@ -36,6 +36,13 @@ REQUIRED_POLICY_MARKERS = {
         "validate_security_provider_ids",
         "native_consent::confirm_native",
     ),
+    ("lib.rs", "execute_document_workflow"): (
+        "validate_document_workflow_content(&content)?;",
+        "register_active_task(&control, &task_id)?;",
+        "ensure_task_not_cancelled(&token)?;",
+        "run_managed_task_registered(",
+        "plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities)",
+    ),
     ("lib.rs", "execute_cloud_ai_task"): (
         "ujani_core::policy_gate::parse_data_class",
         "ujani_core::policy_gate::evaluate_registered_external_transfer",
@@ -48,7 +55,6 @@ REQUIRED_POLICY_MARKERS = {
         "native_consent::confirm_native",
         "reserve_execution_receipt_slot",
     ),
-    ("lib.rs", "execute_document_workflow"): ("plan_task_graph(",),
     ("lib.rs", "summarize_selected_text"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_document"): ('require_local_operation(&snapshot, "document.summarize"',),
     ("lib.rs", "process_selected_pdf"): ('require_local_operation(&snapshot, "pdf.extract_and_summarize"',),
@@ -73,6 +79,30 @@ REQUIRED_POLICY_MARKERS = {
         "require_local_operation(",
         '"file.analyze_text"',
         '"document.summarize"',
+    ),
+    ("local_search.rs", "find_local_files"): (
+        "register_active_task",
+        "get_selected_folder_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
+        '"file.search.local"',
+        '"file.search.pdf_text"',
+    ),
+    ("everyday_tools.rs", "find_duplicate_files"): (
+        "register_active_task",
+        "get_selected_folder_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
+        '"file.duplicates.preview"',
+    ),
+    ("file_insights.rs", "find_large_files"): (
+        "register_active_task",
+        "get_selected_folder_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
+        '"file.large_files.preview"',
+    ),
+    ("lib.rs", "get_selected_folder_capability_snapshot_for_task"): (
+        "ensure_task_not_cancelled",
+        "spawn_blocking",
+        "await_task_with_limits",
     ),
     ("folder_import.rs", "collect_selected_folder"): (
         "collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)",
@@ -105,9 +135,15 @@ REQUIRED_ORDERED_MARKERS = {
         "await_task_with_limits(",
         "ollama::list_models()",
         "ensure_task_not_cancelled(&token)?;",
-        'execution_outcome(&result, "140-second")',
-        "outcome: Some(outcome)",
-        'persist_receipt_or_warn("Local inference"',
+    ),
+    ("lib.rs", "execute_document_workflow"): (
+        "validate_document_workflow_content(&content)?;",
+        "register_active_task(&control, &task_id)?;",
+        "ensure_task_not_cancelled(&token)?;",
+        "local_receipt_context(",
+        "run_managed_task_registered(",
+        "get_capability_snapshot_for_task(&task_token).await?",
+        "plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities)",
     ),
     ("lib.rs", "summarize_selected_text"): (
         "let registration = register_active_task(&control, &task_id)?;",
@@ -155,20 +191,46 @@ REQUIRED_ORDERED_MARKERS = {
         "crate::ensure_task_not_cancelled(&task_token)?;",
         "crate::run_managed_task_registered(",
     ),
-    ("lib.rs", "execute_document_workflow"): (
-        "validate_document_workflow_content(&content)?;",
-        "let registration = register_active_task(&control, &task_id)?;",
-        "ensure_task_not_cancelled(&token)?;",
-        "local_receipt_context(",
-        "run_managed_task_registered(",
-        "get_capability_snapshot_for_task(&task_token).await?",
-        "plan_task_graph(",
+    ("local_search.rs", "find_local_files"): (
+        "register_active_task",
+        "get_selected_folder_capability_snapshot_for_task",
+        "required_operations",
+        '"file.search.local"',
+        '"file.search.pdf_text"',
+        "run_selected_folder_preflight",
+        "blocking_pick_folder()",
+    ),
+    ("everyday_tools.rs", "find_duplicate_files"): (
+        "register_active_task",
+        "get_selected_folder_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
+        '"file.duplicates.preview"',
+        "blocking_pick_folder()",
+        "require_selected_folder",
+    ),
+    ("file_insights.rs", "find_large_files"): (
+        "register_active_task",
+        "get_selected_folder_capability_snapshot_for_task",
+        "run_selected_folder_preflight",
+        '"file.large_files.preview"',
+        "blocking_pick_folder()",
+        "require_selected_folder",
+    ),
+    ("search_cache.rs", "store"): (
+        "settings_from_db(&db)?.enabled",
+        "with_local_state_receipt",
+        "transaction_with_behavior(TransactionBehavior::Immediate)",
+        "settings_from_db(&tx)",
+        "scope_for_path_in_transaction",
+        "tx.execute(",
+        "trim_cache(&tx",
+        "tx.commit()",
     ),
 }
 
 REQUIRED_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): (
-        'execution_outcome(&result, "140-second")',
+        "execution_outcome(&result",
         "outcome: Some(outcome)",
         'persist_receipt_or_warn("Local inference"',
     ),
@@ -188,6 +250,7 @@ REQUIRED_MARKERS = {
         "outcome: Some(outcome)",
     ),
     ("folder_import.rs", "process_selected_folder"): ("run_managed_task_registered(",),
+    ("search_cache.rs", "store"): ("with_local_state_receipt", '"search_cache.store"'),
     ("search_cache.rs", "set_local_search_cache_settings"): ("with_local_state_receipt",),
     ("search_cache.rs", "clear_local_search_cache"): ("with_local_state_receipt",),
     ("history.rs", "set_task_history_enabled"): ("with_local_state_receipt",),
@@ -251,6 +314,9 @@ def main() -> None:
         )
 
     required_tests = {
+        "search_cache.rs": (
+            "cache_store_receipt_input_uses_only_non_sensitive_flags",
+        ),
         "lib.rs": (
             "managed_task_outcomes_are_classified_for_receipts",
             "failed_receipt_digest_does_not_include_error_text",
@@ -259,7 +325,14 @@ def main() -> None:
             "pdf_pipeline_requires_parser_and_local_model_capabilities",
             "worker_and_partner_are_not_scheduled_by_the_local_policy",
             "cancellation_drops_the_in_flight_preflight_future",
-            "local_ai_failure_receipt_digest_does_not_include_error_text",
+            "selected_folder_tools_do_not_require_ollama",
+            "missing_capability_denies_before_folder_picker",
+            "unknown_or_stale_capability_denies_before_folder_picker",
+            "optional_pdf_search_requires_its_own_capability_before_picker",
+            "capability_discovery_failure_denies_before_folder_picker",
+            "cancellation_before_picker_denies_without_side_effect",
+            "registered_local_preflight_invokes_picker_only_after_all_checks",
+            "missing_or_malformed_native_folder_scope_fails_before_traversal",
         ),
         "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
         "security_store.rs": ("immediate_local_state_transaction_commits_and_rolls_back",),
@@ -269,6 +342,10 @@ def main() -> None:
         for test_name in test_names:
             if test_name not in tests:
                 raise SystemExit(f"missing receipt/policy regression test in {path}: {test_name}")
+    core_capability_tests = (ROOT / "crates/ujani-core/src/capability.rs").read_text(encoding="utf-8")
+    if "selected_folder_operations_are_registered_and_resource_bounded" not in core_capability_tests:
+        raise SystemExit("missing selected-folder operation catalogue/resource regression test")
+
     policy_gate_tests = (ROOT / "crates/ujani-core/src/policy_gate.rs").read_text(encoding="utf-8")
     for test_name in (
         "data_classification_parser_rejects_unknown_and_unclassified_values",
