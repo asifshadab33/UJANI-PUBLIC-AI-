@@ -94,14 +94,14 @@ mod tests {
     #[test]
     fn rejects_path_like_and_control_character_image_names() {
         let jpeg = [0xff, 0xd8, 0xff];
-        for name in ["../photo.jpg", "folder/photo.jpg", "photo\\n.jpg", ".", ".."] {
+        for name in ["../photo.jpg", "folder/photo.jpg", "photo\n.jpg", ".", ".."] {
             assert!(inspect_image(name, &jpeg, jpeg.len() as u64).is_err(), "accepted {name:?}");
         }
         assert!(inspect_image(&"n".repeat(256), &jpeg, jpeg.len() as u64).is_err());
         assert!(inspect_image("photo.jpg", &jpeg, jpeg.len() as u64).is_ok());
         #[cfg(windows)]
         {
-            assert!(inspect_image(r"C:\\Users\\person\\photo.jpg", &jpeg, jpeg.len() as u64).is_err());
+            assert!(inspect_image(r"C:\Users\person\photo.jpg", &jpeg, jpeg.len() as u64).is_err());
             assert!(inspect_image("photo:stream.jpg", &jpeg, jpeg.len() as u64).is_err());
         }
     }
