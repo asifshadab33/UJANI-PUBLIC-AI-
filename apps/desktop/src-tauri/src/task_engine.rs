@@ -709,10 +709,19 @@ pub(crate) fn has_pdf_header(data: &[u8]) -> bool {
     prefix.windows(5).any(|window| window == b"%PDF-")
 }
 
-fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), String> {
-    if mode != "fortress" && mode != "smart" { return Err("PDF processing is available in Fortress and Smart only.".into()); }
+pub(crate) fn validate_pdf_metadata(file_name: &str, mode: &str) -> Result<(), String> {
+    if mode != "fortress" && mode != "smart" {
+        return Err("PDF processing is available in Fortress and Smart only.".into());
+    }
     validate_display_filename(file_name)?;
-    if !file_name.to_ascii_lowercase().ends_with(".pdf") { return Err("Select a valid PDF file.".into()); }
+    if !file_name.to_ascii_lowercase().ends_with(".pdf") {
+        return Err("Select a valid PDF file.".into());
+    }
+    Ok(())
+}
+
+fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), String> {
+    validate_pdf_metadata(file_name, mode)?;
     if data.is_empty() || data.len() > 10 * 1024 * 1024 { return Err("PDF files must be non-empty and no larger than 10 MiB.".into()); }
     if !has_pdf_header(data) { return Err("The selected file does not have a valid PDF header.".into()); }
     Ok(())
@@ -727,7 +736,7 @@ fn validate_translation_input(text: &str, target_language: &str, mode: &str) -> 
     Ok(())
 }
 
-fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Result<(), String> {
+pub(crate) fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Result<(), String> {
     if mode != "fortress" && mode != "smart" {
         return Err("Document processing is available in Fortress and Smart only.".into());
     }
