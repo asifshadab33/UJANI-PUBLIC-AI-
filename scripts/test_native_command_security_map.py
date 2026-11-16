@@ -19,8 +19,8 @@ class NativeCommandSideEffectOrderingTests(unittest.TestCase):
     def test_cloud_policy_and_native_approval_precede_receipt_budget_and_network(self):
         source = """
         async fn execute_cloud_ai_task() {
-            parse_data_class();
-            evaluate_registered_external_transfer();
+            ujani_core::policy_gate::parse_data_class();
+            ujani_core::policy_gate::evaluate_registered_external_transfer();
             cloud_gateway::validate_request();
             native_consent::confirm_native().await;
             reserve_execution_receipt_slot();
