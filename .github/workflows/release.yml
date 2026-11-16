@@ -254,7 +254,7 @@ jobs:
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: "UJANI Public AI ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           releaseBody: |
-            # UJANI Public AI v0.1.0 — Pre-alpha preview
+            # UJANI Public AI ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }} — Pre-alpha preview
 
             This is an early, experimental preview for evaluation and feedback. It is not production-ready and must not be deployed to production infrastructure or employee endpoints.
 
