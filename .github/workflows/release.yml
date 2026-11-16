@@ -595,7 +595,7 @@ jobs:
             throw new Error('Updater manifest is missing a version or platform artifacts.');
           }
           function parseVersion(value) {
-            const match = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Za-z.-]+))?(?:\\+[0-9A-Za-z.-]+)?$/.exec(value);
+            const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
             if (!match) throw new Error('Unsupported updater version: ' + value);
             return { core: match.slice(1, 4).map(Number), pre: match[4] ? match[4].split('.') : [] };
           }
@@ -608,8 +608,8 @@ jobs:
               if (a.pre[i] === undefined) return -1;
               if (b.pre[i] === undefined) return 1;
               if (a.pre[i] === b.pre[i]) continue;
-              const an = /^(0|[1-9]\\d*)$/.test(a.pre[i]);
-              const bn = /^(0|[1-9]\\d*)$/.test(b.pre[i]);
+              const an = /^(0|[1-9]\d*)$/.test(a.pre[i]);
+              const bn = /^(0|[1-9]\d*)$/.test(b.pre[i]);
               if (an && bn) return Number(a.pre[i]) < Number(b.pre[i]) ? -1 : 1;
               if (an !== bn) return an ? -1 : 1;
               return a.pre[i] < b.pre[i] ? -1 : 1;
