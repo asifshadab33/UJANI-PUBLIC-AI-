@@ -14,14 +14,16 @@ pub struct SecurityProviderStatus {
     pub status: String,
     pub source: String,
     pub detail: String,
-    pub observed_at_unix_ms: u64,
+    pub observed_at_unix_ms: Option<u64>,
 }
 
-fn observed_at_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
+fn observed_at_unix_ms_at(time: SystemTime) -> Option<u64> {
+    let duration = time.duration_since(UNIX_EPOCH).ok()?;
+    u64::try_from(duration.as_millis()).ok()
+}
+
+fn observed_at_unix_ms() -> Option<u64> {
+    observed_at_unix_ms_at(SystemTime::now())
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -187,7 +189,15 @@ pub fn read_only_status(
 
 #[cfg(test)]
 mod tests {
-    use super::status_from_windows_result;
+    use super::{observed_at_unix_ms_at, status_from_windows_result};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn provider_timestamp_is_unknown_when_system_clock_precedes_epoch() {
+        assert_eq!(observed_at_unix_ms_at(UNIX_EPOCH), Some(0));
+        assert_eq!(observed_at_unix_ms_at(UNIX_EPOCH + Duration::from_millis(1_234)), Some(1_234));
+        assert_eq!(observed_at_unix_ms_at(UNIX_EPOCH - Duration::from_millis(1)), None);
+    }
 
     #[test]
     fn maps_documented_windows_health_values_without_overstating_protection() {
