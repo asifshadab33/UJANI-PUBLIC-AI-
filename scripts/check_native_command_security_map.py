@@ -327,7 +327,13 @@ def missing_history_key_recovery_guards(source: str) -> list[str]:
         "if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows)"
     )
     create_at = source.find("entry.set_password(encoded.as_str())")
-    if policy_at < 0 or create_at < 0 or policy_at > create_at:
+    marker_after_create_at = source.find("mark_history_key_initialized(db)?", create_at)
+    if (
+        policy_at < 0
+        or create_at < 0
+        or policy_at > create_at
+        or marker_after_create_at < create_at
+    ):
         return ["history_key"]
     if source.count("history_key(&db)?") != 3:
         return ["history_key"]
