@@ -76,7 +76,7 @@ export function validateManifest(manifest, expected = {}) {
   return manifest;
 }
 
-/** Atomically replace the feed only when the incoming signed manifest is newer. */
+/** Atomically replace the feed only when the incoming approved updater manifest is newer. */
 export function publishManifest(incomingPath, outputPath, expected = {}) {
   const incoming = validateManifest(JSON.parse(fs.readFileSync(incomingPath, "utf8")), expected);
   if (fs.existsSync(outputPath)) {
