@@ -52,7 +52,8 @@ fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
     let duration = time
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
-    Ok(duration.as_millis().min(u64::MAX as u128) as u64)
+    u64::try_from(duration.as_millis())
+        .map_err(|_| "System clock exceeds the supported local-clock timestamp range.".to_string())
 }
 
 /// Returns the current local device clock as milliseconds since the Unix epoch.
@@ -417,6 +418,9 @@ mod tests {
             1_234
         );
         assert!(unix_epoch_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
+        assert!(unix_epoch_millis_at(
+            UNIX_EPOCH + std::time::Duration::from_secs(u64::MAX / 1_000 + 1)
+        ).is_err());
     }
 }
 
