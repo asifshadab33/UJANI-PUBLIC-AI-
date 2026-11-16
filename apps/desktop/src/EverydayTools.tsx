@@ -52,8 +52,6 @@ export default function EverydayTools() {
     const timer = window.setInterval(() => {
       const wallNow = Date.now();
       const monotonicNow = performance.now();
-      const wallElapsed = wallNow - previousWall;
-      const monotonicElapsed = monotonicNow - previousMonotonic;
       if (hasWallClockJump(previousWall, wallNow, previousMonotonic, monotonicNow)) {
         setClockWarning("The device clock changed, or the device resumed with a time offset, while UJANI was open. Check your operating-system date, time and automatic time-synchronisation settings.");
       }
