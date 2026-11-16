@@ -227,7 +227,7 @@ This review inspected the two repository backlogs, current pull-request metadata
 ### Public roadmap reconciliation PRs
 
 - **PR #302 — open, ready for review** (head `71dfb47aa1299870666b00d6c7262cba7b98a380`): records the mirrored draft v1 task/runtime schemas and shared descriptive model catalogue. Final protocol approval and per-artifact licence/source/checksum/quantized-size metadata remain pending. Exact-head CI, CodeQL and installer-size audit were still running at the time of this record.
-- **PR #303 — open, ready for review** (head `7431d237c3e309c25e3870fde9c024707107a99f`): corrects Worker/Partner descriptions to the user's agreed semantics and makes the Fortress OS-isolation limitation visible. It keeps Worker/Partner unavailable and adds regression tests; the latest head's CI, CodeQL and installer-size checks were queued at the time of this record.
+- **PR #303 — open, ready for review** (head `b0c142c358cee8d136983947673bf9ba871de413`): corrects Worker/Partner descriptions to the user's agreed semantics and makes the Fortress OS-isolation limitation visible. It keeps Worker/Partner unavailable and adds regression tests; the latest head's CI, CodeQL and installer-size checks were queued at the time of this record.
 
 ### Cross-repository boundary
 
