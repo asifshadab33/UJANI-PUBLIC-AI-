@@ -2,7 +2,7 @@
 
 ## Responsibility boundary
 
-UJANI reads the device clock; it does not set, repair, or silently synchronise the operating-system clock. Windows Time, systemd-timesyncd/chrony, or macOS time synchronisation remains the OS administrator's responsibility. A timezone setting changes calendar display, not the underlying UTC instant.
+UJANI reads the device clock; it does not set, repair, or silently synchronise the operating-system clock. Windows Time, systemd-timesyncd/chrony, or macOS time synchronisation remains the OS administrator's responsibility. A timezone setting changes calendar display, not the underlying UTC instant. To correct an inaccurate clock, use Windows Settings → Time & language → Date & time (automatic time/Sync now), macOS System Settings → General → Date & Time, or the Linux desktop Date & Time settings / organisation-approved time service. UJANI should direct users to those OS controls, not change the clock itself.
 
 The native local-clock command returns Unix-epoch milliseconds. The current Everyday Tools display reads the same operating-system clock through the webview's `Date` API and formats it using the device's local timezone. Both represent an OS-supplied instant; neither independently verifies that the clock is correct.
 
