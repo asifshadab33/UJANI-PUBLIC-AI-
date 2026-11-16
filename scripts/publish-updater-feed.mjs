@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const VERSION_PATTERN = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$/;
-const NUMERIC_IDENTIFIER = /^(0|[1-9]\\d*)$/;
+const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const NUMERIC_IDENTIFIER = /^(0|[1-9]\d*)$/;
 
 export function parseSemver(value) {
   if (typeof value !== "string") throw new TypeError("Version must be a string.");
@@ -11,7 +11,7 @@ export function parseSemver(value) {
   if (!match) throw new Error("Unsupported semantic version: " + value);
   const prerelease = match[4] ? match[4].split(".") : [];
   for (const identifier of prerelease) {
-    if (/^\\d+$/.test(identifier) && !NUMERIC_IDENTIFIER.test(identifier)) {
+    if (/^\d+$/.test(identifier) && !NUMERIC_IDENTIFIER.test(identifier)) {
       throw new Error("Numeric prerelease identifiers must not contain leading zeroes.");
     }
   }
@@ -102,7 +102,7 @@ function main() {
     repository,
     tag: releaseTag,
   });
-  process.stdout.write(published ? "publish\\n" : "skip\\n");
+  process.stdout.write(published ? "publish\n" : "skip\n");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
