@@ -6,6 +6,8 @@ from check_native_command_security_map import (
     missing_demo_command_guards,
     missing_file_metadata_guards,
     missing_document_ipc_preflight_guards,
+    missing_history_receipt_guards,
+    missing_history_listing_receipt_guards,
     registered_commands,
 )
 
@@ -117,6 +119,63 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
             altered = source.replace(guarded, unguarded)
             self.assertNotEqual(altered, source, f"test fixture did not remove {name} guard")
             self.assertEqual(missing_demo_command_guards(altered), [name])
+
+    def test_selected_file_metadata_commands_must_use_the_core_validators(self):
+        source = """
+        fn analyze_text_file() {
+            LocalTaskEngine::analyze_text(file_name, content)
+        }
+        fn inspect_image_file() {
+            LocalTaskEngine::inspect_image(file_name, data, file_size_bytes)
+        }
+        """
+        self.assertEqual(missing_file_metadata_guards(source), [])
+        altered = source.replace("LocalTaskEngine::inspect_image", "Ok")
+        self.assertEqual(missing_file_metadata_guards(altered), ["inspect_image_file"])
+
+
+    def test_history_listing_maintenance_is_receipt_wrapped(self):
+        source = """
+        fn list_task_history() {
+            with_local_state_receipt(
+                "history.entry.list",
+                b"history.entry.list-maintenance.v1",
+                || {
+                    migrate_plaintext_rows(&db, &key)?;
+                    db.execute("DELETE FROM task_history WHERE created_at < ?1", [])?;
+                    let entries = list_secure(&db, &key)?;
+                    let output_metadata = serde_json::to_vec(&entries.len())?;
+                    Ok((entries, output_metadata))
+                },
+            )
+        }
+        """
+        self.assertEqual(missing_history_listing_receipt_guards(source), [])
+        unwrapped = source.replace("with_local_state_receipt(", "execute_without_receipt(")
+        self.assertEqual(missing_history_listing_receipt_guards(unwrapped), ["list_task_history"])
+        content_bearing = source.replace("serde_json::to_vec(&entries.len())", "serde_json::to_vec(&entries)")
+        self.assertEqual(missing_history_listing_receipt_guards(content_bearing), ["list_task_history"])
+
+    def test_history_receipt_is_metadata_only_and_validation_precedes_reservation(self):
+        source = """
+        fn save_task_history() {
+            validate_history_values(prompt, output, mode, model, kind)?;
+            let input = history_receipt_metadata(mode, model, kind, prompt.len(), output.len())?;
+            with_local_state_receipt(input);
+        }
+        fn history_receipt_metadata(
+            mode: &str, model: &str, kind: &str,
+            prompt_bytes: usize, output_bytes: usize,
+        ) {
+            serde_json::to_vec(&(mode, model, kind, prompt_bytes, output_bytes))
+        }
+        """
+        self.assertEqual(missing_history_receipt_guards(source), [])
+        late_validation = source.replace("validate_history_values", "sha256_hex")
+        self.assertEqual(missing_history_receipt_guards(late_validation), ["save_task_history"])
+        content_bearing_metadata = source.replace("prompt_bytes", "prompt")
+        self.assertEqual(missing_history_receipt_guards(content_bearing_metadata), ["history_receipt_metadata"])
+
 
     def test_document_ipc_preflight_precedes_registration_runtime_and_decode(self):
         source = """

@@ -21,6 +21,46 @@ const MAX_PROMPT: usize = 32 * 1024;
 const MAX_OUTPUT: usize = 2 * 1024 * 1024;
 const MAX_STORED_OUTPUT: usize = 64 * 1024;
 
+fn validate_history_values(
+ prompt: &str,
+ output: &str,
+ mode: &str,
+ model: &str,
+ kind: &str,
+) -> Result<(), String> {
+ if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT {
+  return Err("History prompt must be non-empty and at most 32 KiB.".into());
+ }
+ if output.trim().is_empty() || output.len() > MAX_OUTPUT {
+  return Err("History output must be non-empty and at most 2 MiB.".into());
+ }
+ for (name, value, max) in [("mode", mode, 32usize), ("model", model, 128usize), ("kind", kind, 32usize)] {
+  if value.len() > max || value.chars().any(char::is_control) {
+   return Err(format!("Invalid history {name}."));
+  }
+ }
+ Ok(())
+}
+
+/// Receipt input contains only operation metadata and byte lengths, never content or content hashes.
+fn history_receipt_metadata(
+ mode: &str,
+ model: &str,
+ kind: &str,
+ prompt_bytes: usize,
+ output_bytes: usize,
+) -> Result<Vec<u8>, String> {
+ serde_json::to_vec(&(
+  "history.entry.create.v1",
+  mode,
+  model,
+  kind,
+  prompt_bytes,
+  output_bytes,
+ ))
+ .map_err(|error| format!("Could not encode history receipt metadata: {error}"))
+}
+
 #[derive(Debug, Serialize)]
 pub struct HistoryEntry { pub id:i64, pub prompt:String, pub output:String, pub mode:String, pub model:String, pub kind:String, pub created_at:i64 }
 #[derive(Debug, Serialize)]
@@ -199,11 +239,7 @@ fn save_secure(
  created_at: i64,
 ) -> Result<i64, String> {
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
- if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT { return Err("History prompt must be non-empty and at most 32 KiB.".into()); }
- if output.trim().is_empty() || output.len() > MAX_OUTPUT { return Err("History output must be non-empty and at most 2 MiB.".into()); }
- for (name,value,max) in [("mode",mode,32usize),("model",model,128usize),("kind",kind,32usize)] {
-  if value.len()>max || value.chars().any(char::is_control) { return Err(format!("Invalid history {name}.")); }
- }
+ validate_history_values(prompt, output, mode, model, kind)?;
  let stored_output = if output.len() > MAX_STORED_OUTPUT {
   let mut boundary=MAX_STORED_OUTPUT;
   while !output.is_char_boundary(boundary) { boundary-=1; }
@@ -280,9 +316,7 @@ fn settings(db:&Connection)->Result<HistorySettings,String>{Ok(HistorySettings{e
 #[cfg(test)]
 fn save(db:&mut Connection,prompt:&str,output:&str,mode:&str,model:&str,kind:&str,created_at:i64)->Result<i64,String>{
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
- if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{return Err("History prompt must be non-empty and at most 32 KiB.".into());}
- if output.trim().is_empty()||output.len()>MAX_OUTPUT{return Err("History output must be non-empty and at most 2 MiB.".into());}
- for (name,value,max) in [("mode",mode,32usize),("model",model,128usize),("kind",kind,32usize)] {if value.len()>max||value.chars().any(char::is_control){return Err(format!("Invalid history {name}."));}}
+ validate_history_values(prompt, output, mode, model, kind)?;
  let stored_output = if output.len() > MAX_STORED_OUTPUT {
   let mut boundary = MAX_STORED_OUTPUT;
   while !output.is_char_boundary(boundary) { boundary -= 1; }
@@ -334,16 +368,9 @@ pub fn save_task_history(
     model: String,
     kind: String,
 ) -> Result<i64, String> {
-    let input = serde_json::to_vec(&(
-        crate::sha256_hex(prompt.as_bytes()),
-        crate::sha256_hex(output.as_bytes()),
-        &mode,
-        &model,
-        &kind,
-        prompt.len(),
-        output.len(),
-    ))
-    .map_err(|error| format!("Could not encode history receipt metadata: {error}"))?;
+    // Reject unbounded IPC input before receipt reservation or any content-derived work.
+    validate_history_values(&prompt, &output, &mode, &model, &kind)?;
+    let input = history_receipt_metadata(&mode, &model, &kind, prompt.len(), output.len())?;
     crate::with_local_state_receipt(&app, "history.entry.create", &input, || {
         let mut db = open(&app)?;
         if !is_enabled(&db)? {
@@ -363,14 +390,33 @@ pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
     if !is_enabled(&db)? {
         return Ok(Vec::new());
     }
-    let key = history_key()?;
-    migrate_plaintext_rows(&db, &key)?;
-    db.execute(
-        "DELETE FROM task_history WHERE created_at < ?1",
-        params![now()?.saturating_sub(RETENTION_SECONDS)],
+    drop(db);
+
+    // Listing performs bounded legacy migration and retention cleanup. Reserve an
+    // audit slot before those persistent maintenance effects; receipt metadata
+    // contains no history content, identifiers, paths or key material.
+    crate::with_local_state_receipt(
+        &app,
+        "history.entry.list",
+        b"history.entry.list-maintenance.v1",
+        || {
+            let db = open(&app)?;
+            if !is_enabled(&db)? {
+                return Ok((Vec::new(), b"history-disabled".to_vec()));
+            }
+            let key = history_key()?;
+            migrate_plaintext_rows(&db, &key)?;
+            db.execute(
+                "DELETE FROM task_history WHERE created_at < ?1",
+                params![now()?.saturating_sub(RETENTION_SECONDS)],
+            )
+            .map_err(|error| error.to_string())?;
+            let entries = list_secure(&db, &key)?;
+            let output_metadata = serde_json::to_vec(&entries.len())
+                .map_err(|error| format!("Could not encode history-list receipt metadata: {error}"))?;
+            Ok((entries, output_metadata))
+        },
     )
-    .map_err(|error| error.to_string())?;
-    list_secure(&db, &key)
 }
 
 #[tauri::command]
@@ -432,6 +478,30 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
   let encrypted=cipher.encrypt(&nonce,value.as_bytes()).unwrap();
   let mut payload=nonce.to_vec();payload.extend_from_slice(&encrypted);
   format!("{ENCRYPTED_PREFIX}{}",B64.encode(payload))
+ }
+
+ #[test]
+ fn history_receipt_metadata_is_content_independent_and_bound_to_metadata_and_lengths() {
+  let first = history_receipt_metadata("smart", "model-a", "chat", 14, 15).unwrap();
+  let same_metadata = history_receipt_metadata("smart", "model-a", "chat", 14, 15).unwrap();
+  assert_eq!(first, same_metadata);
+  assert_ne!(first, history_receipt_metadata("smart", "model-a", "chat", 15, 15).unwrap());
+  assert_ne!(first, history_receipt_metadata("smart", "model-b", "chat", 14, 15).unwrap());
+  let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
+  assert_eq!(value[0], "history.entry.create.v1");
+  assert_eq!(value[1], "smart");
+  assert_eq!(value[2], "model-a");
+  assert_eq!(value[3], "chat");
+  assert_eq!(value[4], 14);
+  assert_eq!(value[5], 15);
+ }
+
+ #[test]
+ fn history_ipc_validation_rejects_oversized_content_before_receipt_work() {
+  assert!(validate_history_values("", "output", "smart", "model-a", "chat").is_err());
+  assert!(validate_history_values(&"p".repeat(MAX_PROMPT + 1), "output", "smart", "model-a", "chat").is_err());
+  assert!(validate_history_values("prompt", &"o".repeat(MAX_OUTPUT + 1), "smart", "model-a", "chat").is_err());
+  assert!(validate_history_values("prompt", "output", &"m".repeat(33), "model-a", "chat").is_err());
  }
 
  #[test] fn encrypted_history_round_trips_and_detects_tampering() {

@@ -20,6 +20,7 @@ CORE_TASK_GRAPH = ROOT / "crates/ujani-core/src/task_graph.rs"
 APP_SOURCE = ROOT / "apps/desktop/src/App.tsx"
 FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
 REMINDER_STORE = ROOT / "apps/desktop/src-tauri/src/reminder_store.rs"
+HISTORY_SOURCE = ROOT / "apps/desktop/src-tauri/src/history.rs"
 CORE_FILE_PROCESSOR = ROOT / "crates/ujani-core/src/file_processor.rs"
 CORE_IMAGE_PROCESSOR = ROOT / "crates/ujani-core/src/image_processor.rs"
 TASK_ENGINE = ROOT / "apps/desktop/src-tauri/src/task_engine.rs"
@@ -258,6 +259,54 @@ def missing_document_ipc_preflight_guards(source: str) -> list[str]:
     return missing
 
 
+def missing_history_receipt_guards(source: str) -> list[str]:
+    """Require bounded history IPC validation before receipt reservation and metadata-only receipts."""
+    missing = []
+    try:
+        command = rust_function_body(source, "save_task_history")
+        metadata = rust_function_body(source, "history_receipt_metadata")
+    except ValueError:
+        return ["save_task_history"]
+
+    validation_at = command.find("validate_history_values")
+    metadata_at = command.find("history_receipt_metadata")
+    receipt_at = command.find("with_local_state_receipt")
+    if not (0 <= validation_at < metadata_at < receipt_at):
+        missing.append("save_task_history")
+    if "sha256_hex" in command_tokens(command):
+        missing.append("save_task_history")
+
+    metadata_tokens = command_tokens(metadata)
+    required = ("mode", "model", "kind", "prompt_bytes", "output_bytes")
+    if any(token not in metadata_tokens for token in required):
+        missing.append("history_receipt_metadata")
+    if "prompt" in metadata_tokens or "output" in metadata_tokens:
+        missing.append("history_receipt_metadata")
+    return sorted(set(missing))
+
+
+def missing_history_listing_receipt_guards(source: str) -> list[str]:
+    """Require a metadata-only receipt around history listing's migration/retention writes."""
+    try:
+        command = rust_function_body(source, "list_task_history")
+    except ValueError:
+        return ["list_task_history"]
+
+    receipt_at = command.find("with_local_state_receipt")
+    migration_at = command.find("migrate_plaintext_rows")
+    cleanup_at = command.find("DELETE FROM task_history")
+    read_at = command.find("list_secure")
+    if not (0 <= receipt_at < migration_at < read_at and receipt_at < cleanup_at < read_at):
+        return ["list_task_history"]
+    if '"history.entry.list"' not in command or "history.entry.list-maintenance.v1" not in command:
+        return ["list_task_history"]
+    if "serde_json::to_vec(&entries.len())" not in command:
+        return ["list_task_history"]
+    return []
+
+
+
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -435,6 +484,32 @@ def main() -> int:
         errors,
         "shared document IPC preflight validators",
     )
+
+    # History IPC must reject oversized caller content before reserving a receipt.
+    history_source = require_tokens(
+        HISTORY_SOURCE,
+        (
+            "fn validate_history_values(",
+            "prompt.len() > MAX_PROMPT",
+            "output.len() > MAX_OUTPUT",
+            "fn history_receipt_metadata(",
+        ),
+        errors,
+        "history IPC input validation",
+    )
+    missing_history_guards = missing_history_receipt_guards(history_source)
+    if missing_history_guards:
+        errors.append(
+            "history persistence: missing early validation or content-free receipt metadata in "
+            + ", ".join(missing_history_guards)
+        )
+
+    missing_history_list_guards = missing_history_listing_receipt_guards(history_source)
+    if missing_history_list_guards:
+        errors.append(
+            "history listing: maintenance writes must be receipt-wrapped with count-only output metadata in "
+            + ", ".join(missing_history_list_guards)
+        )
 
     # Folder selection must be registered/cancellable before opening the native picker.
     folder_source = require_tokens(
