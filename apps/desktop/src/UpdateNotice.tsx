@@ -152,7 +152,7 @@ export default function UpdateNotice() {
         {available && <button type="button" onClick={installUpdate} disabled={installing || checking}>
           {installing ? "Installing…" : "Install and restart"}
         </button>}
-        {!installing && <button type="button" onClick={() => { void available?.close(); setDismissed(true); }} aria-label="Dismiss update notice">Later</button>}
+        {!installing && <button type="button" onClick={() => { void available?.close(); setDismissed(true); }} disabled={checking} aria-label="Dismiss update notice">Later</button>}
       </div>
     </section>
   );
