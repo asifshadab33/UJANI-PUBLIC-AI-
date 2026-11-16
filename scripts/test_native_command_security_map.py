@@ -10,7 +10,60 @@ from check_native_command_security_map import (
     missing_history_listing_receipt_guards,
     missing_history_key_recovery_guards,
     registered_commands,
+    missing_cloud_transfer_preflight_guards,
+    missing_folder_import_preflight_guards,
 )
+
+
+class NativeCommandSideEffectOrderingTests(unittest.TestCase):
+    def test_cloud_policy_and_native_approval_precede_receipt_budget_and_network(self):
+        source = """
+        async fn execute_cloud_ai_task() {
+            parse_data_class();
+            evaluate_registered_external_transfer();
+            cloud_gateway::validate_request();
+            native_consent::confirm_native().await;
+            reserve_execution_receipt_slot();
+            reserve_cloud_tokens();
+            cloud_gateway::execute().await;
+        }
+        """
+        self.assertEqual(missing_cloud_transfer_preflight_guards(source), [])
+        unsafe = source.replace(
+            "native_consent::confirm_native().await;",
+            "cloud_gateway::execute().await; native_consent::confirm_native().await;",
+        )
+        self.assertEqual(missing_cloud_transfer_preflight_guards(unsafe), ["execute_cloud_ai_task"])
+
+    def test_selected_folder_capability_gate_precedes_native_picker_and_walk(self):
+        source = """
+        async fn process_selected_folder() {
+            register_active_task();
+            get_capability_snapshot_for_task().await;
+            require_local_operation();
+            blocking_pick_folder();
+            collect_selected_folder();
+        }
+        """
+        self.assertEqual(missing_folder_import_preflight_guards(source), [])
+        unsafe = source.replace(
+            "require_local_operation();\n            blocking_pick_folder();",
+            "blocking_pick_folder();\n            require_local_operation();",
+        )
+        self.assertEqual(missing_folder_import_preflight_guards(unsafe), ["process_selected_folder"])
+
+    def test_folder_import_does_not_accept_a_webview_path(self):
+        source = """
+        async fn process_selected_folder() {
+            register_active_task();
+            get_capability_snapshot_for_task().await;
+            require_local_operation();
+            let selected_path = PathBuf::from("caller-controlled");
+            blocking_pick_folder();
+            collect_selected_folder();
+        }
+        """
+        self.assertEqual(missing_folder_import_preflight_guards(source), ["process_selected_folder"])
 
 
 class NativeCommandSecurityMapParserTests(unittest.TestCase):
