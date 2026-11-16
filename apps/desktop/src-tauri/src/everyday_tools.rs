@@ -50,11 +50,15 @@ struct Candidate {
 
 #[tauri::command]
 /// Returns the current local device clock as milliseconds since the Unix epoch.
-pub fn get_local_clock() -> Result<u64, String> {
-    SystemTime::now()
+fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
+    let duration = time
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    Ok(duration.as_millis().min(u64::MAX as u128) as u64)
+}
+
+pub fn get_local_clock() -> Result<u64, String> {
+    unix_epoch_millis_at(SystemTime::now())
 }
 
 /// Opens a native folder picker and previews duplicate files; it never deletes or changes files.
@@ -415,4 +419,15 @@ pub async fn find_duplicate_files(
     _task_id: String,
 ) -> Result<DuplicateScanResult, String> {
     Err("Folder-based duplicate scanning is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
+
+    #[test]
+    fn local_clock_uses_unix_epoch_milliseconds_and_rejects_pre_epoch_time() {
+        assert_eq!(unix_epoch_millis_at(UNIX_EPOCH).unwrap(), 0);
+        assert_eq!(
+            unix_epoch_millis_at(UNIX_EPOCH + std::time::Duration::from_millis(1_234)).unwrap(),
+            1_234
+        );
+        assert!(unix_epoch_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
+    }
+
 }
