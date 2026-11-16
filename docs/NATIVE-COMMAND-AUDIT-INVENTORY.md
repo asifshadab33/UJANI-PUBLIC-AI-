@@ -88,7 +88,7 @@ These commands must remain unavailable in normal builds unless the opt-in featur
 
 ### Selected-file metadata IPC slice (2026-11-16)
 
-`analyze_text_file` and `inspect_image_file` are source-reviewed as pure local parsers: neither opens a filesystem path nor contacts a runtime or network service. Text analysis is capped at 1 MiB. Image inspection reads at most a 64 KiB header and rejects a declared original size above 20 MiB; it does not decode pixels. Both routes now share the core pathless display-name validator, rejecting path separators and control characters (and Windows drive/stream separators). CI checks that the native IPC commands continue to delegate to these bounded core parsers. This closes only these two input-validation paths; it does not complete issue #120 or the wider authorization, receipt and denial-matrix review.
+`analyze_text_file` and `inspect_image_file` are source-reviewed as pure local parsers: the intended UI flow supplies content from a user-selected file, but native IPC treats every argument as untrusted; neither command opens a filesystem path nor contacts a runtime or network service. Text analysis is capped at 1 MiB. Image inspection reads at most a 64 KiB header and rejects a declared original size above 20 MiB; it does not decode pixels. Both routes now share the core pathless display-name validator, rejecting path separators and control characters (and Windows drive/stream separators). CI checks that the native IPC commands continue to delegate to these bounded core parsers. This closes only these two input-validation paths; it does not complete issue #120 or the wider authorization, receipt and denial-matrix review.
 
 ### Current filesystem race boundary — Windows release blocker
 
