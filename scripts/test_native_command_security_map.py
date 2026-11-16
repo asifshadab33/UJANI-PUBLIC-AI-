@@ -4,6 +4,7 @@ from check_native_command_security_map import (
     command_tokens,
     find_matching_delimiter,
     missing_demo_command_guards,
+    missing_file_metadata_guards,
     registered_commands,
 )
 
@@ -115,6 +116,19 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
             altered = source.replace(guarded, unguarded)
             self.assertNotEqual(altered, source, f"test fixture did not remove {name} guard")
             self.assertEqual(missing_demo_command_guards(altered), [name])
+
+    def test_selected_file_metadata_commands_must_use_the_core_validators(self):
+        source = """
+        fn analyze_text_file() {
+            LocalTaskEngine::analyze_text(file_name, content)
+        }
+        fn inspect_image_file() {
+            LocalTaskEngine::inspect_image(file_name, data, file_size_bytes)
+        }
+        """
+        self.assertEqual(missing_file_metadata_guards(source), [])
+        altered = source.replace("LocalTaskEngine::inspect_image", "Ok")
+        self.assertEqual(missing_file_metadata_guards(altered), ["inspect_image_file"])
 
 
 if __name__ == "__main__":
