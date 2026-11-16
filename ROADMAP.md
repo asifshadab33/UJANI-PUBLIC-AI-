@@ -9,7 +9,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [x] Add an initial typed Rust task/capability model and routing tests.
 - [x] Document privacy, security and contribution expectations.
 - [x] Establish CI for Rust core/native tests and frontend type-check/build on Linux, Windows and macOS; formatting, linting and automated dependency review remain pending.
-- [ ] Agree a versioned task protocol shared with UJANI Enterprise AI.
+- [x] Publish matching draft v1 task-envelope/status/receipt and model-runtime-inventory schemas, test vectors and hash-pinned shared manifests with UJANI Enterprise AI. Schema validation does not authenticate, authorise or execute tasks.
+- [ ] Agree and approve production task/capability protocol semantics and end-to-end interoperability with UJANI Enterprise AI.
 
 ## Phase 1 — desktop proof of concept
 - [x] Initial cross-platform desktop shell (Tauri 2 + React/TypeScript); pre-alpha UX, accessibility and installer validation remain pending.
@@ -30,7 +31,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 ## Phase 2 — local models and planning
 - [x] Local translation operation through loopback Ollama (Fortress/Smart; bounded input).
 - [x] Optional local translation stage in the integrated text/PDF summarisation workflow.
-- [ ] Model catalogue with licence, checksum, source and compatibility metadata.
+- [x] Publish a shared descriptive model catalogue v1 with task capabilities, hardware/RAM guidance, platform notes and hash-pinned parity with Enterprise.
+- [ ] Complete per-artifact verified licence, source, checksum, quantisation, download/storage size and compatibility metadata before enabling managed downloads.
 - [x] Integrate one local inference runtime behind a stable adapter (Ollama loopback adapter; prototype scope).
 - [x] Initial registered local operation catalogue and conservative plan preview.
 - [x] Versioned, bounded task graph schema with allow-listed operations, dependency validation, cycle rejection and deterministic topological planning (planning only; no general graph execution yet).
@@ -56,9 +58,7 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Verified GPU/NPU detection and model-runtime compatibility across Windows, macOS and Linux. Current GPU status becomes Available only when Ollama reports positive VRAM allocation for a running model; this is runtime evidence, not a full hardware/driver inventory. NPU remains Unknown.
 - [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token + firewall policy; macOS sandbox profile/entitlements; Linux namespaces/seccomp/Landlock as supported. Current native Fortress policy blocks UJANI cloud requests but does not isolate the application process or its loopback Ollama traffic.
 - [x] Signed Worker/Partner task-envelope protocol foundation: Ed25519 signatures, short-lived envelopes, exact task consent, allow-listed data scopes, payload digest binding and in-memory replay protection.
-See [docs/EXECUTION-MODES.md](docs/EXECUTION-MODES.md) for the exact mode semantics and current security gates.
-
-- [ ] Secure Worker/Partner gateway: Worker must receive bounded, signed cloud plans/delegations while the local device performs only approved allow-listed compute; Partner must support iterative local/cloud collaboration with explicit approval before each transfer, capped rounds/data, cancellation, local output verification and durable signed receipts. No free device control, shell access or automatic full-file/conversation-history sharing. Production gateways and execution remain disabled until independent security gates pass.
+- [ ] Secure Worker/Partner peer gateway: encrypted mutual-authenticated transport, task dispatch/execution, remote quotas, durable signed audit receipts and abuse controls. Identity, enrollment/revocation and persistent replay primitives exist but are not a transport or execution gateway.
 - [ ] Threat-model review and platform-specific security testing for each capability before production claims.
 - [ ] Independent security review, software bill of materials, accessibility and installer testing.
 
