@@ -56,6 +56,8 @@ This roadmap describes intended work, not completed features. Items are not prod
 - [ ] Verified GPU/NPU detection and model-runtime compatibility across Windows, macOS and Linux. Current GPU status becomes Available only when Ollama reports positive VRAM allocation for a running model; this is runtime evidence, not a full hardware/driver inventory. NPU remains Unknown.
 - [ ] OS-enforced Fortress isolation: Windows AppContainer/restricted token + firewall policy; macOS sandbox profile/entitlements; Linux namespaces/seccomp/Landlock as supported. Current native Fortress policy blocks UJANI cloud requests but does not isolate the application process or its loopback Ollama traffic.
 - [x] Signed Worker/Partner task-envelope protocol foundation: Ed25519 signatures, short-lived envelopes, exact task consent, allow-listed data scopes, payload digest binding and in-memory replay protection.
+See [docs/EXECUTION-MODES.md](docs/EXECUTION-MODES.md) for the exact mode semantics and current security gates.
+
 - [ ] Secure Worker/Partner gateway: Worker must receive bounded, signed cloud plans/delegations while the local device performs only approved allow-listed compute; Partner must support iterative local/cloud collaboration with explicit approval before each transfer, capped rounds/data, cancellation, local output verification and durable signed receipts. No free device control, shell access or automatic full-file/conversation-history sharing. Production gateways and execution remain disabled until independent security gates pass.
 - [ ] Threat-model review and platform-specific security testing for each capability before production claims.
 - [ ] Independent security review, software bill of materials, accessibility and installer testing.
