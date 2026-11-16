@@ -48,13 +48,13 @@ pub fn registered_operations() -> Vec<OperationDescriptor> {
     vec![
         OperationDescriptor { id: "local.ai.generate".into(), description: "Generate a response with an installed local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
         OperationDescriptor { id: "document.summarize".into(), description: "Summarise user-selected text with a local model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
-        OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
+        OperationDescriptor { id: "pdf.extract_and_summarize".into(), description: "Extract text from a selected PDF and summarise it locally".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "ollama.local".into(), "pdf.worker.resource_limits".into(), "pdf.worker.filesystem_isolation".into(), "pdf.worker.network_isolation".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
         OperationDescriptor { id: "translate.text".into(), description: "Translate supplied text with a local Ollama model".into(), required_capabilities: vec!["cpu".into(), "ollama.local".into()], minimum_available_memory_mb: 1024, max_runtime_seconds: 240 },
         OperationDescriptor { id: "local.word_count".into(), description: "Count words in user-supplied text".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
         OperationDescriptor { id: "file.analyze_text".into(), description: "Analyse user-supplied text without a model".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
         OperationDescriptor { id: "image.inspect".into(), description: "Inspect supported image headers and metadata".into(), required_capabilities: vec!["cpu".into(), "image.header_inspection".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
         OperationDescriptor { id: "file.search.local".into(), description: "Search metadata and supported text in one user-selected local folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 128, max_runtime_seconds: 600 },
-        OperationDescriptor { id: "file.search.pdf_text".into(), description: "Search text extracted from PDFs in one user-selected local folder".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into()], minimum_available_memory_mb: 256, max_runtime_seconds: 600 },
+        OperationDescriptor { id: "file.search.pdf_text".into(), description: "Search text extracted from PDFs in one user-selected local folder".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "pdf.worker.resource_limits".into(), "pdf.worker.filesystem_isolation".into(), "pdf.worker.network_isolation".into()], minimum_available_memory_mb: 256, max_runtime_seconds: 600 },
         OperationDescriptor { id: "file.duplicates.preview".into(), description: "Preview duplicate files by bounded local content hashing in one user-selected folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 128, max_runtime_seconds: 60 },
         OperationDescriptor { id: "file.large_files.preview".into(), description: "Preview large-file metadata in one user-selected local folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
     ]
@@ -128,6 +128,9 @@ mod tests {
             CapabilityRecord { id: "cpu".into(), category: "compute".into(), state: CapabilityState::Available, source: "test".into(), detail: "test CPU".into() },
             CapabilityRecord { id: "ollama.local".into(), category: "model_runtime".into(), state: if ollama { CapabilityState::Available } else { CapabilityState::Unavailable }, source: "test".into(), detail: "test Ollama".into() },
             CapabilityRecord { id: "pdf.text_extraction".into(), category: "document".into(), state: CapabilityState::Available, source: "test".into(), detail: "bundled parser".into() },
+            CapabilityRecord { id: "pdf.worker.resource_limits".into(), category: "security".into(), state: CapabilityState::Available, source: "test".into(), detail: "verified worker limits".into() },
+            CapabilityRecord { id: "pdf.worker.filesystem_isolation".into(), category: "security".into(), state: CapabilityState::Available, source: "test".into(), detail: "verified filesystem isolation".into() },
+            CapabilityRecord { id: "pdf.worker.network_isolation".into(), category: "security".into(), state: CapabilityState::Available, source: "test".into(), detail: "verified network isolation".into() },
             CapabilityRecord { id: "image.header_inspection".into(), category: "image".into(), state: CapabilityState::Available, source: "test".into(), detail: "header parser".into() },
         ]
     }
@@ -157,6 +160,25 @@ mod tests {
         assert!(p.accepted);
         assert_eq!(p.execution_location, "local");
         assert!(!p.execution_started);
+    }
+
+    #[test]
+    fn pdf_operations_fail_closed_without_verified_worker_security() {
+        for capability in [
+            "pdf.worker.resource_limits",
+            "pdf.worker.filesystem_isolation",
+            "pdf.worker.network_isolation",
+        ] {
+            let mut records = capabilities(true);
+            records.iter_mut().find(|record| record.id == capability).unwrap().state = CapabilityState::Unknown;
+            let summarize = plan_local_task("pdf.extract_and_summarize", "fortress", 4096, &records);
+            assert!(!summarize.accepted, "PDF summary must fail closed without {capability}");
+            assert!(summarize.missing_capabilities.contains(&capability.to_string()));
+
+            let search = plan_local_task("file.search.pdf_text", "fortress", 4096, &records);
+            assert!(!search.accepted, "PDF folder search must fail closed without {capability}");
+            assert!(search.missing_capabilities.contains(&capability.to_string()));
+        }
     }
 
     #[test]
