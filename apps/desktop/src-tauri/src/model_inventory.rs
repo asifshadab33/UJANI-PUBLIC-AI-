@@ -126,7 +126,11 @@ fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
 }
 
 pub(crate) fn now_unix_ms() -> Result<u64, String> {
-    unix_epoch_millis_at(SystemTime::now())
+    let timestamp = unix_epoch_millis_at(SystemTime::now())?;
+    if timestamp == 0 {
+        return Err("System clock must be later than the Unix epoch for model inventory.".to_string());
+    }
+    Ok(timestamp)
 }
 
 fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
