@@ -48,12 +48,16 @@ struct Candidate {
     size_bytes: u64,
 }
 
+fn unix_epoch_millis_from_duration(duration: std::time::Duration) -> Result<u64, String> {
+    u64::try_from(duration.as_millis())
+        .map_err(|_| "System clock exceeds the supported local-clock timestamp range.".to_string())
+}
+
 fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
     let duration = time
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
-    u64::try_from(duration.as_millis())
-        .map_err(|_| "System clock exceeds the supported local-clock timestamp range.".to_string())
+    unix_epoch_millis_from_duration(duration)
 }
 
 /// Returns the current local device clock as milliseconds since the Unix epoch.
@@ -418,9 +422,10 @@ mod tests {
             1_234
         );
         assert!(unix_epoch_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
-        assert!(unix_epoch_millis_at(
-            UNIX_EPOCH + std::time::Duration::from_secs(u64::MAX / 1_000 + 1)
-        ).is_err());
+        let out_of_range = std::time::Duration::from_millis(u64::MAX)
+            .checked_add(std::time::Duration::from_millis(1))
+            .unwrap();
+        assert!(unix_epoch_millis_from_duration(out_of_range).is_err());
     }
 }
 
