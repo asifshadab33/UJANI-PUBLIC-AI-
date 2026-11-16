@@ -303,16 +303,19 @@ mod selected_folder_preflight_regressions {
         assert!(plan_local_task("file.large_files.preview", "smart", 4096, &snapshot.capabilities).accepted);
         assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &snapshot.capabilities).accepted);
 
-        let mut pdf_ready = selected_folder_capability_snapshot(4096, true, true);
-        assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
+        let pdf_ready = selected_folder_capability_snapshot(4096, true, true);
         for id in [
             "pdf.worker.resource_limits",
             "pdf.worker.filesystem_isolation",
             "pdf.worker.network_isolation",
         ] {
-            pdf_ready.capabilities.iter_mut().find(|item| item.id == id).unwrap().state = CapabilityState::Available;
+            let record = pdf_ready.capabilities.iter().find(|item| item.id == id)
+                .expect("selected-folder capability view reports each PDF worker security boundary");
+            assert_ne!(record.state, CapabilityState::Available,
+                "unverified PDF worker boundary {id} must not be reported available");
         }
-        assert!(plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
+        assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
+        assert!(!plan_local_task("pdf.extract_and_summarize", "smart", 4096, &pdf_ready.capabilities).accepted);
     }
 
     #[test]
