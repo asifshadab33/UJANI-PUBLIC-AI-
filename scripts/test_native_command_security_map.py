@@ -247,9 +247,10 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         """
         self.assertEqual(missing_history_key_recovery_guards(source), [])
         unsafe = source.replace(
-            "if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {\\n                return Err(message.into());\\n            }\\n            entry.set_password(encoded.as_str())?;",
-            "entry.set_password(encoded.as_str())?;\\n            if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {\\n                return Err(message.into());\\n            }",
+            "if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {\n                return Err(message.into());\n            }\n            entry.set_password(encoded.as_str())?;",
+            "entry.set_password(encoded.as_str())?;\n            if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {\n                return Err(message.into());\n            }",
         )
+        self.assertNotEqual(unsafe, source)
         self.assertEqual(missing_history_key_recovery_guards(unsafe), ["history_key"])
 
 
