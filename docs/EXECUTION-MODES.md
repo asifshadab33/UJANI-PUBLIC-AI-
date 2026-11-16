@@ -39,3 +39,4 @@ This document records the intended mode semantics and the current implementation
 - Partner transfers are bounded per round; no silent expansion to full files or conversation history.
 - No Worker or Partner execution until authentication, consent, policy, isolation, quotas, cancellation, verification and audit gates pass end-to-end and receive independent security review.
 - Public AI remains independently usable; it does not require UJANI Enterprise AI to run local tasks.
+- Any experimental peer identity/nonce primitives are separate transport foundations; they do not redefine Worker or Partner, enable either mode, or grant execution permission. A peer-device extension would require a separate explicit design decision.
