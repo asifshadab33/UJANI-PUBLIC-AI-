@@ -36,11 +36,17 @@ pub struct RecentSearch {
     pub created_at: i64,
 }
 
-/// Reads wall-clock Unix time and rejects clocks earlier than the epoch.
+/// Converts a wall-clock instant to the signed SQLite seconds range without wrapping or saturation.
+fn unix_seconds_at(time: SystemTime) -> Result<i64, String> {
+    let duration = time
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    i64::try_from(duration.as_secs())
+        .map_err(|_| "System clock exceeds the supported cache timestamp range.".to_string())
+}
+
 fn now_seconds() -> Result<i64, String> {
-    SystemTime::now().duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
-        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+    unix_seconds_at(SystemTime::now())
 }
 
 /// Opens the app-local cache with restrictive directory permissions.
@@ -629,6 +635,16 @@ pub async fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_clock_rejects_pre_epoch_and_out_of_range_values_without_saturation() {
+        assert_eq!(unix_seconds_at(UNIX_EPOCH).unwrap(), 0);
+        assert_eq!(unix_seconds_at(UNIX_EPOCH + std::time::Duration::from_secs(123)).unwrap(), 123);
+        assert!(unix_seconds_at(UNIX_EPOCH - std::time::Duration::from_secs(1)).is_err());
+        assert!(unix_seconds_at(
+            UNIX_EPOCH + std::time::Duration::from_secs(i64::MAX as u64 + 1)
+        ).is_err());
+    }
 
     fn key() -> [u8; 32] {
         Aes256Gcm::generate_key(&mut OsRng).into()
