@@ -113,6 +113,10 @@ class ExecutionModeContractTests(unittest.TestCase):
             "Public AI remains independently usable",
             MODES,
         )
+        self.assertIn(
+            "Any experimental peer identity/nonce primitives are separate transport foundations",
+            MODES,
+        )
 
 
 if __name__ == "__main__":
