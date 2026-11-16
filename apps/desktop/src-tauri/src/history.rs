@@ -343,7 +343,21 @@ fn list_secure(db: &Connection, key: &[u8; 32]) -> Result<Vec<HistoryEntry>, Str
  Ok(entries)
 }
 
-fn now() -> Result<i64,String> { SystemTime::now().duration_since(UNIX_EPOCH).map(|d|d.as_secs() as i64).map_err(|e|e.to_string()) }
+fn epoch_seconds_to_i64(duration: std::time::Duration) -> Result<i64, String> {
+    i64::try_from(duration.as_secs())
+        .map_err(|_| "System clock exceeds the supported history timestamp range.".to_string())
+}
+
+fn unix_epoch_seconds_at(time: SystemTime) -> Result<i64, String> {
+    let duration = time
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    epoch_seconds_to_i64(duration)
+}
+
+fn now() -> Result<i64, String> {
+    unix_epoch_seconds_at(SystemTime::now())
+}
 
 fn initialize(db:&Connection)->Result<(),String>{
  db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA secure_delete=ON; PRAGMA journal_mode=DELETE;
@@ -781,6 +795,15 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
 
   let rows: i64 = c.query_row("SELECT COUNT(*) FROM task_history", [], |row| row.get(0)).unwrap();
   assert_eq!(rows, 0, "failed encryption must not leave an empty or plaintext placeholder row");
+ }
+
+
+ #[test]
+ fn history_clock_rejects_pre_epoch_and_out_of_range_timestamps_without_wrapping() {
+  assert!(unix_epoch_seconds_at(UNIX_EPOCH - std::time::Duration::from_secs(1)).is_err());
+  assert_eq!(unix_epoch_seconds_at(UNIX_EPOCH).unwrap(), 0);
+  assert_eq!(epoch_seconds_to_i64(std::time::Duration::from_secs(i64::MAX as u64)).unwrap(), i64::MAX);
+  assert!(epoch_seconds_to_i64(std::time::Duration::from_secs(i64::MAX as u64 + 1)).is_err());
  }
 
 }
