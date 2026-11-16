@@ -259,6 +259,50 @@ def missing_document_ipc_preflight_guards(source: str) -> list[str]:
     return missing
 
 
+def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
+    """Require classification, transfer policy and native approval before cloud side effects."""
+    try:
+        body = rust_function_body(source, "execute_cloud_ai_task")
+    except ValueError:
+        return ["execute_cloud_ai_task"]
+
+    ordered = (
+        "policy_gate::parse_data_class",
+        "evaluate_registered_external_transfer",
+        "cloud_gateway::validate_request",
+        "native_consent::confirm_native",
+        "reserve_execution_receipt_slot",
+        "reserve_cloud_tokens",
+        "cloud_gateway::execute",
+    )
+    positions = [body.find(token) for token in ordered]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        return ["execute_cloud_ai_task"]
+    return []
+
+
+def missing_folder_import_preflight_guards(source: str) -> list[str]:
+    """Require task/capability checks before the native picker and bounded file traversal."""
+    try:
+        body = rust_function_body(source, "process_selected_folder")
+    except ValueError:
+        return ["process_selected_folder"]
+
+    ordered = (
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        "require_local_operation",
+        "blocking_pick_folder",
+        "collect_selected_folder",
+    )
+    positions = [body.find(token) for token in ordered]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        return ["process_selected_folder"]
+    if "PathBuf" in body or "selected_path" in body:
+        return ["process_selected_folder"]
+    return []
+
+
 def missing_history_receipt_guards(source: str) -> list[str]:
     """Require bounded history IPC validation before receipt reservation and metadata-only receipts."""
     missing = []
@@ -517,6 +561,27 @@ def main() -> int:
         errors,
         "shared document IPC preflight validators",
     )
+
+    missing_cloud_guards = missing_cloud_transfer_preflight_guards(source)
+    if missing_cloud_guards:
+        errors.append(
+            "cloud dispatch: classification, registered transfer policy and native approval "
+            "must precede receipt/budget reservation and network execution in "
+            + ", ".join(missing_cloud_guards)
+        )
+
+    folder_source = require_tokens(
+        FOLDER_IMPORT,
+        ("pub async fn process_selected_folder(", "register_active_task", "blocking_pick_folder"),
+        errors,
+        "selected-folder native command",
+    )
+    missing_folder_guards = missing_folder_import_preflight_guards(folder_source)
+    if missing_folder_guards:
+        errors.append(
+            "selected-folder import: task and live capability preflight must precede the native picker "
+            "and bounded traversal in " + ", ".join(missing_folder_guards)
+        )
 
     # History IPC must reject oversized caller content before reserving a receipt.
     history_source = require_tokens(
