@@ -12,6 +12,7 @@ from check_native_command_security_map import (
     registered_commands,
     missing_cloud_transfer_preflight_guards,
     missing_folder_import_preflight_guards,
+    missing_local_state_mutation_receipt_guards,
 )
 
 
@@ -65,6 +66,89 @@ class NativeCommandSideEffectOrderingTests(unittest.TestCase):
         """
         self.assertEqual(missing_folder_import_preflight_guards(source), ["process_selected_folder"])
 
+
+
+class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
+    def test_cache_mutations_reserve_receipt_before_transactional_writes(self):
+        cache = """
+        fn set_local_search_cache_settings() {
+            with_local_state_receipt(|| {
+                transaction_with_behavior();
+                UPDATE cache_settings;
+                DELETE FROM search_cache;
+                DELETE FROM recent_searches;
+                DELETE FROM approved_scopes;
+            });
+        }
+        fn clear_local_search_cache() {
+            with_local_state_receipt(|| {
+                transaction_with_behavior();
+                DELETE FROM search_cache;
+                DELETE FROM recent_searches;
+                DELETE FROM approved_scopes;
+            });
+        }
+        """
+        history = """
+        fn set_task_history_enabled() {
+            with_local_state_receipt(|| {
+                migrate_plaintext_rows();
+                UPDATE history_settings;
+            });
+        }
+        fn delete_task_history() {
+            with_local_state_receipt(|| { DELETE FROM task_history; });
+        }
+        fn clear_task_history() {
+            with_local_state_receipt(|| { DELETE FROM task_history; });
+        }
+        """
+        security = """
+        fn set_cloud_budget_limit() {
+            confirm_native().await;
+            if !approved { return; }
+            with_local_state_receipt(|| { set_cloud_budget_limit_db(); });
+        }
+        """
+        self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), [])
+
+    def test_cache_clear_without_receipt_is_rejected(self):
+        cache = """
+        fn set_local_search_cache_settings() {
+            with_local_state_receipt(|| {
+                transaction_with_behavior(); UPDATE cache_settings;
+                DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes;
+            });
+        }
+        fn clear_local_search_cache() {
+            transaction_with_behavior(); DELETE FROM search_cache;
+            DELETE FROM recent_searches; DELETE FROM approved_scopes;
+        }
+        """
+        history = """
+        fn set_task_history_enabled() { with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
+        fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
+        fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
+        """
+        security = """
+        fn set_cloud_budget_limit() { confirm_native(); if !approved { return; } with_local_state_receipt(|| { set_cloud_budget_limit_db(); }); }
+        """
+        self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), ["clear_local_search_cache"])
+
+    def test_cloud_budget_change_requires_consent_before_receipt_and_write(self):
+        cache = """
+        fn set_local_search_cache_settings() { with_local_state_receipt(|| { transaction_with_behavior(); UPDATE cache_settings; DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes; }); }
+        fn clear_local_search_cache() { with_local_state_receipt(|| { transaction_with_behavior(); DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes; }); }
+        """
+        history = """
+        fn set_task_history_enabled() { with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
+        fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
+        fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
+        """
+        security = """
+        fn set_cloud_budget_limit() { with_local_state_receipt(|| { confirm_native(); set_cloud_budget_limit_db(); }); }
+        """
+        self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), ["set_cloud_budget_limit"])
 
 class NativeCommandSecurityMapParserTests(unittest.TestCase):
     def test_square_bracket_in_line_comment_does_not_truncate_handler(self):
