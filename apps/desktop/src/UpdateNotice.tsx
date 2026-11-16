@@ -5,18 +5,8 @@ import { relaunch } from "@tauri-apps/plugin-process";
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const isDevBuild = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
-async function checkWithTimeout(message: string): Promise<Update | null> {
-  let timeoutId: number | undefined;
-  try {
-    return await Promise.race([
-      check(),
-      new Promise<never>((_, reject) => {
-        timeoutId = window.setTimeout(() => reject(new Error(message)), 8_000);
-      }),
-    ]);
-  } finally {
-    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-  }
+async function checkWithTimeout(): Promise<Update | null> {
+  return check({ timeout: 8_000 });
 }
 
 function formatBytes(bytes: number): string {
@@ -42,7 +32,7 @@ export default function UpdateNotice() {
     setChecking(true);
     setMessage("Checking for a signed update…");
     try {
-      const update = await checkWithTimeout("Update check exceeded 8 seconds. You can keep using UJANI and retry later.");
+      const update = await checkWithTimeout();
       setAvailable(update);
       setMessage(update ? "" : "UJANI is up to date. No signed update is currently available.");
     } catch (error) {
@@ -61,7 +51,7 @@ export default function UpdateNotice() {
       checkingRef.current = true;
       setChecking(true);
       try {
-        const update = await checkWithTimeout("Automatic update check exceeded 8 seconds. The workspace remains available; retry from Updates & releases.");
+        const update = await checkWithTimeout();
         if (active) {
           setAvailable(update);
           setMessage(update ? "" : "No update available. UJANI is up to date.");
