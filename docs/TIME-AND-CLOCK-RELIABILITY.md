@@ -12,7 +12,7 @@ The native local-clock command returns Unix-epoch milliseconds. The current Ever
 - Use a monotonic clock (Rust `Instant`, browser monotonic performance clock, or equivalent) for elapsed durations, deadlines, cancellation budgets, retry delays and in-process TTLs.
 - Never calculate task duration by subtracting two wall-clock timestamps.
 - Store history timestamps in the supported signed SQLite integer range. Reject an out-of-range value; never cast and wrap it.
-- If the wall clock is unavailable or before the Unix epoch, preserve the local task's result where safe, but report that its calendar timestamp could not be recorded. Do not invent a timestamp.
+- If the wall clock is unavailable or before the Unix epoch, preserve local work where safe, but do not invent timestamps. Encrypted history, model-inventory generation and time-bound security actions must return an explicit clock error when they cannot create a valid timestamp; read-only security-provider status may still be shown with its observation time marked unavailable.
 - A timezone/DST change must alter display only; it must not change stored UTC instants or monotonic task durations.
 
 ## Clock-jump behaviour
