@@ -314,6 +314,12 @@ fn request_key_for_versions(
 
 /// Applies TTL, negative-result expiry, recent-query bounds and LRU/byte limits.
 fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(), String> {
+    // A backward wall-clock step can make entries appear to come from the future.
+    // Cache data is disposable: purge future-dated entries instead of extending their lifetime.
+    db.execute("DELETE FROM search_cache WHERE created_at > ?1", params![now])
+        .map_err(|error| error.to_string())?;
+    db.execute("DELETE FROM recent_searches WHERE created_at > ?1", params![now])
+        .map_err(|error| error.to_string())?;
     if settings.retention_days > 0 {
         let cutoff = now.saturating_sub(settings.retention_days.saturating_mul(86_400));
         db.execute("DELETE FROM search_cache WHERE created_at < ?1", params![cutoff])
@@ -817,6 +823,33 @@ mod tests {
         ).unwrap();
         assert_eq!(year_old, 1);
         assert_eq!(stale_negative, 0);
+    }
+
+    #[test]
+    fn backward_clock_step_purges_future_dated_cache_and_recent_search_rows() {
+        let db = memory_db();
+        insert_scope(&db, "scope");
+        insert_cache_row(&db, "scope", "future-cache", 101, 101, false, 8);
+        db.execute(
+            "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+             VALUES('scope','future-query','encrypted',0,101,101)",
+            [],
+        ).unwrap();
+
+        trim_cache(&db, &test_settings(0), 100).unwrap();
+
+        let cached: i64 = db.query_row(
+            "SELECT COUNT(*) FROM search_cache WHERE request_key='future-cache'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        let recent: i64 = db.query_row(
+            "SELECT COUNT(*) FROM recent_searches WHERE request_key='future-query'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(cached, 0);
+        assert_eq!(recent, 0);
     }
 
     #[test]
