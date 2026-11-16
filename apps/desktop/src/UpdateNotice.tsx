@@ -30,6 +30,7 @@ export default function UpdateNotice() {
     if (!isTauri() || isDevBuild || installingRef.current || checkingRef.current) return;
     checkingRef.current = true;
     setChecking(true);
+    setDismissed(false);
     setMessage("Checking for a signed update…");
     try {
       const update = await checkWithTimeout();
