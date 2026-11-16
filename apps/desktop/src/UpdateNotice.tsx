@@ -99,6 +99,7 @@ export default function UpdateNotice() {
             break;
         }
       }, { timeout: 300_000 });
+      setAvailable(null);
       setMessage("Update installed. Restarting UJANI…");
       try {
         await relaunch();
