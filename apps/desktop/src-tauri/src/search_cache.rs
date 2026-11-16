@@ -530,7 +530,7 @@ pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSett
 #[tauri::command]
 pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
+        let mut db = open(&app)?;
         let settings = settings_from_db(&db)?;
         if !settings.enabled { return Ok(Vec::new()); }
         trim_cache_current(&mut db, &settings)?;
