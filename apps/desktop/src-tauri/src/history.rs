@@ -730,4 +730,36 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
  #[test] fn stored_results_are_bounded(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let large="x".repeat(MAX_STORED_OUTPUT+100);save(&mut c,"p",&large,"smart","m","chat",1).unwrap();let row=list(&c).unwrap().remove(0);assert!(row.output.len()<=MAX_STORED_OUTPUT+64);assert!(row.output.contains("truncated to 64 KiB"));}
  #[test] fn rejects_oversized_values(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();assert!(save(&mut c,&"p".repeat(MAX_PROMPT+1),"o","smart","m","chat",1).is_err());assert!(save(&mut c,"p",&"o".repeat(MAX_OUTPUT+1),"smart","m","chat",1).is_err());}
+
+ #[test]
+ fn every_v3_authenticated_metadata_field_is_bound_to_history_ciphertext() {
+  let key = test_key();
+  let original = metadata("smart", "model-a", "chat", 42);
+  let encrypted = encrypt_text(&key, "private history", 7, "prompt", &original).unwrap();
+  assert_eq!(
+   decrypt_text(&key, &encrypted, 7, "prompt", &original).unwrap(),
+   "private history"
+  );
+
+  let changed_mode = metadata("worker", "model-a", "chat", 42);
+  let changed_model = metadata("smart", "model-b", "chat", 42);
+  let changed_kind = metadata("smart", "model-a", "completion", 42);
+  let changed_timestamp = metadata("smart", "model-a", "chat", 43);
+
+  for altered in [changed_mode, changed_model, changed_kind, changed_timestamp] {
+   assert!(
+    decrypt_text(&key, &encrypted, 7, "prompt", &altered).is_err(),
+    "modified row metadata must invalidate authenticated ciphertext"
+   );
+  }
+  assert!(
+   decrypt_text(&key, &encrypted, 8, "prompt", &original).is_err(),
+   "modified row identifier must invalidate authenticated ciphertext"
+  );
+  assert!(
+   decrypt_text(&key, &encrypted, 7, "output", &original).is_err(),
+   "modified column identifier must invalidate authenticated ciphertext"
+  );
+ }
+
 }
