@@ -408,7 +408,6 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
-}
 
     #[test]
     fn local_clock_uses_unix_epoch_milliseconds_and_rejects_pre_epoch_time() {
