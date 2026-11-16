@@ -12,7 +12,7 @@ This document records the intended mode semantics and the current implementation
 
 **Intended behaviour:** local-first execution. Use local models and OS capabilities when suitable; use external assistance only when the user explicitly approves the exact transfer and applicable policy permits it.
 
-**Current build:** Smart is the default mode. It supports the BYOK cloud gateway with fresh per-request native approval, data classification, a configurable installation-local daily token ceiling, request limits, timeouts and cancellation. A denial or timeout must not send the request.
+**Current build:** Smart is the default mode. It supports the BYOK cloud gateway with fresh per-request native approval, data classification, a configurable installation-local daily token ceiling, request limits, timeouts and cancellation. A denial or timeout before dispatch must not send the request; once the POST has been dispatched, a later request timeout cannot retract it or guarantee that the provider did not receive it.
 
 ## Worker
 
