@@ -110,8 +110,8 @@ class ExecutionModeContractTests(unittest.TestCase):
             MODES,
         )
         self.assertIn(
-            "No free device control, shell access or automatic full-file/conversation-history sharing.",
-            ROADMAP,
+            "must not receive free device control, shell access or unrestricted file access.",
+            MODES,
         )
 
     def test_public_ai_remains_independent_of_enterprise(self):
