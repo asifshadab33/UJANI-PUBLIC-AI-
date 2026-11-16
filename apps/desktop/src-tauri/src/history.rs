@@ -21,6 +21,46 @@ const MAX_PROMPT: usize = 32 * 1024;
 const MAX_OUTPUT: usize = 2 * 1024 * 1024;
 const MAX_STORED_OUTPUT: usize = 64 * 1024;
 
+fn validate_history_values(
+ prompt: &str,
+ output: &str,
+ mode: &str,
+ model: &str,
+ kind: &str,
+) -> Result<(), String> {
+ if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT {
+  return Err("History prompt must be non-empty and at most 32 KiB.".into());
+ }
+ if output.trim().is_empty() || output.len() > MAX_OUTPUT {
+  return Err("History output must be non-empty and at most 2 MiB.".into());
+ }
+ for (name, value, max) in [("mode", mode, 32usize), ("model", model, 128usize), ("kind", kind, 32usize)] {
+  if value.len() > max || value.chars().any(char::is_control) {
+   return Err(format!("Invalid history {name}."));
+  }
+ }
+ Ok(())
+}
+
+/// Receipt input contains only operation metadata and byte lengths, never content or content hashes.
+fn history_receipt_metadata(
+ mode: &str,
+ model: &str,
+ kind: &str,
+ prompt_bytes: usize,
+ output_bytes: usize,
+) -> Result<Vec<u8>, String> {
+ serde_json::to_vec(&(
+  "history.entry.create.v1",
+  mode,
+  model,
+  kind,
+  prompt_bytes,
+  output_bytes,
+ ))
+ .map_err(|error| format!("Could not encode history receipt metadata: {error}"))
+}
+
 #[derive(Debug, Serialize)]
 pub struct HistoryEntry { pub id:i64, pub prompt:String, pub output:String, pub mode:String, pub model:String, pub kind:String, pub created_at:i64 }
 #[derive(Debug, Serialize)]
@@ -28,12 +68,12 @@ pub struct HistorySettings { pub enabled:bool, pub retention_days:i64, pub max_e
 
 
 #[cfg(target_os = "android")]
-fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(_db: &Connection) -> Result<Zeroizing<[u8; 32]>, String> {
     Err("Encrypted task history is disabled on Android until Android Keystore integration is validated.".into())
 }
 
 #[cfg(not(target_os = "android"))]
-fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(db: &Connection) -> Result<Zeroizing<[u8; 32]>, String> {
  let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
   .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;
  match entry.get_password() {
@@ -43,19 +83,76 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
    // output buffer is erased if the decoder reports malformed base64.
    let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
    let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
-       .map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
+       .map_err(|_| "Stored history key is invalid; existing history is preserved. Restore the original key through your OS credential-vault recovery process before attempting recovery.".to_string())?;
    decoded.truncate(decoded_len);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
+   mark_history_key_initialized(db)?;
    Ok(Zeroizing::new(key))
   }
   Err(keyring::Error::NoEntry) => {
+   let has_rows = history_has_rows(db)?;
+   let key_was_initialized = history_key_was_initialized(db)?;
+   let has_encrypted_rows = history_has_encrypted_rows(db)?;
+   if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {
+    return Err(message.into());
+   }
    let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
    let encoded = Zeroizing::new(B64.encode(*key));
    entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
+   mark_history_key_initialized(db)?;
    Ok(key)
   }
   Err(e) => Err(format!("Could not read history key from OS credential vault: {e}")),
  }
+}
+
+fn missing_history_key_error(
+ has_rows: bool,
+ key_was_initialized: bool,
+ has_encrypted_rows: bool,
+) -> Option<&'static str> {
+ if has_rows && (key_was_initialized || has_encrypted_rows) {
+  Some("The OS credential vault no longer contains the key for existing history. Existing rows have been preserved and no replacement key was created. Restore the original key through your OS credential-vault recovery process; if no backup exists, the encrypted rows remain unreadable and should only be removed through an explicit history-clear action.")
+ } else {
+  None
+ }
+}
+
+fn history_has_rows(db: &Connection) -> Result<bool, String> {
+ db.query_row("SELECT EXISTS(SELECT 1 FROM task_history)", [], |row| row.get(0))
+  .map_err(|error| format!("Could not inspect local history state: {error}"))
+}
+
+fn history_key_was_initialized(db: &Connection) -> Result<bool, String> {
+ let value: Option<String> = db.query_row(
+  "SELECT value FROM history_settings WHERE key='key_initialized'",
+  [],
+  |row| row.get(0),
+ ).optional().map_err(|error| format!("Could not inspect history key state: {error}"))?;
+ Ok(value.as_deref() == Some("true"))
+}
+
+fn mark_history_key_initialized(db: &Connection) -> Result<(), String> {
+ db.execute(
+  "INSERT INTO history_settings(key,value) VALUES('key_initialized','true')
+   ON CONFLICT(key) DO UPDATE SET value='true'",
+  [],
+ ).map_err(|error| format!("Could not record history key state: {error}"))?;
+ Ok(())
+}
+
+fn history_has_encrypted_rows(db: &Connection) -> Result<bool, String> {
+ db.query_row(
+  "SELECT EXISTS(
+     SELECT 1 FROM task_history
+     WHERE prompt LIKE ?1 || '%' OR output LIKE ?1 || '%'
+        OR prompt LIKE ?2 || '%' OR output LIKE ?2 || '%'
+        OR prompt LIKE ?3 || '%' OR output LIKE ?3 || '%'
+   )",
+  params![ENCRYPTED_PREFIX, ENC_V2, ENC_V3],
+  |row| row.get(0),
+ )
+ .map_err(|error| format!("Could not inspect encrypted history state: {error}"))
 }
 
 fn legacy_row_aad(id: i64, column: &str) -> Vec<u8> {
@@ -199,11 +296,7 @@ fn save_secure(
  created_at: i64,
 ) -> Result<i64, String> {
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
- if prompt.trim().is_empty() || prompt.len() > MAX_PROMPT { return Err("History prompt must be non-empty and at most 32 KiB.".into()); }
- if output.trim().is_empty() || output.len() > MAX_OUTPUT { return Err("History output must be non-empty and at most 2 MiB.".into()); }
- for (name,value,max) in [("mode",mode,32usize),("model",model,128usize),("kind",kind,32usize)] {
-  if value.len()>max || value.chars().any(char::is_control) { return Err(format!("Invalid history {name}.")); }
- }
+ validate_history_values(prompt, output, mode, model, kind)?;
  let stored_output = if output.len() > MAX_STORED_OUTPUT {
   let mut boundary=MAX_STORED_OUTPUT;
   while !output.is_char_boundary(boundary) { boundary-=1; }
@@ -280,9 +373,7 @@ fn settings(db:&Connection)->Result<HistorySettings,String>{Ok(HistorySettings{e
 #[cfg(test)]
 fn save(db:&mut Connection,prompt:&str,output:&str,mode:&str,model:&str,kind:&str,created_at:i64)->Result<i64,String>{
  if !is_enabled(db)? { return Err("Task history is disabled.".into()); }
- if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{return Err("History prompt must be non-empty and at most 32 KiB.".into());}
- if output.trim().is_empty()||output.len()>MAX_OUTPUT{return Err("History output must be non-empty and at most 2 MiB.".into());}
- for (name,value,max) in [("mode",mode,32usize),("model",model,128usize),("kind",kind,32usize)] {if value.len()>max||value.chars().any(char::is_control){return Err(format!("Invalid history {name}."));}}
+ validate_history_values(prompt, output, mode, model, kind)?;
  let stored_output = if output.len() > MAX_STORED_OUTPUT {
   let mut boundary = MAX_STORED_OUTPUT;
   while !output.is_char_boundary(boundary) { boundary -= 1; }
@@ -310,7 +401,7 @@ pub fn set_task_history_enabled(app: AppHandle, enabled_value: bool) -> Result<H
     crate::with_local_state_receipt(&app, "history.settings.update", &input, || {
         let db = open(&app)?;
         if enabled_value {
-            let key = history_key()?;
+            let key = history_key(&db)?;
             migrate_plaintext_rows(&db, &key)?;
         }
         db.execute(
@@ -334,22 +425,15 @@ pub fn save_task_history(
     model: String,
     kind: String,
 ) -> Result<i64, String> {
-    let input = serde_json::to_vec(&(
-        crate::sha256_hex(prompt.as_bytes()),
-        crate::sha256_hex(output.as_bytes()),
-        &mode,
-        &model,
-        &kind,
-        prompt.len(),
-        output.len(),
-    ))
-    .map_err(|error| format!("Could not encode history receipt metadata: {error}"))?;
+    // Reject unbounded IPC input before receipt reservation or any content-derived work.
+    validate_history_values(&prompt, &output, &mode, &model, &kind)?;
+    let input = history_receipt_metadata(&mode, &model, &kind, prompt.len(), output.len())?;
     crate::with_local_state_receipt(&app, "history.entry.create", &input, || {
         let mut db = open(&app)?;
         if !is_enabled(&db)? {
             return Err("Task history is disabled.".into());
         }
-        let key = history_key()?;
+        let key = history_key(&db)?;
         migrate_plaintext_rows(&db, &key)?;
         let id = save_secure(&mut db, &key, &prompt, &output, &mode, &model, &kind, now()?)?;
         Ok((id, id.to_be_bytes().to_vec()))
@@ -363,14 +447,33 @@ pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
     if !is_enabled(&db)? {
         return Ok(Vec::new());
     }
-    let key = history_key()?;
-    migrate_plaintext_rows(&db, &key)?;
-    db.execute(
-        "DELETE FROM task_history WHERE created_at < ?1",
-        params![now()?.saturating_sub(RETENTION_SECONDS)],
+    drop(db);
+
+    // Listing performs bounded legacy migration and retention cleanup. Reserve an
+    // audit slot before those persistent maintenance effects; receipt metadata
+    // contains no history content, identifiers, paths or key material.
+    crate::with_local_state_receipt(
+        &app,
+        "history.entry.list",
+        b"history.entry.list-maintenance.v1",
+        || {
+            let db = open(&app)?;
+            if !is_enabled(&db)? {
+                return Ok((Vec::new(), b"history-disabled".to_vec()));
+            }
+            let key = history_key(&db)?;
+            migrate_plaintext_rows(&db, &key)?;
+            db.execute(
+                "DELETE FROM task_history WHERE created_at < ?1",
+                params![now()?.saturating_sub(RETENTION_SECONDS)],
+            )
+            .map_err(|error| error.to_string())?;
+            let entries = list_secure(&db, &key)?;
+            let output_metadata = serde_json::to_vec(&entries.len())
+                .map_err(|error| format!("Could not encode history-list receipt metadata: {error}"))?;
+            Ok((entries, output_metadata))
+        },
     )
-    .map_err(|error| error.to_string())?;
-    list_secure(&db, &key)
 }
 
 #[tauri::command]
@@ -432,6 +535,81 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
   let encrypted=cipher.encrypt(&nonce,value.as_bytes()).unwrap();
   let mut payload=nonce.to_vec();payload.extend_from_slice(&encrypted);
   format!("{ENCRYPTED_PREFIX}{}",B64.encode(payload))
+ }
+
+ #[test]
+ fn history_receipt_metadata_is_content_independent_and_bound_to_metadata_and_lengths() {
+  let first = history_receipt_metadata("smart", "model-a", "chat", 14, 15).unwrap();
+  let same_metadata = history_receipt_metadata("smart", "model-a", "chat", 14, 15).unwrap();
+  assert_eq!(first, same_metadata);
+  assert_ne!(first, history_receipt_metadata("smart", "model-a", "chat", 15, 15).unwrap());
+  assert_ne!(first, history_receipt_metadata("smart", "model-b", "chat", 14, 15).unwrap());
+  let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
+  assert_eq!(value[0], "history.entry.create.v1");
+  assert_eq!(value[1], "smart");
+  assert_eq!(value[2], "model-a");
+  assert_eq!(value[3], "chat");
+  assert_eq!(value[4], 14);
+  assert_eq!(value[5], 15);
+ }
+
+ #[test]
+ fn history_ipc_validation_rejects_oversized_content_before_receipt_work() {
+  assert!(validate_history_values("", "output", "smart", "model-a", "chat").is_err());
+  assert!(validate_history_values(&"p".repeat(MAX_PROMPT + 1), "output", "smart", "model-a", "chat").is_err());
+  assert!(validate_history_values("prompt", &"o".repeat(MAX_OUTPUT + 1), "smart", "model-a", "chat").is_err());
+  assert!(validate_history_values("prompt", "output", &"m".repeat(33), "model-a", "chat").is_err());
+ }
+
+ #[test]
+ fn missing_history_key_policy_preserves_existing_encrypted_rows() {
+  assert!(missing_history_key_error(false, false, false).is_none());
+  assert!(missing_history_key_error(false, true, false).is_none());
+  assert!(missing_history_key_error(true, false, false).is_none()); // legacy plaintext can be migrated
+  assert!(missing_history_key_error(true, false, true).unwrap().contains("no replacement key was created"));
+  assert!(missing_history_key_error(true, true, false).unwrap().contains("no replacement key was created"));
+
+  let c = db();
+  assert!(!history_has_rows(&c).unwrap());
+  assert!(!history_key_was_initialized(&c).unwrap());
+  c.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('legacy','plain','smart','m','chat',1)",
+   [],
+  ).unwrap();
+  assert!(history_has_rows(&c).unwrap());
+  mark_history_key_initialized(&c).unwrap();
+  assert!(history_key_was_initialized(&c).unwrap());
+ }
+
+ #[test]
+ fn encrypted_history_presence_detects_v1_v2_v3_and_mixed_rows() {
+  let c = db();
+  assert!(!history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('legacy plain','legacy output','smart','m','chat',1)",
+   [],
+  ).unwrap();
+  assert!(!history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET prompt=?1 WHERE id=1",
+   params![format!("{ENC_V2}encrypted")],
+  ).unwrap();
+  assert!(history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET prompt='plain again', output=?1 WHERE id=1",
+   params![format!("{ENC_V3}encrypted")],
+  ).unwrap();
+  assert!(history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET output='legacy plain' WHERE id=1",
+   [],
+  ).unwrap();
+  assert!(!history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET prompt=?1 WHERE id=1",
+   params![format!("{ENCRYPTED_PREFIX}encrypted")],
+  ).unwrap();
+  assert!(history_has_encrypted_rows(&c).unwrap());
  }
 
  #[test] fn encrypted_history_round_trips_and_detects_tampering() {
