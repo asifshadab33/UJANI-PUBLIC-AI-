@@ -100,7 +100,13 @@ export default function UpdateNotice() {
         }
       }, { timeout: 300_000 });
       setMessage("Update installed. Restarting UJANI…");
-      await relaunch();
+      try {
+        await relaunch();
+      } catch (error) {
+        setMessage("Update installed, but UJANI could not restart automatically. Close and reopen the application. " + String(error));
+        setInstalling(false);
+        installingRef.current = false;
+      }
     } catch (error) {
       setMessage("Update could not be installed: " + String(error));
       setInstalling(false);
