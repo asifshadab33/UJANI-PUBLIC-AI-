@@ -17,7 +17,7 @@ The local clock command returns Unix-epoch milliseconds. The UI must render that
 
 ## Clock-jump behaviour
 
-While a process is running, compare wall-clock deltas with monotonic deltas to detect large forward/backward adjustments. This is diagnostic evidence, not proof that NTP is synchronised. After reboot, a fresh baseline is required.
+While the Everyday Tools clock is open, compare wall-clock deltas with monotonic deltas and warn when the difference exceeds five seconds. This detects large forward/backward adjustments or a resume-time offset; it is diagnostic evidence, not proof that NTP is synchronised. Smaller changes may not trigger a warning. After reboot or application restart, a fresh baseline is required.
 
 A clock jump must not extend a running task timeout, cancellation budget or local TTL. Calendar displays may move with the OS clock. UJANI must not attempt to correct the OS clock itself.
 
