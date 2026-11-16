@@ -42,11 +42,14 @@ export function compareSemver(left, right) {
   return 0;
 }
 
-export function validateManifest(manifest) {
+export function validateManifest(manifest, expected = {}) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new Error("Updater manifest must be a JSON object.");
   }
   parseSemver(manifest.version);
+  if (expected.version && manifest.version !== expected.version) {
+    throw new Error("Updater manifest version does not match the approved release tag.");
+  }
   if (!manifest.platforms || typeof manifest.platforms !== "object" || Array.isArray(manifest.platforms)) {
     throw new Error("Updater manifest must contain a platforms object.");
   }
@@ -61,13 +64,20 @@ export function validateManifest(manifest) {
     let url;
     try { url = new URL(artifact.url); } catch { throw new Error("Invalid updater artifact URL: " + target); }
     if (url.protocol !== "https:") throw new Error("Updater artifact URL must use HTTPS: " + target);
+    if (expected.repository && expected.tag) {
+      const expectedPrefix = `/${expected.repository}/releases/download/${expected.tag}/`;
+      if (url.hostname !== "github.com" || !url.pathname.startsWith(expectedPrefix) ||
+          url.pathname.length <= expectedPrefix.length) {
+        throw new Error("Updater artifact URL does not belong to the approved repository release: " + target);
+      }
+    }
   }
   return manifest;
 }
 
 /** Atomically replace the feed only when the incoming signed manifest is newer. */
-export function publishManifest(incomingPath, outputPath) {
-  const incoming = validateManifest(JSON.parse(fs.readFileSync(incomingPath, "utf8")));
+export function publishManifest(incomingPath, outputPath, expected = {}) {
+  const incoming = validateManifest(JSON.parse(fs.readFileSync(incomingPath, "utf8")), expected);
   if (fs.existsSync(outputPath)) {
     const current = validateManifest(JSON.parse(fs.readFileSync(outputPath, "utf8")));
     if (compareSemver(incoming.version, current.version) <= 0) return false;
@@ -83,7 +93,15 @@ function main() {
   if (!incomingPath || !outputPath || process.argv.length !== 4) {
     throw new Error("Usage: node publish-updater-feed.mjs <incoming-manifest> <output-manifest>");
   }
-  const published = publishManifest(path.resolve(incomingPath), path.resolve(outputPath));
+  const releaseTag = process.env.RELEASE_TAG;
+  const repository = process.env.REPOSITORY;
+  if (!releaseTag || !repository) throw new Error("RELEASE_TAG and REPOSITORY are required.");
+  const expectedVersion = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag;
+  const published = publishManifest(path.resolve(incomingPath), path.resolve(outputPath), {
+    version: expectedVersion,
+    repository,
+    tag: releaseTag,
+  });
   process.stdout.write(published ? "publish\\n" : "skip\\n");
 }
 
