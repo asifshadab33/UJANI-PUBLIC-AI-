@@ -4,7 +4,7 @@
 
 UJANI reads the device clock; it does not set, repair, or silently synchronise the operating-system clock. Windows Time, systemd-timesyncd/chrony, or macOS time synchronisation remains the OS administrator's responsibility. A timezone setting changes calendar display, not the underlying UTC instant.
 
-The local clock command returns Unix-epoch milliseconds. The UI must render that instant using the platform's local timezone; it must not treat the returned value as a timezone-free wall-clock string.
+The native local-clock command returns Unix-epoch milliseconds. The current Everyday Tools display reads the same operating-system clock through the webview's `Date` API and formats it using the device's local timezone. Both represent an OS-supplied instant; neither independently verifies that the clock is correct.
 
 ## Time-source rules
 
