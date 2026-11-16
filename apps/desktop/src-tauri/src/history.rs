@@ -68,12 +68,12 @@ pub struct HistorySettings { pub enabled:bool, pub retention_days:i64, pub max_e
 
 
 #[cfg(target_os = "android")]
-fn history_key(_has_encrypted_rows: bool) -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(_db: &Connection) -> Result<Zeroizing<[u8; 32]>, String> {
     Err("Encrypted task history is disabled on Android until Android Keystore integration is validated.".into())
 }
 
 #[cfg(not(target_os = "android"))]
-fn history_key(has_encrypted_rows: bool) -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(db: &Connection) -> Result<Zeroizing<[u8; 32]>, String> {
  let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
   .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;
  match entry.get_password() {
@@ -86,27 +86,59 @@ fn history_key(has_encrypted_rows: bool) -> Result<Zeroizing<[u8; 32]>, String> 
        .map_err(|_| "Stored history key is invalid; existing history is preserved. Restore the original key from a trusted credential backup before attempting recovery.".to_string())?;
    decoded.truncate(decoded_len);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
+   mark_history_key_initialized(db)?;
    Ok(Zeroizing::new(key))
   }
   Err(keyring::Error::NoEntry) => {
-   if let Some(message) = missing_history_key_error(has_encrypted_rows) {
+   let has_rows = history_has_rows(db)?;
+   let key_was_initialized = history_key_was_initialized(db)?;
+   let has_encrypted_rows = history_has_encrypted_rows(db)?;
+   if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {
     return Err(message.into());
    }
    let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
    let encoded = Zeroizing::new(B64.encode(*key));
    entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
+   mark_history_key_initialized(db)?;
    Ok(key)
   }
   Err(e) => Err(format!("Could not read history key from OS credential vault: {e}")),
  }
 }
 
-fn missing_history_key_error(has_encrypted_rows: bool) -> Option<&'static str> {
- if has_encrypted_rows {
-  Some("The OS credential vault no longer contains the key for existing encrypted history. Existing rows have been preserved and no replacement key was created. Restore the original key from a trusted backup; otherwise clear history only after explicit confirmation.")
+fn missing_history_key_error(
+ has_rows: bool,
+ key_was_initialized: bool,
+ has_encrypted_rows: bool,
+) -> Option<&'static str> {
+ if has_rows && (key_was_initialized || has_encrypted_rows) {
+  Some("The OS credential vault no longer contains the key for existing history. Existing rows have been preserved and no replacement key was created. Restore the original key from a trusted backup; otherwise clear history only after explicit confirmation.")
  } else {
   None
  }
+}
+
+fn history_has_rows(db: &Connection) -> Result<bool, String> {
+ db.query_row("SELECT EXISTS(SELECT 1 FROM task_history)", [], |row| row.get(0))
+  .map_err(|error| format!("Could not inspect local history state: {error}"))
+}
+
+fn history_key_was_initialized(db: &Connection) -> Result<bool, String> {
+ let value: Option<String> = db.query_row(
+  "SELECT value FROM history_settings WHERE key='key_initialized'",
+  [],
+  |row| row.get(0),
+ ).optional().map_err(|error| format!("Could not inspect history key state: {error}"))?;
+ Ok(value.as_deref() == Some("true"))
+}
+
+fn mark_history_key_initialized(db: &Connection) -> Result<(), String> {
+ db.execute(
+  "INSERT INTO history_settings(key,value) VALUES('key_initialized','true')
+   ON CONFLICT(key) DO UPDATE SET value='true'",
+  [],
+ ).map_err(|error| format!("Could not record history key state: {error}"))?;
+ Ok(())
 }
 
 fn history_has_encrypted_rows(db: &Connection) -> Result<bool, String> {
@@ -369,7 +401,7 @@ pub fn set_task_history_enabled(app: AppHandle, enabled_value: bool) -> Result<H
     crate::with_local_state_receipt(&app, "history.settings.update", &input, || {
         let db = open(&app)?;
         if enabled_value {
-            let key = history_key(history_has_encrypted_rows(&db)?)?;
+            let key = history_key(&db)?;
             migrate_plaintext_rows(&db, &key)?;
         }
         db.execute(
@@ -401,7 +433,7 @@ pub fn save_task_history(
         if !is_enabled(&db)? {
             return Err("Task history is disabled.".into());
         }
-        let key = history_key(history_has_encrypted_rows(&db)?)?;
+        let key = history_key(&db)?;
         migrate_plaintext_rows(&db, &key)?;
         let id = save_secure(&mut db, &key, &prompt, &output, &mode, &model, &kind, now()?)?;
         Ok((id, id.to_be_bytes().to_vec()))
@@ -429,7 +461,7 @@ pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
             if !is_enabled(&db)? {
                 return Ok((Vec::new(), b"history-disabled".to_vec()));
             }
-            let key = history_key(history_has_encrypted_rows(&db)?)?;
+            let key = history_key(&db)?;
             migrate_plaintext_rows(&db, &key)?;
             db.execute(
                 "DELETE FROM task_history WHERE created_at < ?1",
@@ -531,8 +563,11 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
 
  #[test]
  fn missing_history_key_policy_preserves_existing_encrypted_rows() {
-  assert!(missing_history_key_error(false).is_none());
-  assert!(missing_history_key_error(true).unwrap().contains("no replacement key was created"));
+  assert!(missing_history_key_error(false, false, false).is_none());
+  assert!(missing_history_key_error(false, true, false).is_none());
+  assert!(missing_history_key_error(true, false, false).is_none()); // legacy plaintext can be migrated
+  assert!(missing_history_key_error(true, false, true).unwrap().contains("no replacement key was created"));
+  assert!(missing_history_key_error(true, true, false).unwrap().contains("no replacement key was created"));
  }
 
  #[test]
