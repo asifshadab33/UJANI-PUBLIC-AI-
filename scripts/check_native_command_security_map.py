@@ -307,6 +307,33 @@ def missing_history_listing_receipt_guards(source: str) -> list[str]:
 
 
 
+def missing_history_key_recovery_guards(source: str) -> list[str]:
+    """Prevent silently replacing a lost OS-vault key when encrypted history may exist."""
+    required = (
+        "fn history_has_rows(",
+        "fn history_key_was_initialized(",
+        "fn mark_history_key_initialized(",
+        "fn history_has_encrypted_rows(",
+        "fn missing_history_key_error(",
+        "let has_rows = history_has_rows(db)?;",
+        "let key_was_initialized = history_key_was_initialized(db)?;",
+        "let has_encrypted_rows = history_has_encrypted_rows(db)?;",
+        "history_key(&db)?",
+        "mark_history_key_initialized(db)?",
+    )
+    if any(token not in source for token in required):
+        return ["history_key"]
+    policy_at = source.find(
+        "if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows)"
+    )
+    create_at = source.find("entry.set_password(encoded.as_str())")
+    if policy_at < 0 or create_at < 0 or policy_at > create_at:
+        return ["history_key"]
+    if source.count("history_key(&db)?") != 3:
+        return ["history_key"]
+    return []
+
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -509,6 +536,13 @@ def main() -> int:
         errors.append(
             "history listing: maintenance writes must be receipt-wrapped with count-only output metadata in "
             + ", ".join(missing_history_list_guards)
+        )
+
+    missing_history_key_guards = missing_history_key_recovery_guards(history_source)
+    if missing_history_key_guards:
+        errors.append(
+            "history key recovery: do not create a replacement key when encrypted rows may exist in "
+            + ", ".join(missing_history_key_guards)
         )
 
     # Folder selection must be registered/cancellable before opening the native picker.
