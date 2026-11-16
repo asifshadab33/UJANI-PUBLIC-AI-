@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Clock3, CopyCheck, FileSearch, FolderSearch, ShieldCheck } from "lucide-react";
+import { hasWallClockJump } from "./clockMonitor.js";
 
 type DuplicateFile = { file_name: string; path: string; size_bytes: number };
 type DuplicateGroup = { sha256: string; size_bytes: number; files: DuplicateFile[] };
@@ -53,7 +54,7 @@ export default function EverydayTools() {
       const monotonicNow = performance.now();
       const wallElapsed = wallNow - previousWall;
       const monotonicElapsed = monotonicNow - previousMonotonic;
-      if (Math.abs(wallElapsed - monotonicElapsed) > 5_000) {
+      if (hasWallClockJump(previousWall, wallNow, previousMonotonic, monotonicNow)) {
         setClockWarning("The device clock changed, or the device resumed with a time offset, while UJANI was open. Check your operating-system date, time and automatic time-synchronisation settings.");
       }
       setClock(new Date(wallNow));
