@@ -16,7 +16,7 @@
 
 ## Lightweight media capability boundary
 
-- **Documents:** selected supported text files and ordinary PDFs can be inspected within the documented file/text limits; the fixed local pipeline can summarise extracted text with Ollama and optionally translate the summary. Scanned-PDF OCR, complex-layout understanding and unbounded/very large document analysis are not implemented.
+- **Documents:** supported text files can be inspected within documented limits. The bundled parser can extract text from ordinary PDFs, but PDF summarisation and folder PDF search are fail-closed unless the runtime verifies worker resource limits, filesystem isolation and network isolation on the current platform. These controls are not yet verified across supported devices, so PDF operations may be unavailable. Scanned-PDF OCR, complex-layout understanding and unbounded/very large document analysis are not implemented.
 - **Images:** basic header/metadata inspection only. OCR, image-content understanding and vision question answering are not implemented.
 - **Audio:** no local recording/transcription/speech-understanding pipeline is shipped.
 - **Video:** no local scene-understanding, transcription or summarisation pipeline is shipped.
