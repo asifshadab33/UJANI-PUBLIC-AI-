@@ -1,6 +1,6 @@
 # UJANI Public AI execution modes
 
-This document records the intended mode semantics and the current implementation boundary. A selected mode is **not** permission to transfer data or execute a remote task.
+This document records the intended mode semantics and the current implementation boundary. A selected mode is **not** permission to transfer data or execute a remote task. The draft task-contract v1 schema validates structure only; schema validity is not identity authentication, a signature, consent, authorization or an execution permit.
 
 ## Fortress
 
