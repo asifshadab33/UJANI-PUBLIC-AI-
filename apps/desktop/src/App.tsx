@@ -661,7 +661,7 @@ export default function App() {
   async function runLocalAi() {
     if (!request.trim() || aiBusy) return;
     if (executionMode !== "fortress" && executionMode !== "smart") {
-      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner peer execution is not implemented in this build; use Smart for optional BYOK cloud processing.");
+      setOllamaError("Real local inference is available in Fortress and Smart only. Worker and Partner are preview-only in this build; use Smart for optional BYOK cloud processing.");
       return;
     }
     if (!ollamaModel) { setOllamaError("Install and start Ollama, then pull a model before running local AI."); return; }
@@ -942,7 +942,7 @@ export default function App() {
   async function runCloudAi() {
     if (!isTauri() || !request.trim() || cloudBusy) return;
     if (executionMode !== "smart") {
-      setCloudError("The BYOK cloud gateway is available in Smart mode only. Worker and Partner peer execution are not implemented in this build; Fortress remains local-only.");
+      setCloudError("The BYOK cloud gateway is available in Smart mode only. Worker and Partner workflows are preview-only; Fortress blocks UJANI cloud requests, but OS-wide network isolation is not yet enforced.");
       return;
     }
     if (cloudDataClassification === "unclassified") {
@@ -1107,23 +1107,24 @@ export default function App() {
           <button className="launcher-card" onClick={() => openLocalSetup()}>
             <span className="launcher-icon"><Cpu size={21}/></span><b>Set up local AI</b><small>Check Ollama, installed models, memory and available device capabilities.</small><span className="launcher-action">View device setup →</span>
           </button>
-          <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
-            <span className="launcher-icon"><Monitor size={21}/></span><b>Worker mode</b><small>Delegate approved tasks to trusted worker devices.</small><span className="launcher-action">Not available yet</span>
+          <button className="launcher-card launcher-unavailable" disabled aria-describedby="advanced-mode-status">
+            <span className="launcher-icon"><Monitor size={21}/></span><b>Worker mode</b><small>Use approved cloud plans while this device performs the authorised compute locally.</small><span className="launcher-action">Preview only · not available yet</span>
           </button>
-          <button className="launcher-card launcher-unavailable" disabled aria-describedby="peer-mode-status">
-            <span className="launcher-icon"><Activity size={21}/></span><b>Partner mode</b><small>Collaborate with enrolled peers on bounded tasks.</small><span className="launcher-action">Not available yet</span>
+          <button className="launcher-card launcher-unavailable" disabled aria-describedby="advanced-mode-status">
+            <span className="launcher-icon"><Activity size={21}/></span><b>Partner mode</b><small>Iterate between local and approved external AI within explicit data and round limits.</small><span className="launcher-action">Preview only · not available yet</span>
           </button>
           <button className="launcher-card" onClick={() => window.dispatchEvent(new Event("ujani-check-updates"))}>
             <span className="launcher-icon"><CheckCircle2 size={21}/></span><b>Updates & releases</b><small>Check for a signed UJANI update and install it when available.</small><span className="launcher-action">Check for updates →</span>
           </button>
         </div>
-        <p className="launcher-footnote" id="peer-mode-status">Worker and Partner are intentionally disabled until device enrollment, encrypted peer transport, task isolation and revocation are ready. This protects your files and device from untrusted peers.</p>
+        <p className="launcher-footnote" id="advanced-mode-status">Worker and Partner remain preview-only until authenticated gateways, signed task contracts, exact-scope consent, data/round quotas, cancellation, output verification and durable receipts are ready. Neither mode grants an external service free device control or automatic access to files/history.</p>
         <details className="result" style={{ marginTop: "0.75rem" }}>
-          <summary><b>Worker and Partner mode — why these features are locked</b> <span className="muted">HIGH RISK · ADMINISTRATOR REVIEW REQUIRED</span></summary>
-          <p><b>Worker mode</b> is intended to delegate a bounded task to another trusted device. <b>Partner mode</b> is intended for collaboration between enrolled peers. Neither mode currently performs remote execution in this build.</p>
-          <p><b>Why locked:</b> enabling peer work before the complete trust chain exists could expose selected data or let an untrusted device consume resources or return unsafe results. The required foundations include device-owner consent, authenticated enrollment and revocation, encrypted transport, receiver-side policy checks, OS-enforced task isolation, resource quotas, cancellation and auditable receipts.</p>
-          <p><b>Administrator control:</b> a future administrator may configure approved peers, task classes, schedules and resource budgets only after those controls are implemented and independently tested. Administrator approval cannot replace the device owner's consent or bypass a missing security gate.</p>
-          <p><b>Current status:</b> routing and task-contract foundations are present; production peer transport, dispatch and execution are not. This setting is intentionally not overridable. Use local execution or explicitly approved Smart-mode BYOK cloud assistance instead.</p>
+          <summary><b>Worker and Partner mode — why these features are locked</b> <span className="muted">HIGH RISK · EXPLICIT APPROVAL REQUIRED</span></summary>
+          <p><b>Worker mode</b> is intended to receive bounded, signed cloud plans or delegations while this device performs only approved, allow-listed local operations. An external service must never receive free device control, shell access or unrestricted file access.</p>
+          <p><b>Partner mode</b> is intended for iterative, bounded collaboration between local AI and an approved cloud/partner service. Each outbound transfer requires explicit approval; rounds and data volume must be capped; the user must be able to cancel; returned outputs must be verified locally. Full files and conversation history must never be shared automatically.</p>
+          <p><b>Why locked:</b> production gateways, signed structured-task verification, exact-scope consent enforcement, local capability checks, provider/task budgets, bounded inputs and outputs, timeouts, cancellation, output verification and durable audit receipts are not yet complete. Mode selection is not permission to transfer data.</p>
+          <p><b>Administrator control:</b> a future administrator may configure approved providers, task classes, local-operation allow-lists and resource budgets. Administrator approval cannot replace the user's consent or bypass a missing security gate.</p>
+          <p><b>Current status:</b> routing and draft task-contract foundations are present; production Worker cloud planning/delegation and Partner iteration workflows are not. These modes remain intentionally unavailable. Use local execution or explicitly approved Smart-mode BYOK cloud assistance instead.</p>
         </details>
       </section>
       <div className="section-heading"><div><h2>Your device</h2><p>Read-only system information</p></div><span className="muted">No background compute</span></div>
@@ -1213,17 +1214,17 @@ export default function App() {
             <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
             <label className="model-select">Execution mode
               <select value={executionMode} onChange={(event) => { setExecutionMode(event.target.value); setRouteDecision(null); }}>
-                <option value="fortress">Fortress — local only</option>
+                <option value="fortress">Fortress — local-only policy (OS isolation pending)</option>
                 <option value="smart">Smart — local first (default)</option>
-                <option value="worker">Worker — cloud planning</option>
-                <option value="partner">Partner — bounded collaboration</option>
+                <option value="worker">Worker — approved cloud plan + local compute (preview)</option>
+                <option value="partner">Partner — bounded local/cloud collaboration (preview)</option>
               </select>
             </label>
             <label className="consent-row"><input type="checkbox" checked={externalApproved} onChange={(event) => { setExternalApproved(event.target.checked); setRouteDecision(null); }}/> I explicitly approve external data transfer for this task</label>
             <button className="model-run" onClick={previewRoute} disabled={!request.trim() || routeBusy}>{routeBusy ? "Evaluating policy…" : "Preview execution route"} <Send size={15}/></button>
             {routeError && <p className="error" role="alert">{routeError}</p>}
             {routeDecision && <div className="result"><div className="result-title"><ShieldCheck size={17}/> {routeDecision.action.replace(/_/g, " ")} <span>{routeDecision.allowed ? "Policy permits plan" : "Blocked / approval needed"}</span></div><p>{routeDecision.reason}</p><small>External transfer: {routeDecision.external_data_transfer_permitted ? "consented for a future gateway" : "not permitted"} · Rounds: {routeDecision.collaboration_rounds} · Enforcement boundary required: yes</small></div>}
-            <small className="muted">Selecting a mode never grants consent by itself. Fortress policy preview does not disable OS networking. Worker and Partner cannot execute until a secure gateway is implemented.</small>
+            <small className="muted">Selecting a mode never grants consent by itself. Fortress policy preview does not disable OS networking. Worker and Partner remain preview-only until their signed-task, consent, quota, cancellation and verification gates are implemented.</small>
           </div>
           {result && <div className="result"><div className="result-title"><CheckCircle2 size={17}/> Demo result <span>{result.execution}</span></div><p>{result.output}</p><small>Operation: {result.operation}</small></div>}
           <div className="model-box" id="local-ai-workspace">
