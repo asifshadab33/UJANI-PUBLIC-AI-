@@ -66,7 +66,8 @@ export function validateManifest(manifest, expected = {}) {
     if (url.protocol !== "https:") throw new Error("Updater artifact URL must use HTTPS: " + target);
     if (expected.repository && expected.tag) {
       const expectedPrefix = `/${expected.repository}/releases/download/${expected.tag}/`;
-      if (url.hostname !== "github.com" || !url.pathname.startsWith(expectedPrefix) ||
+      if (url.origin !== "https://github.com" || url.username || url.password ||
+          url.search || url.hash || !url.pathname.startsWith(expectedPrefix) ||
           url.pathname.length <= expectedPrefix.length) {
         throw new Error("Updater artifact URL does not belong to the approved repository release: " + target);
       }
