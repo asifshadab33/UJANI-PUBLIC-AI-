@@ -8,6 +8,7 @@ from check_native_command_security_map import (
     missing_document_ipc_preflight_guards,
     missing_history_receipt_guards,
     missing_history_listing_receipt_guards,
+    missing_history_key_recovery_guards,
     registered_commands,
 )
 
@@ -219,6 +220,37 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         self.assertEqual(missing_file_metadata_guards(source), [])
         altered = source.replace("LocalTaskEngine::inspect_image", "Ok")
         self.assertEqual(missing_file_metadata_guards(altered), ["inspect_image_file"])
+
+
+    def test_missing_history_key_does_not_get_silently_replaced(self):
+        source = """
+        fn history_has_rows(db) {}
+        fn history_key_was_initialized(db) {}
+        fn mark_history_key_initialized(db) {}
+        fn history_has_encrypted_rows(db) {}
+        fn missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {}
+        fn history_key(db) {
+            let has_rows = history_has_rows(db)?;
+            let key_was_initialized = history_key_was_initialized(db)?;
+            let has_encrypted_rows = history_has_encrypted_rows(db)?;
+            if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {
+                return Err(message.into());
+            }
+            entry.set_password(encoded.as_str())?;
+            mark_history_key_initialized(db)?;
+        }
+        fn call_sites() {
+            history_key(&db)?;
+            history_key(&db)?;
+            history_key(&db)?;
+        }
+        """
+        self.assertEqual(missing_history_key_recovery_guards(source), [])
+        unsafe = source.replace(
+            "if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {\\n                return Err(message.into());\\n            }\\n            entry.set_password(encoded.as_str())?;",
+            "entry.set_password(encoded.as_str())?;\\n            if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {\\n                return Err(message.into());\\n            }",
+        )
+        self.assertEqual(missing_history_key_recovery_guards(unsafe), ["history_key"])
 
 
 if __name__ == "__main__":
