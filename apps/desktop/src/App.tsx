@@ -1214,7 +1214,7 @@ export default function App() {
             <div className="section-heading"><div><h2>Four execution modes</h2><p>Policy preview only — no cloud request is made.</p></div><ShieldCheck size={19}/></div>
             <label className="model-select">Execution mode
               <select value={executionMode} onChange={(event) => { setExecutionMode(event.target.value); setRouteDecision(null); }}>
-                <option value="fortress">Fortress — local only</option>
+                <option value="fortress">Fortress — local-only policy (OS isolation pending)</option>
                 <option value="smart">Smart — local first (default)</option>
                 <option value="worker">Worker — approved cloud plan + local compute (preview)</option>
                 <option value="partner">Partner — bounded local/cloud collaboration (preview)</option>
