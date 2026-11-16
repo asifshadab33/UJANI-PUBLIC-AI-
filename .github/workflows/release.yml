@@ -571,6 +571,12 @@ jobs:
         with:
           ref: updates
           fetch-depth: 1
+      - name: Check out the approved release source for feed validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          path: release-source
+          fetch-depth: 1
       - name: Download the approved updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -589,7 +595,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          decision="$(node scripts/publish-updater-feed.mjs "$INCOMING_MANIFEST" latest.json)"
+          decision="$(node release-source/scripts/publish-updater-feed.mjs "$INCOMING_MANIFEST" latest.json)"
           if [[ "$decision" == "skip" ]]; then
             echo "No newer updater manifest to publish."
             exit 0
