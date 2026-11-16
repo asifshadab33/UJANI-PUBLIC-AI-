@@ -185,6 +185,8 @@ jobs:
       - name: Test explicit local model-selection preference
         working-directory: apps/desktop
         run: npm run test:model-selection
+      - name: Test signed updater feed versioning and validation
+        run: node --test scripts/publish-updater-feed.test.mjs
       - name: Type-check and build frontend
         working-directory: apps/desktop
         run: npm run build
