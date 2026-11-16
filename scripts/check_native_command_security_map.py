@@ -22,6 +22,7 @@ FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
 REMINDER_STORE = ROOT / "apps/desktop/src-tauri/src/reminder_store.rs"
 CORE_FILE_PROCESSOR = ROOT / "crates/ujani-core/src/file_processor.rs"
 CORE_IMAGE_PROCESSOR = ROOT / "crates/ujani-core/src/image_processor.rs"
+TASK_ENGINE = ROOT / "apps/desktop/src-tauri/src/task_engine.rs"
 
 
 def find_matching_delimiter(source: str, opening_index: int, opening: str, closing: str) -> int:
@@ -224,6 +225,39 @@ def missing_file_metadata_guards(source: str) -> list[str]:
     return missing
 
 
+def missing_document_ipc_preflight_guards(source: str) -> list[str]:
+    """Require caller-controlled document inputs to be rejected before task/runtime work."""
+    expected = {
+        "execute_document_workflow": (
+            "task_engine::validate_document_request",
+            "register_active_task",
+        ),
+        "process_selected_document": (
+            "task_engine::validate_document_request",
+            "register_active_task",
+            "get_capability_snapshot_for_task",
+        ),
+        "process_selected_pdf": (
+            "task_engine::validate_pdf_metadata",
+            "validate_bounded_pdf_encoded_length",
+            "register_active_task",
+            "get_capability_snapshot_for_task",
+            "decode_pdf_upload_off_thread",
+        ),
+    }
+    missing = []
+    for command, ordered_tokens in expected.items():
+        try:
+            body = rust_function_body(source, command)
+        except ValueError:
+            missing.append(command)
+            continue
+        positions = [body.find(token) for token in ordered_tokens]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            missing.append(command)
+    return missing
+
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -383,6 +417,24 @@ def main() -> int:
         errors.append("model download: fail-closed preflight must remain false until artifact/store verification is implemented")
     if "evaluate_registered_external_transfer" not in source or '"cloud.ai.generate"' not in source:
         errors.append("cloud dispatch: registered external-transfer policy must remain on the native dispatch path")
+
+    # Document IPC validates caller-controlled metadata and size before task/runtime work.
+    missing_document_preflight = missing_document_ipc_preflight_guards(source)
+    if missing_document_preflight:
+        errors.append(
+            "document IPC: input preflight must precede registration, capability discovery and decode in "
+            + ", ".join(missing_document_preflight)
+        )
+    require_tokens(
+        TASK_ENGINE,
+        (
+            "pub(crate) fn validate_document_request(",
+            "pub(crate) fn validate_pdf_metadata(",
+            "validate_pdf_metadata(file_name, mode)?",
+        ),
+        errors,
+        "shared document IPC preflight validators",
+    )
 
     # Folder selection must be registered/cancellable before opening the native picker.
     folder_source = require_tokens(

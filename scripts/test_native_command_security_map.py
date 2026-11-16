@@ -5,6 +5,7 @@ from check_native_command_security_map import (
     find_matching_delimiter,
     missing_demo_command_guards,
     missing_file_metadata_guards,
+    missing_document_ipc_preflight_guards,
     registered_commands,
 )
 
@@ -116,6 +117,36 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
             altered = source.replace(guarded, unguarded)
             self.assertNotEqual(altered, source, f"test fixture did not remove {name} guard")
             self.assertEqual(missing_demo_command_guards(altered), [name])
+
+    def test_document_ipc_preflight_precedes_registration_runtime_and_decode(self):
+        source = """
+        fn execute_document_workflow() {
+            task_engine::validate_document_request(file_name, content, mode)?;
+            register_active_task();
+        }
+        fn process_selected_document() {
+            task_engine::validate_document_request(file_name, content, mode)?;
+            register_active_task();
+            get_capability_snapshot_for_task();
+        }
+        fn process_selected_pdf() {
+            task_engine::validate_pdf_metadata(file_name, mode)?;
+            validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;
+            register_active_task();
+            get_capability_snapshot_for_task();
+            decode_pdf_upload_off_thread();
+        }
+        """
+        self.assertEqual(missing_document_ipc_preflight_guards(source), [])
+        late_pdf_check = source.replace(
+            "task_engine::validate_pdf_metadata(file_name, mode)?;\n            validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;\n            register_active_task();",
+            "validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;\n            register_active_task();\n            task_engine::validate_pdf_metadata(file_name, mode)?;",
+        )
+        self.assertEqual(
+            missing_document_ipc_preflight_guards(late_pdf_check),
+            ["process_selected_pdf"],
+        )
+
 
     def test_selected_file_metadata_commands_must_use_the_core_validators(self):
         source = """
