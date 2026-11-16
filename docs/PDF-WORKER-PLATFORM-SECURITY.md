@@ -31,6 +31,12 @@ The PDF parser handles untrusted bytes in a child process. The controls below ap
 - PDF extraction errors and output-limit failures are returned as errors; the parent does not silently treat them as empty extracted text.
 - Resource limits and worker confinement do not prove absence of all side effects, do not attest the whole process tree, and do not replace OS-level application sandboxing.
 
+## Operation policy gate
+
+The shared local-operation catalogue requires all three worker-security capabilities to be explicitly `Available` before either `pdf.extract_and_summarize` or `file.search.pdf_text` can run: `pdf.worker.resource_limits`, `pdf.worker.filesystem_isolation` and `pdf.worker.network_isolation`. A present PDF parser alone is not sufficient.
+
+In the current build, resource-limit enforcement is `Unknown`; Linux filesystem/network enforcement remains `Unknown` pending device probes; macOS filesystem isolation is unavailable and Windows filesystem/network isolation is unavailable. Therefore PDF extraction and PDF-folder search fail closed on all platforms until the relevant controls are implemented and verified. Ordinary non-PDF selected-folder search, duplicate preview and large-file metadata preview remain separately available under their own capabilities.
+
 ## Evidence status
 
 GitHub Actions validates compilation, Rust tests, CodeQL and installer builds on its Linux, Windows and macOS runners. Linux now has an automated subprocess probe for the worker's path-open boundary, but the runtime capability remains Unknown until a supported-device smoke test confirms the deployed kernel enforces it. macOS still relies on deprecated `sandbox-exec` and does not deny arbitrary file reads; Windows Job Objects do not deny file reads or network access. Those platform gaps remain release blockers. CI is not a substitute for hands-on tests on macOS Intel/Apple Silicon devices or a security assessment of deployed OS versions. Unsupported restrictions must remain labelled unknown rather than inferred from a successful build.
