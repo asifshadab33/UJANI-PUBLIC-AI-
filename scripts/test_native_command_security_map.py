@@ -139,8 +139,8 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         """
         self.assertEqual(missing_document_ipc_preflight_guards(source), [])
         late_pdf_check = source.replace(
-            "task_engine::validate_pdf_metadata(file_name, mode)?;\\n            validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;\\n            register_active_task();",
-            "validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;\\n            register_active_task();\\n            task_engine::validate_pdf_metadata(file_name, mode)?;",
+            "task_engine::validate_pdf_metadata(file_name, mode)?;\n            validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;\n            register_active_task();",
+            "validate_bounded_pdf_encoded_length(data_base64, MAX_PDF_UPLOAD_BYTES)?;\n            register_active_task();\n            task_engine::validate_pdf_metadata(file_name, mode)?;",
         )
         self.assertEqual(
             missing_document_ipc_preflight_guards(late_pdf_check),
