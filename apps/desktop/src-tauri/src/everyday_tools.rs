@@ -48,8 +48,6 @@ struct Candidate {
     size_bytes: u64,
 }
 
-#[tauri::command]
-/// Returns the current local device clock as milliseconds since the Unix epoch.
 fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
     let duration = time
         .duration_since(UNIX_EPOCH)
@@ -57,6 +55,8 @@ fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
     Ok(duration.as_millis().min(u64::MAX as u128) as u64)
 }
 
+/// Returns the current local device clock as milliseconds since the Unix epoch.
+#[tauri::command]
 pub fn get_local_clock() -> Result<u64, String> {
     unix_epoch_millis_at(SystemTime::now())
 }
