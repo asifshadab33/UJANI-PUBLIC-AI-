@@ -303,7 +303,15 @@ mod selected_folder_preflight_regressions {
         assert!(plan_local_task("file.large_files.preview", "smart", 4096, &snapshot.capabilities).accepted);
         assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &snapshot.capabilities).accepted);
 
-        let pdf_ready = selected_folder_capability_snapshot(4096, true, true);
+        let mut pdf_ready = selected_folder_capability_snapshot(4096, true, true);
+        assert!(!plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
+        for id in [
+            "pdf.worker.resource_limits",
+            "pdf.worker.filesystem_isolation",
+            "pdf.worker.network_isolation",
+        ] {
+            pdf_ready.capabilities.iter_mut().find(|item| item.id == id).unwrap().state = CapabilityState::Available;
+        }
         assert!(plan_local_task("file.search.pdf_text", "smart", 4096, &pdf_ready.capabilities).accepted);
     }
 
@@ -1516,10 +1524,31 @@ fn selected_folder_capability_snapshot(
                 state: if pdf_available { CapabilityState::Available } else { CapabilityState::Unavailable },
                 source: if pdf_available { "Bundled PDF text parser".into() } else { "Platform capability gate".into() },
                 detail: if pdf_available {
-                    "Text-based PDFs only; scanned-page OCR is not implemented.".into()
+                    "Bundled parser is present for text-based PDFs, but PDF operations also require verified worker resource, filesystem and network isolation.".into()
                 } else {
                     "PDF text extraction is unavailable on this platform build.".into()
                 },
+            },
+            CapabilityRecord {
+                id: "pdf.worker.resource_limits".into(),
+                category: "security".into(),
+                state: pdf_worker_resource_limits_state(),
+                source: "OS-specific PDF worker launcher".into(),
+                detail: "Worker resource-limit enforcement remains Unknown until supported-platform smoke tests pass.".into(),
+            },
+            CapabilityRecord {
+                id: "pdf.worker.filesystem_isolation".into(),
+                category: "security".into(),
+                state: pdf_worker_filesystem_isolation_state(),
+                source: "OS-specific PDF worker filesystem policy".into(),
+                detail: "PDF operations require a verified deny-by-default filesystem-read boundary.".into(),
+            },
+            CapabilityRecord {
+                id: "pdf.worker.network_isolation".into(),
+                category: "security".into(),
+                state: pdf_worker_network_isolation_state(),
+                source: "OS-specific PDF worker network policy".into(),
+                detail: "PDF operations require verified worker network denial.".into(),
             },
         ],
         operations: registered_operations(),
