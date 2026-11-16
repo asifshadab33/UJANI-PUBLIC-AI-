@@ -98,7 +98,7 @@ export default function UpdateNotice() {
             setMessage("Download complete. Verifying and installing the signed update…");
             break;
         }
-      });
+      }, { timeout: 300_000 });
       setMessage("Update installed. Restarting UJANI…");
       await relaunch();
     } catch (error) {
