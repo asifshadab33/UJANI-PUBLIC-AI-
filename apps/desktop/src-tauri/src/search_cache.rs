@@ -36,13 +36,17 @@ pub struct RecentSearch {
     pub created_at: i64,
 }
 
+fn unix_seconds_from_duration(duration: std::time::Duration) -> Result<i64, String> {
+    i64::try_from(duration.as_secs())
+        .map_err(|_| "System clock exceeds the supported cache timestamp range.".to_string())
+}
+
 /// Converts a wall-clock instant to the signed SQLite seconds range without wrapping or saturation.
 fn unix_seconds_at(time: SystemTime) -> Result<i64, String> {
     let duration = time
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
-    i64::try_from(duration.as_secs())
-        .map_err(|_| "System clock exceeds the supported cache timestamp range.".to_string())
+    unix_seconds_from_duration(duration)
 }
 
 fn now_seconds() -> Result<i64, String> {
@@ -641,8 +645,8 @@ mod tests {
         assert_eq!(unix_seconds_at(UNIX_EPOCH).unwrap(), 0);
         assert_eq!(unix_seconds_at(UNIX_EPOCH + std::time::Duration::from_secs(123)).unwrap(), 123);
         assert!(unix_seconds_at(UNIX_EPOCH - std::time::Duration::from_secs(1)).is_err());
-        assert!(unix_seconds_at(
-            UNIX_EPOCH + std::time::Duration::from_secs(i64::MAX as u64 + 1)
+        assert!(unix_seconds_from_duration(
+            std::time::Duration::from_secs(i64::MAX as u64 + 1)
         ).is_err());
     }
 
