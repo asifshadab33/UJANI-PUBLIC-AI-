@@ -28,6 +28,38 @@ test("rejects invalid versions and malformed updater artifacts", () => {
   assert.throws(() => validateManifest({ version: "1.0.0", platforms: { linux: { url: "https://example.test/a", signature: "" } } }));
 });
 
+test("binds every artifact URL and the manifest version to the approved release", () => {
+  const approved = {
+    version: "0.1.0",
+    platforms: {
+      "linux-x86_64": {
+        url: "https://github.com/asifshadab33/UJANI-PUBLIC-AI-/releases/download/v0.1.0/ujani.AppImage.tar.gz",
+        signature: "signed-artifact",
+      },
+    },
+  };
+  assert.doesNotThrow(() => validateManifest(approved, {
+    version: "0.1.0",
+    repository: "asifshadab33/UJANI-PUBLIC-AI-",
+    tag: "v0.1.0",
+  }));
+  assert.throws(() => validateManifest(approved, {
+    version: "0.1.1",
+    repository: "asifshadab33/UJANI-PUBLIC-AI-",
+    tag: "v0.1.0",
+  }));
+  assert.throws(() => validateManifest(approved, {
+    version: "0.1.0",
+    repository: "attacker/other-repo",
+    tag: "v0.1.0",
+  }));
+  assert.throws(() => validateManifest(approved, {
+    version: "0.1.0",
+    repository: "asifshadab33/UJANI-PUBLIC-AI-",
+    tag: "v0.1.1",
+  }));
+});
+
 test("publishes first valid feed and atomically replaces it only with a newer version", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ujani-updater-feed-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
