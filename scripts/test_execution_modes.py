@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / "apps/desktop/src/App.tsx").read_text(encoding="utf-8")
 ROADMAP = (ROOT / "ROADMAP.md").read_text(encoding="utf-8")
 MODES = (ROOT / "docs/EXECUTION-MODES.md").read_text(encoding="utf-8")
+README = (ROOT / "README.md").read_text(encoding="utf-8")
+IMPLEMENTATION_STATUS = (ROOT / "docs/IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
 
 
 class ExecutionModeContractTests(unittest.TestCase):
@@ -116,6 +118,16 @@ class ExecutionModeContractTests(unittest.TestCase):
         self.assertIn(
             "Any experimental peer identity/nonce primitives are separate transport foundations",
             MODES,
+        )
+
+    def test_public_docs_do_not_redefine_worker_partner_as_peer_execution(self):
+        self.assertNotIn("Secure distributed Worker/Partner peer execution", README)
+        self.assertIn("approved cloud-plan/local-compute gateway", README)
+        self.assertIn("bounded local/cloud iteration gateway", README)
+        self.assertIn("Experimental peer protocol primitives", IMPLEMENTATION_STATUS)
+        self.assertIn(
+            "they do not define or enable Public AI's Worker or Partner modes",
+            IMPLEMENTATION_STATUS,
         )
 
 
