@@ -568,6 +568,17 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
   assert!(missing_history_key_error(true, false, false).is_none()); // legacy plaintext can be migrated
   assert!(missing_history_key_error(true, false, true).unwrap().contains("no replacement key was created"));
   assert!(missing_history_key_error(true, true, false).unwrap().contains("no replacement key was created"));
+
+  let c = db();
+  assert!(!history_has_rows(&c).unwrap());
+  assert!(!history_key_was_initialized(&c).unwrap());
+  c.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('legacy','plain','smart','m','chat',1)",
+   [],
+  ).unwrap();
+  assert!(history_has_rows(&c).unwrap());
+  mark_history_key_initialized(&c).unwrap();
+  assert!(history_key_was_initialized(&c).unwrap());
  }
 
  #[test]
