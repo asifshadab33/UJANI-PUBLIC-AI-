@@ -478,7 +478,7 @@ struct OllamaStatusInput {
 }
 
 /// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
-fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
+fn build_ollama_status(input: OllamaStatusInput, observed_at_unix_ms: u64) -> OllamaStatus {
     let OllamaStatusInput {
         available,
         models,
@@ -510,7 +510,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         memory_total_mb,
         memory_available_mb,
         accelerator: accelerator.as_ref(),
-    });
+    }, observed_at_unix_ms);
 
     OllamaStatus {
         available,
@@ -928,6 +928,7 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
     let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
 
+    let observed_at_unix_ms = model_inventory::now_unix_ms()?;
     Ok(build_ollama_status(OllamaStatusInput {
         available,
         models,
@@ -940,7 +941,7 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
-    }))
+    }, observed_at_unix_ms))
 }
 
 
@@ -1747,7 +1748,7 @@ mod model_inventory_recommendation_tests {
             cpu_logical_cores: Some(8),
             memory_total_mb: Some(8_192),
             memory_available_mb: Some(16_384),
-        });
+        }, 1_000);
         let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
 
         assert_eq!(inventory["hardware"]["memory_total_mb"], 8_192);
