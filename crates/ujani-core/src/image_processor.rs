@@ -1,4 +1,5 @@
 //! Basic image-header inspection from user-supplied bytes; no filesystem access.
+use crate::file_processor::valid_display_file_name;
 use serde::{Deserialize, Serialize};
 
 const MAX_IMAGE_BYTES: usize = 64 * 1024;
@@ -14,7 +15,7 @@ pub struct ImageInfo {
 }
 
 pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> Result<ImageInfo, String> {
-    if file_name.trim().is_empty() || file_name.len() > 255 { return Err("A valid image file name is required.".into()); }
+    if !valid_display_file_name(file_name) { return Err("A valid image file name without path separators or control characters is required.".into()); }
     if data.is_empty() || data.len() > MAX_IMAGE_BYTES || original_size_bytes == 0 || original_size_bytes > MAX_ORIGINAL_IMAGE_BYTES || data.len() as u64 > original_size_bytes { return Err("Image must be 1 byte–20 MiB; only its first 64 KiB header is processed.".into()); }
     let ext = file_name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let (format, dimensions) = match ext.as_str() {
@@ -88,6 +89,21 @@ mod tests {
     fn rejects_unsupported_and_oversized_headers() {
         assert!(inspect_image("sample.svg", b"<svg/>", 6).is_err());
         assert!(inspect_image("sample.png", &vec![0; MAX_IMAGE_BYTES + 1], (MAX_IMAGE_BYTES + 1) as u64).is_err());
+    }
+
+    #[test]
+    fn rejects_path_like_and_control_character_image_names() {
+        let jpeg = [0xff, 0xd8, 0xff];
+        for name in ["../photo.jpg", "folder/photo.jpg", "photo\\n.jpg", ".", ".."] {
+            assert!(inspect_image(name, &jpeg, jpeg.len() as u64).is_err(), "accepted {name:?}");
+        }
+        assert!(inspect_image(&"n".repeat(256), &jpeg, jpeg.len() as u64).is_err());
+        assert!(inspect_image("photo.jpg", &jpeg, jpeg.len() as u64).is_ok());
+        #[cfg(windows)]
+        {
+            assert!(inspect_image(r"C:\\Users\\person\\photo.jpg", &jpeg, jpeg.len() as u64).is_err());
+            assert!(inspect_image("photo:stream.jpg", &jpeg, jpeg.len() as u64).is_err());
+        }
     }
 }
 
