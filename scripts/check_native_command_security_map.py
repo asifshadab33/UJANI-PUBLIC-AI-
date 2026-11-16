@@ -20,6 +20,8 @@ CORE_TASK_GRAPH = ROOT / "crates/ujani-core/src/task_graph.rs"
 APP_SOURCE = ROOT / "apps/desktop/src/App.tsx"
 FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
 REMINDER_STORE = ROOT / "apps/desktop/src-tauri/src/reminder_store.rs"
+CORE_FILE_PROCESSOR = ROOT / "crates/ujani-core/src/file_processor.rs"
+CORE_IMAGE_PROCESSOR = ROOT / "crates/ujani-core/src/image_processor.rs"
 
 
 def find_matching_delimiter(source: str, opening_index: int, opening: str, closing: str) -> int:
@@ -204,6 +206,24 @@ def missing_demo_command_guards(source: str) -> list[str]:
     return missing
 
 
+def missing_file_metadata_guards(source: str) -> list[str]:
+    """Ensure selected-file metadata IPC commands delegate to bounded core parsers."""
+    expected = {
+        "analyze_text_file": "LocalTaskEngine::analyze_text",
+        "inspect_image_file": "LocalTaskEngine::inspect_image",
+    }
+    missing = []
+    for command, validator in expected.items():
+        try:
+            body = rust_function_body(source, command)
+        except ValueError:
+            missing.append(command)
+            continue
+        if validator not in command_tokens(body):
+            missing.append(command)
+    return missing
+
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -319,6 +339,37 @@ def main() -> int:
             "debug demo commands: missing build-profile guard in "
             + ", ".join(missing_demo_guards)
         )
+
+    missing_file_metadata = missing_file_metadata_guards(source)
+    if missing_file_metadata:
+        errors.append(
+            "selected-file metadata commands: missing bounded core parser delegation in "
+            + ", ".join(missing_file_metadata)
+        )
+    require_tokens(
+        CORE_FILE_PROCESSOR,
+        (
+            "pub(crate) fn valid_display_file_name(",
+            "if !valid_display_file_name(file_name)",
+            "character.is_control()",
+            "character == '/'",
+            "character == char::from(92)",
+            "character == ':'",
+        ),
+        errors,
+        "shared pathless display-name validation",
+    )
+    require_tokens(
+        CORE_IMAGE_PROCESSOR,
+        (
+            "use crate::file_processor::valid_display_file_name;",
+            "if !valid_display_file_name(file_name)",
+            "MAX_IMAGE_BYTES",
+            "MAX_ORIGINAL_IMAGE_BYTES",
+        ),
+        errors,
+        "bounded image-header IPC input",
+    )
     require_tokens(
         APP_SOURCE,
         ("if (!import.meta.env.DEV)", "import.meta.env.DEV && <div className=\"controls\">", "Run word-count demo"),
