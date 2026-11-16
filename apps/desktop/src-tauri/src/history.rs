@@ -762,4 +762,25 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
   );
  }
 
+ #[test]
+ fn secure_history_save_rolls_back_placeholder_when_encryption_update_fails() {
+  let mut c = db();
+  c.execute("UPDATE history_settings SET value='true'", []).unwrap();
+  c.execute_batch(
+   "CREATE TRIGGER reject_history_ciphertext_update
+    BEFORE UPDATE OF prompt, output ON task_history
+    BEGIN
+      SELECT RAISE(ABORT, 'injected encryption persistence failure');
+    END;"
+  ).unwrap();
+
+  let key = test_key();
+  assert!(save_secure(
+   &mut c, &key, "private prompt", "private output", "smart", "model-a", "chat", 10
+  ).is_err());
+
+  let rows: i64 = c.query_row("SELECT COUNT(*) FROM task_history", [], |row| row.get(0)).unwrap();
+  assert_eq!(rows, 0, "failed encryption must not leave an empty or plaintext placeholder row");
+ }
+
 }
