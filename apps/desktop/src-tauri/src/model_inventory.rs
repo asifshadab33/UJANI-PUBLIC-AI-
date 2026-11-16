@@ -117,12 +117,16 @@ impl InventoryEvidence {
     }
 }
 
-pub(crate) fn now_unix_ms() -> Result<u64, String> {
-    let duration = SystemTime::now()
+fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
+    let duration = time
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
     u64::try_from(duration.as_millis())
         .map_err(|_| "System clock exceeds the supported model-inventory timestamp range.".to_string())
+}
+
+pub(crate) fn now_unix_ms() -> Result<u64, String> {
+    unix_epoch_millis_at(SystemTime::now())
 }
 
 fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
@@ -302,6 +306,16 @@ mod tests {
                 quantization_level: Some("Q4_K_M".into()),
             }),
         }
+    }
+
+    #[test]
+    fn inventory_clock_rejects_pre_epoch_time_without_fabricating_a_timestamp() {
+        assert_eq!(unix_epoch_millis_at(UNIX_EPOCH).unwrap(), 0);
+        assert_eq!(
+            unix_epoch_millis_at(UNIX_EPOCH + std::time::Duration::from_millis(1_234)).unwrap(),
+            1_234
+        );
+        assert!(unix_epoch_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
     }
 
     #[test]
