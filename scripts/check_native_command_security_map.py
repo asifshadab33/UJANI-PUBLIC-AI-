@@ -21,6 +21,8 @@ APP_SOURCE = ROOT / "apps/desktop/src/App.tsx"
 FOLDER_IMPORT = ROOT / "apps/desktop/src-tauri/src/folder_import.rs"
 REMINDER_STORE = ROOT / "apps/desktop/src-tauri/src/reminder_store.rs"
 HISTORY_SOURCE = ROOT / "apps/desktop/src-tauri/src/history.rs"
+CACHE_SOURCE = ROOT / "apps/desktop/src-tauri/src/search_cache.rs"
+SECURITY_STORE_SOURCE = ROOT / "apps/desktop/src-tauri/src/security_store.rs"
 CORE_FILE_PROCESSOR = ROOT / "crates/ujani-core/src/file_processor.rs"
 CORE_IMAGE_PROCESSOR = ROOT / "crates/ujani-core/src/image_processor.rs"
 TASK_ENGINE = ROOT / "apps/desktop/src-tauri/src/task_engine.rs"
@@ -384,6 +386,64 @@ def missing_history_key_recovery_guards(source: str) -> list[str]:
     return []
 
 
+
+def missing_local_state_mutation_receipt_guards(cache_source: str, history_source: str, security_source: str) -> list[str]:
+    """Require provenance reservation before cache/history/budget state mutations."""
+    missing: list[str] = []
+
+    cache_expectations = {
+        "set_local_search_cache_settings": ("with_local_state_receipt", "transaction_with_behavior", "UPDATE cache_settings"),
+        "clear_local_search_cache": ("with_local_state_receipt", "transaction_with_behavior", "DELETE FROM search_cache"),
+    }
+    for name, ordered in cache_expectations.items():
+        try:
+            body = rust_function_body(cache_source, name)
+        except ValueError:
+            missing.append(name)
+            continue
+        positions = [body.find(token) for token in ordered]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            missing.append(name)
+        if name == "set_local_search_cache_settings":
+            for table in ("search_cache", "recent_searches", "approved_scopes"):
+                if f"DELETE FROM {table}" not in body:
+                    missing.append(name)
+                    break
+        if name == "clear_local_search_cache":
+            for table in ("search_cache", "recent_searches", "approved_scopes"):
+                if f"DELETE FROM {table}" not in body:
+                    missing.append(name)
+                    break
+
+    history_expectations = {
+        "set_task_history_enabled": ("with_local_state_receipt", "migrate_plaintext_rows", "UPDATE history_settings"),
+        "delete_task_history": ("with_local_state_receipt", "DELETE FROM task_history"),
+        "clear_task_history": ("with_local_state_receipt", "DELETE FROM task_history"),
+    }
+    for name, ordered in history_expectations.items():
+        try:
+            body = rust_function_body(history_source, name)
+        except ValueError:
+            missing.append(name)
+            continue
+        positions = [body.find(token) for token in ordered]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            missing.append(name)
+
+    try:
+        budget = rust_function_body(security_source, "set_cloud_budget_limit")
+    except ValueError:
+        missing.append("set_cloud_budget_limit")
+    else:
+        ordered = ("confirm_native", "with_local_state_receipt", "set_cloud_budget_limit_db")
+        positions = [budget.find(token) for token in ordered]
+        declined = budget.find("if !approved")
+        receipt = positions[1]
+        if any(position < 0 for position in positions) or positions != sorted(positions) or declined < 0 or declined > receipt:
+            missing.append("set_cloud_budget_limit")
+
+    return sorted(set(missing))
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -625,6 +685,27 @@ def main() -> int:
     )
     if folder_source and folder_source.find("register_active_task") > folder_source.find("blocking_pick_folder"):
         errors.append("folder import: task registration must precede the native folder picker")
+
+    cache_source = require_tokens(
+        CACHE_SOURCE,
+        ("fn set_local_search_cache_settings(", "fn clear_local_search_cache("),
+        errors,
+        "local search-cache state mutations",
+    )
+    security_store_source = require_tokens(
+        SECURITY_STORE_SOURCE,
+        ("fn set_cloud_budget_limit(", "fn set_cloud_budget_limit_db("),
+        errors,
+        "cloud-budget state mutation",
+    )
+    missing_state_receipts = missing_local_state_mutation_receipt_guards(
+        cache_source, history_source, security_store_source
+    )
+    if missing_state_receipts:
+        errors.append(
+            "local state mutation provenance: receipt/consent must precede cache, history and budget writes in "
+            + ", ".join(missing_state_receipts)
+        )
 
     # Reminder storage must stay encrypted, explicitly disabled by default and bounded.
     require_tokens(
