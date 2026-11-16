@@ -133,6 +133,7 @@ fn model_inventory_timestamp_at(time: SystemTime) -> Result<u64, String> {
     Ok(timestamp)
 }
 
+// The v2 inventory contract requires a positive generated_at_unix_ms value.
 pub(crate) fn now_unix_ms() -> Result<u64, String> {
     model_inventory_timestamp_at(SystemTime::now())
 }
