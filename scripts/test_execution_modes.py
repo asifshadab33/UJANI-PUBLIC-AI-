@@ -78,7 +78,7 @@ class ExecutionModeContractTests(unittest.TestCase):
             MODES,
         )
         self.assertIn(
-            "A denial or timeout must not send the request.",
+            "A denial or timeout before dispatch must not send the request; once the POST has been dispatched",
             MODES,
         )
 
