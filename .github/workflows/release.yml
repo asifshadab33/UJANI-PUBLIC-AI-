@@ -557,12 +557,13 @@ jobs:
 
 
   publish-updater-feed:
-    name: Publish signed updater feed for prerelease and stable releases
+    name: Publish verified updater manifest for prerelease and stable releases
     needs: publish-release
     runs-on: ubuntu-24.04
     concurrency:
       group: ujani-updater-feed
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
     steps:
