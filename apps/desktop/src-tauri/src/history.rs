@@ -730,4 +730,25 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
  #[test] fn enforces_retention_and_limit(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();save(&mut c,"old","o","smart","m","chat",1).unwrap();let t=RETENTION_SECONDS+100;for n in 0..(MAX_ENTRIES+2){save(&mut c,&format!("p{n}"),"o","smart","m","chat",t+n).unwrap();}let rows=list(&c).unwrap();assert_eq!(rows.len() as i64,MAX_ENTRIES);assert!(rows.iter().all(|r|r.prompt!="old"));}
  #[test] fn stored_results_are_bounded(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();let large="x".repeat(MAX_STORED_OUTPUT+100);save(&mut c,"p",&large,"smart","m","chat",1).unwrap();let row=list(&c).unwrap().remove(0);assert!(row.output.len()<=MAX_STORED_OUTPUT+64);assert!(row.output.contains("truncated to 64 KiB"));}
  #[test] fn rejects_oversized_values(){let mut c=db();c.execute("UPDATE history_settings SET value='true'",[]).unwrap();assert!(save(&mut c,&"p".repeat(MAX_PROMPT+1),"o","smart","m","chat",1).is_err());assert!(save(&mut c,"p",&"o".repeat(MAX_OUTPUT+1),"smart","m","chat",1).is_err());}
+ #[test]
+ fn secure_history_save_rolls_back_placeholder_when_encryption_update_fails() {
+  let mut c = db();
+  c.execute("UPDATE history_settings SET value='true'", []).unwrap();
+  c.execute_batch(
+   "CREATE TRIGGER reject_history_ciphertext_update
+    BEFORE UPDATE OF prompt, output ON task_history
+    BEGIN
+      SELECT RAISE(ABORT, 'injected encryption persistence failure');
+    END;"
+  ).unwrap();
+
+  let key = test_key();
+  assert!(save_secure(
+   &mut c, &key, "private prompt", "private output", "smart", "model-a", "chat", 10
+  ).is_err());
+
+  let rows: i64 = c.query_row("SELECT COUNT(*) FROM task_history", [], |row| row.get(0)).unwrap();
+  assert_eq!(rows, 0, "failed encryption must not leave an empty or plaintext placeholder row");
+ }
+
 }
