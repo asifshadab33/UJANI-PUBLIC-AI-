@@ -20,7 +20,7 @@ EXPECTED_SHARED_ARTIFACTS = {
     "schemas/personal-enterprise-task-contract-v1.schema.json": "566a0d72babd58636a3ef40e55b5c44168776522",
     "schemas/test-vectors/consent-binding-v1.json": "dcd7021560212504810e8438e14efd591e5e657d",
     "schemas/test-vectors/model-runtime-inventory-v1.json": "543d645d0154c9263ff7784ba4e203f54e498c3c",
-    "schemas/test-vectors/model-runtime-inventory-v2.json": "cad9d1fb8963298c4ba56a4124948a268d15f08f",
+    "schemas/test-vectors/model-runtime-inventory-v2.json": "7d3bc7b6990d0572547e2312a97032f5486539a8",
 }
 
 
@@ -109,6 +109,23 @@ def _v2_evidence_claim_usable(evidence: dict, now_unix_ms: int, max_age_ms: int)
         and evidence.get("confidence") in {"verified", "reported"}
         and _v2_evidence_recent(evidence, now_unix_ms, max_age_ms)
     )
+
+
+def _v2_os_fact_usable(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
+    """Host platform/resource facts must come from a fresh, verified OS observation."""
+    return (
+        evidence.get("source") == "os_api"
+        and evidence.get("confidence") == "verified"
+        and _v2_evidence_recent(evidence, now_unix_ms, max_age_ms)
+    )
+
+
+SUPPORTED_RUNTIME_PROVIDERS = frozenset({"ollama"})
+
+
+def _v2_runtime_provider_supported(runtime: dict) -> bool:
+    provider = runtime.get("provider")
+    return isinstance(provider, str) and provider.strip().casefold() in SUPPORTED_RUNTIME_PROVIDERS
 
 
 def _v2_evidence_estimate_usable(evidence: dict, now_unix_ms: int, max_age_ms: int) -> bool:
@@ -208,6 +225,7 @@ def _v2_model_fits(
     if (
         runtime is None
         or runtime["availability"] != "available"
+        or not _v2_runtime_provider_supported(runtime)
         or not _v2_evidence_claim_usable(runtime["evidence"], now_unix_ms, max_age_ms)
         or model["availability"] != "installed"
         or model["compatibility"]["status"] != "compatible"
@@ -220,7 +238,11 @@ def _v2_model_fits(
 
     platform = inventory["platform"]
     compatibility = model["compatibility"]
-    if not _v2_evidence_claim_usable(platform["evidence"], now_unix_ms, max_age_ms):
+    if (
+        platform["os"] == "unknown"
+        or platform["architecture"].strip().casefold() == "unknown"
+        or not _v2_os_fact_usable(platform["evidence"], now_unix_ms, max_age_ms)
+    ):
         return False
     if compatibility["supported_os"] and platform["os"] not in compatibility["supported_os"]:
         return False
@@ -253,7 +275,7 @@ def _v2_model_fits(
             "recommended_cpu_threads",
         )
     )
-    if has_host_resource_requirement and not _v2_evidence_claim_usable(
+    if has_host_resource_requirement and not _v2_os_fact_usable(
         hardware["evidence"], now_unix_ms, max_age_ms
     ):
         return False
@@ -380,6 +402,48 @@ def validate_model_runtime_inventory_v2() -> None:
     future_runtime = copy.deepcopy(fixture)
     future_runtime["runtimes"][0]["provider"] = "future.vendor.runtime"
     validator.validate(future_runtime)
+    assert _v2_select_explicit_model(
+        future_runtime, "example/model:1.0", "chat", now, 5_000
+    ) is None
+
+    # Host platform and aggregate hardware facts require fresh, verified OS evidence.
+    for source, confidence in (
+        ("runtime_api", "reported"),
+        ("runtime_metadata", "reported"),
+        ("signed_catalogue", "verified"),
+        ("published_catalogue", "verified"),
+        ("os_api", "reported"),
+    ):
+        untrusted_platform = copy.deepcopy(fixture)
+        untrusted_platform["platform"]["evidence"] = {
+            "source": source, "confidence": confidence, "observed_at_unix_ms": now
+        }
+        validator.validate(untrusted_platform)
+        assert _v2_select_explicit_model(
+            untrusted_platform, "example/model:1.0", "chat", now, 5_000
+        ) is None
+
+        untrusted_hardware = copy.deepcopy(fixture)
+        untrusted_hardware["hardware"]["evidence"] = {
+            "source": source, "confidence": confidence, "observed_at_unix_ms": now
+        }
+        validator.validate(untrusted_hardware)
+        assert _v2_select_explicit_model(
+            untrusted_hardware, "example/model:1.0", "chat", now, 5_000
+        ) is None
+
+    unknown_os = copy.deepcopy(fixture)
+    unknown_os["platform"]["os"] = "unknown"
+    validator.validate(unknown_os)
+    assert _v2_select_explicit_model(
+        unknown_os, "example/model:1.0", "chat", now, 5_000
+    ) is None
+    unknown_architecture = copy.deepcopy(fixture)
+    unknown_architecture["platform"]["architecture"] = "unknown"
+    validator.validate(unknown_architecture)
+    assert _v2_select_explicit_model(
+        unknown_architecture, "example/model:1.0", "chat", now, 5_000
+    ) is None
 
     # Unknown/unavailable runtimes, dangling model references and uninstalled models cannot be selected.
     unknown_runtime = copy.deepcopy(fixture)
