@@ -68,12 +68,12 @@ pub struct HistorySettings { pub enabled:bool, pub retention_days:i64, pub max_e
 
 
 #[cfg(target_os = "android")]
-fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(_has_encrypted_rows: bool) -> Result<Zeroizing<[u8; 32]>, String> {
     Err("Encrypted task history is disabled on Android until Android Keystore integration is validated.".into())
 }
 
 #[cfg(not(target_os = "android"))]
-fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
+fn history_key(has_encrypted_rows: bool) -> Result<Zeroizing<[u8; 32]>, String> {
  let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
   .map_err(|e| format!("OS credential vault is unavailable; encrypted history is disabled: {e}"))?;
  match entry.get_password() {
@@ -83,12 +83,15 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
    // output buffer is erased if the decoder reports malformed base64.
    let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
    let decoded_len = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
-       .map_err(|_| "Stored history key is invalid; clear the OS credential entry before continuing.".to_string())?;
+       .map_err(|_| "Stored history key is invalid; existing history is preserved. Restore the original key from a trusted credential backup before attempting recovery.".to_string())?;
    decoded.truncate(decoded_len);
    let key: [u8; 32] = decoded.as_slice().try_into().map_err(|_| "Stored history key has an invalid length.".to_string())?;
    Ok(Zeroizing::new(key))
   }
   Err(keyring::Error::NoEntry) => {
+   if let Some(message) = missing_history_key_error(has_encrypted_rows) {
+    return Err(message.into());
+   }
    let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
    let encoded = Zeroizing::new(B64.encode(*key));
    entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
@@ -96,6 +99,28 @@ fn history_key() -> Result<Zeroizing<[u8; 32]>, String> {
   }
   Err(e) => Err(format!("Could not read history key from OS credential vault: {e}")),
  }
+}
+
+fn missing_history_key_error(has_encrypted_rows: bool) -> Option<&'static str> {
+ if has_encrypted_rows {
+  Some("The OS credential vault no longer contains the key for existing encrypted history. Existing rows have been preserved and no replacement key was created. Restore the original key from a trusted backup; otherwise clear history only after explicit confirmation.")
+ } else {
+  None
+ }
+}
+
+fn history_has_encrypted_rows(db: &Connection) -> Result<bool, String> {
+ db.query_row(
+  "SELECT EXISTS(
+     SELECT 1 FROM task_history
+     WHERE prompt LIKE ?1 || '%' OR output LIKE ?1 || '%'
+        OR prompt LIKE ?2 || '%' OR output LIKE ?2 || '%'
+        OR prompt LIKE ?3 || '%' OR output LIKE ?3 || '%'
+   )",
+  params![ENCRYPTED_PREFIX, ENC_V2, ENC_V3],
+  |row| row.get(0),
+ )
+ .map_err(|error| format!("Could not inspect encrypted history state: {error}"))
 }
 
 fn legacy_row_aad(id: i64, column: &str) -> Vec<u8> {
@@ -344,7 +369,7 @@ pub fn set_task_history_enabled(app: AppHandle, enabled_value: bool) -> Result<H
     crate::with_local_state_receipt(&app, "history.settings.update", &input, || {
         let db = open(&app)?;
         if enabled_value {
-            let key = history_key()?;
+            let key = history_key(history_has_encrypted_rows(&db)?)?;
             migrate_plaintext_rows(&db, &key)?;
         }
         db.execute(
@@ -376,7 +401,7 @@ pub fn save_task_history(
         if !is_enabled(&db)? {
             return Err("Task history is disabled.".into());
         }
-        let key = history_key()?;
+        let key = history_key(history_has_encrypted_rows(&db)?)?;
         migrate_plaintext_rows(&db, &key)?;
         let id = save_secure(&mut db, &key, &prompt, &output, &mode, &model, &kind, now()?)?;
         Ok((id, id.to_be_bytes().to_vec()))
@@ -404,7 +429,7 @@ pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
             if !is_enabled(&db)? {
                 return Ok((Vec::new(), b"history-disabled".to_vec()));
             }
-            let key = history_key()?;
+            let key = history_key(history_has_encrypted_rows(&db)?)?;
             migrate_plaintext_rows(&db, &key)?;
             db.execute(
                 "DELETE FROM task_history WHERE created_at < ?1",
@@ -502,6 +527,43 @@ pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
   assert!(validate_history_values(&"p".repeat(MAX_PROMPT + 1), "output", "smart", "model-a", "chat").is_err());
   assert!(validate_history_values("prompt", &"o".repeat(MAX_OUTPUT + 1), "smart", "model-a", "chat").is_err());
   assert!(validate_history_values("prompt", "output", &"m".repeat(33), "model-a", "chat").is_err());
+ }
+
+ #[test]
+ fn missing_history_key_policy_preserves_existing_encrypted_rows() {
+  assert!(missing_history_key_error(false).is_none());
+  assert!(missing_history_key_error(true).unwrap().contains("no replacement key was created"));
+ }
+
+ #[test]
+ fn encrypted_history_presence_detects_v1_v2_v3_and_mixed_rows() {
+  let c = db();
+  assert!(!history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "INSERT INTO task_history(prompt,output,mode,model,kind,created_at) VALUES('legacy plain','legacy output','smart','m','chat',1)",
+   [],
+  ).unwrap();
+  assert!(!history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET prompt=?1 WHERE id=1",
+   params![format!("{ENC_V2}encrypted")],
+  ).unwrap();
+  assert!(history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET prompt='plain again', output=?1 WHERE id=1",
+   params![format!("{ENC_V3}encrypted")],
+  ).unwrap();
+  assert!(history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET output='legacy plain' WHERE id=1",
+   [],
+  ).unwrap();
+  assert!(!history_has_encrypted_rows(&c).unwrap());
+  c.execute(
+   "UPDATE task_history SET prompt=?1 WHERE id=1",
+   params![format!("{ENCRYPTED_PREFIX}encrypted")],
+  ).unwrap();
+  assert!(history_has_encrypted_rows(&c).unwrap());
  }
 
  #[test] fn encrypted_history_round_trips_and_detects_tampering() {
