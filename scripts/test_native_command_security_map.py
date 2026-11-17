@@ -83,8 +83,8 @@ class LocalChatPreflightOrderingTests(unittest.TestCase):
         """
         self.assertEqual(missing_chat_ipc_preflight_guards(source), [])
         late_validation = source.replace(
-            "ollama::validate_chat_input(&model, &prompt)?;\\n            register_active_task();",
-            "register_active_task();\\n            ollama::validate_chat_input(&model, &prompt)?;",
+            "ollama::validate_chat_input(&model, &prompt)?;\n            register_active_task();",
+            "register_active_task();\n            ollama::validate_chat_input(&model, &prompt)?;",
         )
         self.assertEqual(missing_chat_ipc_preflight_guards(late_validation), ["execute_local_ai_task"])
 
