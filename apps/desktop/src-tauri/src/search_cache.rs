@@ -211,7 +211,7 @@ fn cache_enable_confirmation_required(currently_enabled: bool, requested_enabled
 
 fn cache_enable_confirmation_message(retention_days: i64) -> String {
     let retention = match retention_days {
-        0 => "until cleared (still limited to 50 entries / 10 MiB; no-result searches expire after 24 hours)",
+        0 => "until cleared (still limited to 50 entries / 10 MiB)",
         7 => "7 days",
         30 => "30 days",
         90 => "90 days",
@@ -981,7 +981,8 @@ mod tests {
         assert_eq!(NEGATIVE_TTL_SECONDS, 86_400);
         assert_eq!(MAX_CACHE_ENTRIES, 50);
         assert_eq!(MAX_CACHE_BYTES, 10 * 1024 * 1024);
-    }    
+    }
+
     #[test]
     fn read_only_cache_consent_check_never_creates_a_missing_database() {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -1001,6 +1002,16 @@ mod tests {
         drop(db);
         assert!(cache_enabled_from_path(&path).unwrap());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_cache_confirmation_discloses_encryption_retention_and_local_only_scope() {
+        let message = cache_enable_confirmation_message(0);
+        assert!(message.contains("AES-256-GCM"));
+        assert!(message.contains("operating-system credential vault"));
+        assert!(message.contains("No-result searches expire after 24 hours"));
+        assert!(message.contains("not sent to a cloud service"));
+        assert!(message.contains("until cleared"));
     }
 
     #[test]
