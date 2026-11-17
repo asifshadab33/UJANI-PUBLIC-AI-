@@ -370,6 +370,18 @@ fn build_chat_body<'a>(
     })
 }
 
+/// Validate a single user chat before task registration or runtime discovery.
+/// This uses the exact same model, byte and context checks as the HTTP request builder.
+pub fn validate_chat_input(model: &str, prompt: &str) -> Result<(), String> {
+    build_chat_body(
+        model,
+        None,
+        &[Turn { role: "user", content: prompt }],
+        false,
+    )
+    .map(|_| ())
+}
+
 #[derive(Deserialize)]
 struct ChatStreamEvent {
     #[serde(default)] message: Option<ChatReplyMsg>,
@@ -920,6 +932,25 @@ mod tests {
         let cpu = RunningModels { models: vec![RunningModel { size_vram: 0 }] };
         assert_eq!(cpu.models.iter().fold(0_u64, |total, m| total.saturating_add(m.size_vram)), 0);
     } 
+    #[test]
+    fn chat_input_preflight_matches_the_actual_single_turn_request_validation() {
+        for (model, prompt) in [
+            ("llama3.2", "hello"),
+            ("", "hello"),
+            ("llama3.2", ""),
+            ("llama3.2", "x".repeat(4_000).as_str()),
+        ] {
+            let expected = build_chat_body(
+                model,
+                None,
+                &[Turn { role: "user", content: prompt }],
+                false,
+            )
+            .map(|_| ());
+            assert_eq!(validate_chat_input(model, prompt), expected);
+        }
+    }
+
     #[tokio::test]
     async fn cancelling_chat_drops_the_active_http_response_stream() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
