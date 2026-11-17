@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Clock3, CopyCheck, FileSearch, FolderSearch, ShieldCheck } from "lucide-react";
+import { hasWallClockJump } from "./clockMonitor.js";
 
 type DuplicateFile = { file_name: string; path: string; size_bytes: number };
 type DuplicateGroup = { sha256: string; size_bytes: number; files: DuplicateFile[] };
@@ -30,6 +31,7 @@ const formatSize = (bytes: number) => {
 
 export default function EverydayTools() {
   const [clock, setClock] = useState<Date | null>(null);
+  const [clockWarning, setClockWarning] = useState("");
   const [result, setResult] = useState<DuplicateScanResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState("");
@@ -41,10 +43,22 @@ export default function EverydayTools() {
   const [minimumSizeMb, setMinimumSizeMb] = useState("100");
 
   useEffect(() => {
-    // The device-local clock is available in the webview without a native IPC call.
-    // This keeps the browser preview useful and avoids a misleading native-clock error.
-    setClock(new Date());
-    const timer = window.setInterval(() => setClock(new Date()), 1000);
+    // The device-local wall clock is supplied by the operating system. Compare it
+    // with the monotonic performance clock so large changes while UJANI is open
+    // are visible without contacting an external time service.
+    let previousWall = Date.now();
+    let previousMonotonic = performance.now();
+    setClock(new Date(previousWall));
+    const timer = window.setInterval(() => {
+      const wallNow = Date.now();
+      const monotonicNow = performance.now();
+      if (hasWallClockJump(previousWall, wallNow, previousMonotonic, monotonicNow)) {
+        setClockWarning("The device clock changed, or the device resumed with a time offset, while UJANI was open. Check your operating-system date, time and automatic time-synchronisation settings.");
+      }
+      setClock(new Date(wallNow));
+      previousWall = wallNow;
+      previousMonotonic = monotonicNow;
+    }, 1000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -114,7 +128,7 @@ export default function EverydayTools() {
       <div className="result-title">Local date and time <span>{zone || "Device local time"}</span></div>
       <p>{clock ? clock.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }) : "Reading device clock…"}</p>
       <b>{clock ? clock.toLocaleTimeString() : "—"}</b>
-      <small>Displayed in this device's local timezone. No network request is used.</small>
+      <small>Displayed using the operating-system clock and local timezone. UJANI does not change or synchronise the computer clock. A jump while this screen is open can be detected; an initially incorrect clock cannot be verified without a trusted external time source.</small>{clockWarning && <p className="muted" role="status">{clockWarning}</p>}
     </div>
 
     <div className="section-heading">
