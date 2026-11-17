@@ -218,7 +218,7 @@ fn cache_enable_confirmation_message(retention_days: i64) -> String {
         _ => "the selected retention period",
     };
     format!(
-        "UJANI is asking to enable the encrypted local search cache. It remembers validated search-result metadata and recent search phrases for folders you explicitly select. Folder paths and search phrases are encrypted with AES-256-GCM using a key held in the operating-system credential vault. Document contents and match excerpts are not cached. Retention: {retention}. Storage is limited to 50 entries / 10 MiB. If the credential vault is unavailable, UJANI skips caching and performs a fresh search. This data stays on this device and is not sent to a cloud service. You can turn caching off at any time; doing so clears the cache. Enable?"
+        "UJANI is asking to enable the encrypted local search cache. It remembers validated search-result metadata and recent search phrases for folders you explicitly select. Folder paths and search phrases are encrypted with AES-256-GCM using a key held in the operating-system credential vault. Document contents and match excerpts are not cached. Retention: {retention}. No-result searches expire after 24 hours regardless of the retention choice. Storage is limited to 50 entries / 10 MiB. If the credential vault is unavailable, UJANI skips caching and performs a fresh search. This data stays on this device and is not sent to a cloud service. You can turn caching off at any time; doing so clears the cache. Enable?"
     )
 }
 
