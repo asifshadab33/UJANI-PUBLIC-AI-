@@ -210,13 +210,27 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
         Evidence::observed("runtime_api", generated_at)
     } else { Evidence::unknown() };
 
-    let inventory_models = models.iter().map(|model| {
+    // Keep the wire descriptor within the shared schema's hard bounds.
+    // Invalid names are omitted rather than truncated into a different model ID.
+    const MAX_MODEL_REF_CHARS: usize = 160;
+    const MAX_MODEL_SIZE_BYTES: u64 = 1_099_511_627_776;
+    const MAX_CONTEXT_TOKENS: u64 = 10_000_000;
+    let inventory_models = models
+        .iter()
+        .filter(|model| {
+            !model.name.trim().is_empty()
+                && model.name.chars().count() <= MAX_MODEL_REF_CHARS
+                && !model.name.chars().any(char::is_control)
+        })
+        .take(512)
+        .map(|model| {
         let details = metadata.get(&model.name);
         let reported_capabilities = details.map(|item| item.capabilities.as_slice()).unwrap_or(&[]);
         let model_evidence = if details.is_some() {
             Evidence::observed("runtime_metadata", generated_at)
         } else { Evidence::observed("runtime_api", generated_at) };
-        let context_tokens = details.and_then(|item| item.context_length_tokens);
+        let context_tokens = details.and_then(|item| item.context_length_tokens)
+            .filter(|tokens| *tokens > 0 && *tokens <= MAX_CONTEXT_TOKENS);
         let memory_estimate = ujani_core::model_advisor::estimate_model_working_memory_mb(model.size)
             .filter(|value| *value > 0 && *value <= 16_777_216);
         let has_tool_use = capability_is(reported_capabilities, "tool_use");
@@ -234,7 +248,7 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
                 } else { None }
             }),
             availability: "installed",
-            size_bytes: (model.size > 0).then_some(model.size),
+            size_bytes: (model.size > 0 && model.size <= MAX_MODEL_SIZE_BYTES).then_some(model.size),
             capabilities: capabilities(reported_capabilities, &model_evidence),
             context: Context { max_tokens: context_tokens, evidence: context_evidence },
             tool_use: BooleanCapability {
@@ -271,7 +285,8 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
             },
             evidence: model_evidence,
         }
-    }).collect();
+        })
+        .collect();
 
     ModelRuntimeInventoryV2 {
         schema_version: 2,
