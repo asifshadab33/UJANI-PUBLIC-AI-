@@ -161,7 +161,8 @@ fn now_unix_ms() -> u64 {
 }
 fn canonical_os(value: &str) -> &'static str {
     let value = value.to_ascii_lowercase();
-    if value.contains("windows") { "windows" }
+    if value == "unknown" { "unknown" }
+    else if value.contains("windows") { "windows" }
     else if value.contains("linux") { "linux" }
     else if value.contains("mac") || value.contains("darwin") { "macos" }
     else { "other" }
