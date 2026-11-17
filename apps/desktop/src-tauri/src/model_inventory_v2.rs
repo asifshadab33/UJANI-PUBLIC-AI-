@@ -335,7 +335,7 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ollama::{OllamaModel, OllamaModelDetails, OllamaModelMetadata};
+    use crate::ollama::{AcceleratorObservation as OllamaAcceleratorObservation, OllamaModel, OllamaModelDetails, OllamaModelMetadata};
     use std::collections::HashMap;
 
     fn sample_model() -> OllamaModel {
@@ -401,6 +401,38 @@ mod tests {
         assert_eq!(value["models"][0]["compatibility"]["status"], "unknown");
         assert_eq!(value["models"][0]["embeddings"]["supported"], serde_json::Value::Null);
         assert_eq!(value["models"][0]["embeddings"]["evidence"]["confidence"], "unknown");
+    }
+
+    #[test]
+    fn reports_only_active_gpu_use_without_mislabeling_allocated_vram_as_capacity() {
+        let models: [OllamaModel; 0] = [];
+        let metadata = HashMap::new();
+        let accelerator = OllamaAcceleratorObservation {
+            gpu_vram_allocated_bytes: 2_147_483_648,
+            running_models: 1,
+            evidence: "ollama_api_ps".into(),
+        };
+        let value = serde_json::to_value(build_inventory_v2(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: Some(&accelerator),
+        }))
+        .unwrap();
+
+        assert_eq!(value["hardware"]["accelerators"].as_array().unwrap().len(), 1);
+        assert_eq!(value["hardware"]["accelerators"][0]["kind"], "gpu");
+        assert_eq!(value["hardware"]["accelerators"][0]["runtime_api"], "Ollama /api/ps");
+        assert_eq!(value["hardware"]["accelerators"][0]["memory_mb"], serde_json::Value::Null);
+        assert_eq!(value["hardware"]["accelerators"][0]["evidence"]["source"], "runtime_api");
+        assert_eq!(value["hardware"]["accelerators"][0]["evidence"]["confidence"], "reported");
     }
 
     #[test]
