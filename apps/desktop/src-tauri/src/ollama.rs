@@ -934,11 +934,12 @@ mod tests {
     } 
     #[test]
     fn chat_input_preflight_matches_the_actual_single_turn_request_validation() {
+        let oversized = "x".repeat(4_000);
         for (model, prompt) in [
             ("llama3.2", "hello"),
             ("", "hello"),
             ("llama3.2", ""),
-            ("llama3.2", "x".repeat(4_000).as_str()),
+            ("llama3.2", oversized.as_str()),
         ] {
             let expected = build_chat_body(
                 model,
