@@ -12,6 +12,7 @@ mod history;
 mod reminder_store;
 mod model_runtime;
 mod model_inventory;
+mod model_inventory_v2;
 mod ollama;
 mod resource_runtime;
 mod security_providers;
@@ -434,6 +435,7 @@ struct OllamaStatus {
     available: bool,
     models: Vec<ollama::OllamaModel>,
     inventory: model_inventory::ModelRuntimeInventory,
+    inventory_v2: model_inventory_v2::ModelRuntimeInventoryV2,
     recommendation: ModelRecommendation,
 }
 
@@ -498,6 +500,19 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         &chat_capable_model_sizes(&models, &metadata),
         memory_available_mb.unwrap_or(0),
     );
+    let inventory_v2 = model_inventory_v2::build_inventory_v2(model_inventory::ModelInventoryInput {
+        models: &models,
+        metadata: &metadata,
+        runtime_available: available,
+        runtime_version: runtime_version.clone(),
+        os_name: os_name.clone(),
+        os_version: os_version.clone(),
+        architecture: architecture.clone(),
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+        accelerator: accelerator.as_ref(),
+    });
     let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
         models: &models,
         metadata: &metadata,
@@ -516,6 +531,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         available,
         models,
         inventory,
+        inventory_v2,
         recommendation,
     }
 }
