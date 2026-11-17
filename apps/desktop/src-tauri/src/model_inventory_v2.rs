@@ -239,7 +239,8 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
             let memory_estimate =
                 ujani_core::model_advisor::estimate_model_working_memory_mb(model.size)
                     .filter(|value| *value > 0 && *value <= 16_777_216);
-            let has_tool_use = capability_is(reported_capabilities, "tool_use");
+            let has_tool_use = capability_is(reported_capabilities, "tool_use")
+                || capability_is(reported_capabilities, "tools");
             let context_evidence = if context_tokens.is_some() {
                 model_evidence.clone()
             } else {
@@ -415,7 +416,7 @@ mod tests {
         let models = [sample_model()];
         let metadata = HashMap::from([("llama3.2:latest".to_string(), OllamaModelMetadata {
             context_length_tokens: Some(8192),
-            capabilities: vec!["chat".into(), "vision".into(), "tool_use".into()],
+            capabilities: vec!["chat".into(), "vision".into(), "tools".into()],
         })]);
         let value = serde_json::to_value(build_inventory_v2(ModelInventoryInput {
             models: &models, metadata: &metadata, runtime_available: true,
