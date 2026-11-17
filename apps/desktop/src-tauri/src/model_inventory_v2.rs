@@ -195,7 +195,7 @@ fn capabilities(reported: &[String], evidence: &Evidence) -> Vec<Capability> {
 pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInventoryV2 {
     let ModelInventoryInput {
         models, metadata, runtime_available, runtime_version, os_name, os_version,
-        architecture, cpu_logical_cores, memory_total_mb, memory_available_mb, accelerator: _,
+        architecture, cpu_logical_cores, memory_total_mb, memory_available_mb, accelerator,
     } = input;
     let generated_at = now_unix_ms();
     let (memory_total_mb, memory_available_mb) =
@@ -298,7 +298,20 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
             memory_total_mb,
             memory_available_mb,
             storage_free_mb: None,
-            accelerators: Vec::new(),
+            // Ollama /api/ps reports active GPU allocation, not physical VRAM
+            // capacity. Record only confirmed active GPU use and never present
+            // allocated bytes as total accelerator memory.
+            accelerators: accelerator
+                .filter(|observation| observation.gpu_vram_allocated_bytes > 0)
+                .map(|_| vec![Accelerator {
+                    kind: "gpu",
+                    vendor: None,
+                    device_family: None,
+                    memory_mb: None,
+                    runtime_api: Some("Ollama /api/ps".to_string()),
+                    evidence: Evidence::observed("runtime_api", generated_at),
+                }])
+                .unwrap_or_default(),
             evidence: hardware_evidence,
         },
         runtimes: vec![Runtime {
