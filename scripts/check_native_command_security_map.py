@@ -276,7 +276,8 @@ def missing_chat_ipc_preflight_guards(source: str) -> list[str]:
         "MemoryReservation::acquire_queued",
         "reserve_execution_receipt_slot",
     )
-    positions = [body.find(token) for token in ordered]
+    executable_body = strip_rust_noncode(body)
+    positions = [executable_body.find(token) for token in ordered]
     if any(position < 0 for position in positions) or positions != sorted(positions):
         return ["execute_local_ai_task"]
     return []
@@ -662,6 +663,13 @@ def main() -> int:
         errors.append(
             "selected-folder import: task and live capability preflight must precede the native picker "
             "and bounded traversal in " + ", ".join(missing_folder_guards)
+        )
+
+    missing_chat_preflight = missing_chat_ipc_preflight_guards(source)
+    if missing_chat_preflight:
+        errors.append(
+            "local chat IPC: input validation must precede task registration, runtime discovery "
+            "and resource/receipt reservations in " + ", ".join(missing_chat_preflight)
         )
 
     # History IPC must reject oversized caller content before reserving a receipt.

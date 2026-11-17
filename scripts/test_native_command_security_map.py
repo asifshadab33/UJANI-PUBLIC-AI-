@@ -88,6 +88,19 @@ class LocalChatPreflightOrderingTests(unittest.TestCase):
         )
         self.assertEqual(missing_chat_ipc_preflight_guards(late_validation), ["execute_local_ai_task"])
 
+    def test_chat_validator_in_comment_cannot_satisfy_executable_order(self):
+        source = """
+        async fn execute_local_ai_task() {
+            // ollama::validate_chat_input(&model, &prompt)?;
+            register_active_task();
+            get_capability_snapshot_for_task().await;
+            ollama::list_models();
+            MemoryReservation::acquire_queued().await;
+            reserve_execution_receipt_slot();
+        }
+        """
+        self.assertEqual(missing_chat_ipc_preflight_guards(source), ["execute_local_ai_task"])
+
 
 class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
     def test_cache_mutations_reserve_receipt_before_transactional_writes(self):
