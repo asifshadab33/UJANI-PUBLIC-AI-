@@ -5,7 +5,7 @@
 //! reads prompts/files/paths, or grants model/workload execution permission.
 use crate::model_inventory::{normalize_memory_readings, ModelInventoryInput};
 use serde::Serialize;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelRuntimeInventoryV2 {
@@ -154,10 +154,16 @@ struct Privacy {
     contains_credentials: bool,
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or(1).max(1)
+fn unix_ms_from_duration(duration: Duration) -> Option<u64> {
+    u64::try_from(duration.as_millis()).ok().filter(|value| *value > 0)
+}
+
+fn unix_ms_at(now: SystemTime) -> Option<u64> {
+    unix_ms_from_duration(now.duration_since(UNIX_EPOCH).ok()?)
+}
+
+fn now_unix_ms() -> Option<u64> {
+    unix_ms_at(SystemTime::now())
 }
 fn canonical_os(value: &str) -> &'static str {
     let value = value.to_ascii_lowercase();
@@ -192,12 +198,19 @@ fn capabilities(reported: &[String], evidence: &Evidence) -> Vec<Capability> {
 
 /// Build v2 from the same already-collected observations as v1. Missing facts
 /// remain unknown; capability names, hardware and compatibility are never guessed.
-pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInventoryV2 {
+pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> Option<ModelRuntimeInventoryV2> {
+    build_inventory_v2_at(input, now_unix_ms())
+}
+
+fn build_inventory_v2_at(
+    input: ModelInventoryInput<'_>,
+    generated_at: Option<u64>,
+) -> Option<ModelRuntimeInventoryV2> {
+    let generated_at = generated_at.filter(|value| *value > 0)?;
     let ModelInventoryInput {
         models, metadata, runtime_available, runtime_version, os_name, os_version,
         architecture, cpu_logical_cores, memory_total_mb, memory_available_mb, accelerator,
     } = input;
-    let generated_at = now_unix_ms();
     let (memory_total_mb, memory_available_mb) =
         normalize_memory_readings(memory_total_mb, memory_available_mb);
     let platform_evidence = Evidence::verified_os(generated_at);
@@ -303,7 +316,7 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
         })
         .collect();
 
-    ModelRuntimeInventoryV2 {
+    Some(ModelRuntimeInventoryV2 {
         schema_version: 2,
         generated_at_unix_ms: generated_at,
         collection_context: CollectionContext {
@@ -359,7 +372,7 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
             contains_local_paths: false,
             contains_credentials: false,
         },
-    }
+    })
 }
 
 #[cfg(test)]
@@ -384,6 +397,40 @@ mod tests {
         }
     }
     #[test]
+    fn invalid_or_unrepresentable_wall_clock_never_produces_a_fabricated_timestamp() {
+        assert_eq!(unix_ms_at(UNIX_EPOCH), None);
+        assert_eq!(unix_ms_at(UNIX_EPOCH - Duration::from_millis(1)), None);
+        assert_eq!(
+            unix_ms_from_duration(Duration::from_millis(u64::MAX)),
+            Some(u64::MAX)
+        );
+        assert_eq!(
+            unix_ms_from_duration(Duration::from_millis(u64::MAX) + Duration::from_millis(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn unavailable_clock_omits_the_entire_v2_inventory() {
+        let models: [OllamaModel; 0] = [];
+        let metadata = HashMap::new();
+        let inventory = build_inventory_v2_at(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        }, None);
+        assert!(inventory.is_none());
+    }
+
+    #[test]
     fn emits_personal_local_v2_contract_without_enterprise_identity() {
         let models = [sample_model()];
         let metadata = HashMap::new();
@@ -393,7 +440,8 @@ mod tests {
             os_version: Some("6.8".into()), architecture: "x86_64".into(),
             cpu_logical_cores: Some(8), memory_total_mb: Some(16_384),
             memory_available_mb: Some(8_192), accelerator: None,
-        })).unwrap();
+        }).expect("valid system clock"))
+        .unwrap();
         assert_eq!(value["schema_version"], 2);
         assert_eq!(value["collection_context"]["scope"], "personal_local_only");
         assert_eq!(value["collection_context"]["owner_consent"], "not_required_local_only");
@@ -457,7 +505,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: Some(&accelerator),
-        }))
+        }).expect("valid system clock"))
         .unwrap();
 
         assert_eq!(value["hardware"]["accelerators"].as_array().unwrap().len(), 1);

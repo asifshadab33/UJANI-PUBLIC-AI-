@@ -435,7 +435,8 @@ struct OllamaStatus {
     available: bool,
     models: Vec<ollama::OllamaModel>,
     inventory: model_inventory::ModelRuntimeInventory,
-    inventory_v2: model_inventory_v2::ModelRuntimeInventoryV2,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inventory_v2: Option<model_inventory_v2::ModelRuntimeInventoryV2>,
     recommendation: ModelRecommendation,
 }
 
