@@ -117,12 +117,25 @@ impl InventoryEvidence {
     }
 }
 
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
+fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
+    let duration = time
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-        .unwrap_or(1)
-        .max(1)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    u64::try_from(duration.as_millis())
+        .map_err(|_| "System clock exceeds the supported model-inventory timestamp range.".to_string())
+}
+
+fn model_inventory_timestamp_at(time: SystemTime) -> Result<u64, String> {
+    let timestamp = unix_epoch_millis_at(time)?;
+    if timestamp == 0 {
+        return Err("System clock must be later than the Unix epoch for model inventory.".to_string());
+    }
+    Ok(timestamp)
+}
+
+// The v2 inventory contract requires a positive generated_at_unix_ms value.
+pub(crate) fn now_unix_ms() -> Result<u64, String> {
+    model_inventory_timestamp_at(SystemTime::now())
 }
 
 fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
@@ -166,7 +179,7 @@ pub(crate) fn normalize_memory_readings(
 /// Build inventory v1 from already-bounded OS and local-runtime observations.
 /// Unknown accelerator, storage, context and capability values remain unknown;
 /// this function never probes another endpoint or reads user content.
-pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory {
+pub fn build_inventory(input: ModelInventoryInput<'_>, observed_at: u64) -> ModelRuntimeInventory {
     let ModelInventoryInput {
         models,
         metadata,
@@ -180,7 +193,6 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
         memory_available_mb,
         accelerator,
     } = input;
-    let observed_at = now_unix_ms();
     let (memory_total_mb, memory_available_mb) =
         normalize_memory_readings(memory_total_mb, memory_available_mb);
     let gpu_activity_confirmed = accelerator
@@ -306,6 +318,16 @@ mod tests {
     }
 
     #[test]
+    fn inventory_clock_rejects_epoch_and_pre_epoch_time_without_fabricating_a_timestamp() {
+        assert!(model_inventory_timestamp_at(UNIX_EPOCH).is_err());
+        assert_eq!(
+            model_inventory_timestamp_at(UNIX_EPOCH + std::time::Duration::from_millis(1_234)).unwrap(),
+            1_234
+        );
+        assert!(model_inventory_timestamp_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
+    }
+
+    #[test]
     fn model_version_requires_a_valid_sha256_digest() {
         let valid = format!("sha256:{}", "B".repeat(64));
         assert_eq!(normalized_model_digest(Some(&valid)), Some("b".repeat(64)));
@@ -330,7 +352,7 @@ mod tests {
             memory_total_mb: Some(16_384),
             memory_available_mb: Some(8_192),
             accelerator: None,
-        });
+        }, 1_000);
 
         assert_eq!(inventory.schema_version, 1);
         assert_eq!(inventory.runtimes[0].availability, "unavailable");
@@ -365,7 +387,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: None,
-        });
+        }, 1_000);
         assert_eq!(inventory.models[0].estimated_min_memory_mb, None);
     }
 
@@ -385,7 +407,7 @@ mod tests {
             memory_total_mb: Some(8_192),
             memory_available_mb: Some(16_384),
             accelerator: None,
-        });
+        }, 1_000);
 
         assert_eq!(inventory.hardware.memory_total_mb, Some(8_192));
         assert_eq!(inventory.hardware.memory_available_mb, None);
@@ -407,7 +429,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: Some(2_048),
             accelerator: None,
-        });
+        }, 1_000);
 
         assert_eq!(inventory.hardware.memory_total_mb, None);
         assert_eq!(inventory.hardware.memory_available_mb, Some(2_048));
@@ -429,7 +451,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: None,
-        });
+        }, 1_000);
         let value = serde_json::to_value(inventory).expect("inventory serializes");
         assert_eq!(value["schema_version"], 1);
         assert!(value["generated_at_unix_ms"].as_u64().unwrap_or(0) > 0);
@@ -476,7 +498,7 @@ mod tests {
             memory_total_mb: Some(32_768),
             memory_available_mb: Some(20_000),
             accelerator: Some(&accelerator),
-        });
+        }, 1_000);
 
         assert_eq!(inventory.runtimes[0].version.as_deref(), Some("0.5.12"));
         assert_eq!(inventory.models[0].version.as_deref(), Some("a".repeat(64).as_str()));
