@@ -187,19 +187,32 @@ fn settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
 fn cache_enabled_from_path(path: &Path) -> Result<bool, String> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(format!("Could not inspect local search-cache settings: {error}")),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect local search-cache settings: {error}"
+            ));
+        }
         Ok(metadata) if !metadata.file_type().is_file() => {
-            return Err("Local search-cache settings are not stored in a regular file.".into());
+            return Err(
+                "Local search-cache settings are not stored in a regular file.".into(),
+            );
         }
         Ok(_) => {}
     }
+
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| format!("Could not inspect local search-cache settings without modifying them: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "Could not inspect local search-cache settings without modifying them: {error}"
+            )
+        })?;
     settings_from_db(&db).map(|settings| settings.enabled)
 }
 
 fn cache_enabled_without_mutation(app: &AppHandle) -> Result<bool, String> {
-    let mut path: PathBuf = app.path().app_data_dir()
+    let mut path: PathBuf = app
+        .path()
+        .app_data_dir()
         .map_err(|error| format!("Could not locate UJANI app data directory: {error}"))?;
     path.push("local-search-cache.sqlite3");
     cache_enabled_from_path(&path)
@@ -592,9 +605,11 @@ pub async fn set_local_search_cache_settings(
     // native Yes/No decision before the first opt-in can reserve a receipt or write data.
     let was_enabled = if enabled {
         let inspect_app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || cache_enabled_without_mutation(&inspect_app))
-            .await
-            .map_err(|error| format!("Cache settings inspection worker failed: {error}"))??
+        tauri::async_runtime::spawn_blocking(move || {
+            cache_enabled_without_mutation(&inspect_app)
+        })
+        .await
+        .map_err(|error| format!("Cache settings inspection worker failed: {error}"))??
     } else {
         false
     };
@@ -605,9 +620,13 @@ pub async fn set_local_search_cache_settings(
             cache_enable_confirmation_message(retention_days),
             tokio_util::sync::CancellationToken::new(),
             Duration::from_secs(120),
-        ).await;
+        )
+        .await;
         if !approved {
-            return Err("The native confirmation was declined, cancelled or expired; search caching remains off.".into());
+            return Err(
+                "The native confirmation was declined, cancelled or expired; search caching remains off."
+                    .into(),
+            );
         }
         true
     } else {
@@ -630,7 +649,10 @@ pub async fn set_local_search_cache_settings(
                 // A concurrent disable between the read-only check and this transaction
                 // must not turn an old "already enabled" observation into a fresh opt-in.
                 if enabled && !current.enabled && !consent_granted {
-                    return Err("Search caching was disabled before this update; a fresh native confirmation is required.".into());
+                    return Err(
+                        "Search caching was disabled before this update; a fresh native confirmation is required."
+                            .into(),
+                    );
                 }
                 tx.execute(
                     "UPDATE cache_settings SET value=?1 WHERE key='enabled'",
@@ -814,7 +836,11 @@ mod tests {
         assert!(!settings_from_db(&db).unwrap().enabled);
 
         // Simulate a version-1 installation where caching was enabled by default.
-        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        db.execute(
+            "UPDATE cache_settings SET value='true' WHERE key='enabled'",
+            [],
+        )
+        .unwrap();
         insert_scope(&db, "legacy-scope");
         insert_cache_row(&db, "legacy-scope", "legacy-request", 10, 10, false, 8);
         db.execute(
@@ -1026,17 +1052,32 @@ mod tests {
     fn native_cache_confirmation_precedes_receipt_reservation_and_settings_write() {
         let source = include_str!("search_cache.rs");
         let start = source.find("pub async fn set_local_search_cache_settings(").unwrap();
-        let end = source[start..].find("\n#[tauri::command]").map(|offset| start + offset).unwrap();
+        let end = source[start..]
+            .find("\n#[tauri::command]")
+            .map(|offset| start + offset)
+            .unwrap();
         let command = &source[start..end];
         let inspect = command.find("cache_enabled_without_mutation").unwrap();
         let confirmation = command.find("confirm_native").unwrap();
         let receipt = command.find("with_local_state_receipt").unwrap();
         let write = command.find("UPDATE cache_settings").unwrap();
-        assert!(inspect < confirmation, "prior opt-in state must be read before deciding whether to prompt");
-        assert!(confirmation < receipt, "native consent must precede receipt reservation");
-        assert!(receipt < write, "receipt reservation must precede persistent settings mutation");
-        assert!(command.contains("!current.enabled && !consent_granted"),
-            "the transaction must recheck the off-to-on transition after the native dialog");
+
+        assert!(
+            inspect < confirmation,
+            "prior opt-in state must be read before deciding whether to prompt"
+        );
+        assert!(
+            confirmation < receipt,
+            "native consent must precede receipt reservation"
+        );
+        assert!(
+            receipt < write,
+            "receipt reservation must precede persistent settings mutation"
+        );
+        assert!(
+            command.contains("!current.enabled && !consent_granted"),
+            "the transaction must recheck the off-to-on transition after the native dialog"
+        );
     }
 
 }
