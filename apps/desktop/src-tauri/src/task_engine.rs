@@ -775,7 +775,7 @@ mod runtime_preflight_tests {
         assert!(validate_translation_target_language("Hindi").is_ok());
         assert!(validate_translation_target_language("Simplified Chinese").is_ok());
         assert!(validate_translation_target_language(" ").is_err());
-        assert!(validate_translation_target_language("Hindi!".is_err());
+        assert!(validate_translation_target_language("Hindi!").is_err());
         assert!(validate_translation_target_language(&"a".repeat(41)).is_err());
     }
 
