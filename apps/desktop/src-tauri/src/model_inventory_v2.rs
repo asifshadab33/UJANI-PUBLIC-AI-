@@ -181,9 +181,7 @@ fn capabilities(reported: &[String], evidence: &Evidence) -> Vec<Capability> {
     let mut values = Vec::new();
     for (name, aliases) in [
         ("chat", &["chat", "completion"][..]),
-        ("vision", &["vision"][..]),
         ("tool_use", &["tool_use", "tools"][..]),
-        ("embeddings", &["embeddings", "embedding"][..]),
     ] {
         if aliases.iter().any(|alias| capability_is(reported, alias)) {
             values.push(Capability { name, status: "supported", evidence: evidence.clone() });
@@ -222,8 +220,6 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
         let memory_estimate = ujani_core::model_advisor::estimate_model_working_memory_mb(model.size)
             .filter(|value| *value > 0 && *value <= 16_777_216);
         let has_tool_use = capability_is(reported_capabilities, "tool_use");
-        let has_vision = capability_is(reported_capabilities, "vision");
-        let has_embeddings = capability_is(reported_capabilities, "embeddings");
         let context_evidence = if context_tokens.is_some() { model_evidence.clone() } else { Evidence::unknown() };
         let resource_evidence = if memory_estimate.is_some() { Evidence::estimate(generated_at) } else { Evidence::unknown() };
         Model {
@@ -245,16 +241,18 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
                 supported: if has_tool_use { Some(true) } else { None },
                 evidence: if has_tool_use { model_evidence.clone() } else { Evidence::unknown() },
             },
+            // Ollama's current metadata adapter does not report image-size/MIME
+            // limits or embedding dimensions, so those detailed capabilities stay unknown.
             vision: VisionCapability {
-                supported: if has_vision { Some(true) } else { None },
+                supported: None,
                 max_image_bytes: None,
                 supported_mime_types: Vec::new(),
-                evidence: if has_vision { model_evidence.clone() } else { Evidence::unknown() },
+                evidence: Evidence::unknown(),
             },
             embeddings: EmbeddingsCapability {
-                supported: if has_embeddings { Some(true) } else { None },
+                supported: None,
                 dimensions: None,
-                evidence: if has_embeddings { model_evidence.clone() } else { Evidence::unknown() },
+                evidence: Evidence::unknown(),
             },
             resource_estimates: ResourceEstimates {
                 minimum_memory_mb: memory_estimate,
@@ -380,12 +378,14 @@ mod tests {
             architecture: "arm64".into(), cpu_logical_cores: None,
             memory_total_mb: None, memory_available_mb: None, accelerator: None,
         })).unwrap();
+        assert_eq!(value["models"][0]["capabilities"].as_array().unwrap().len(), 1);
         assert_eq!(value["models"][0]["capabilities"][0]["name"], "chat");
-        assert_eq!(value["models"][0]["capabilities"][1]["name"], "vision");
-        assert_eq!(value["models"][0]["vision"]["supported"], true);
+        assert_eq!(value["models"][0]["vision"]["supported"], serde_json::Value::Null);
+        assert_eq!(value["models"][0]["vision"]["evidence"]["confidence"], "unknown");
         assert_eq!(value["models"][0]["context"]["max_tokens"], 8192);
         assert_eq!(value["models"][0]["compatibility"]["status"], "unknown");
         assert_eq!(value["models"][0]["embeddings"]["supported"], serde_json::Value::Null);
+        assert_eq!(value["models"][0]["embeddings"]["evidence"]["confidence"], "unknown");
     }
 
     #[test]
