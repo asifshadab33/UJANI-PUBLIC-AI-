@@ -39,3 +39,8 @@ The v2 descriptor is a contract foundation. Public's current live discovery rema
 Freshness is strict: an observation timestamp later than the consumer's current time is not usable, even by one millisecond. Resource-estimate evidence must have a recognised source and confidence; an `estimate` source must use `estimated` confidence. Unknown or stale estimates never establish a resource fit. The detailed `tool_use`, `vision`, and `embeddings` metadata groups must agree with the corresponding capability-list entry and carry their own fresh evidence; vision additionally requires a positive image-byte limit and at least one supported MIME type, while embeddings requires a positive dimension count.
 
 The non-empty `required_accelerator_kinds` and `required_accelerator_apis` arrays each express alternatives. At least one evidence-qualified accelerator must match one listed kind and one listed API, when both constraints are present; the same physical accelerator must satisfy both. Accelerator memory is evaluated only on that eligible set, preventing a low-memory CUDA device from borrowing the memory of a different Vulkan device. An empty list means no constraint for that dimension.
+
+
+## Public AI producer status
+
+Public AI now emits a local-only v2 descriptor alongside its existing v1 inventory field. The producer reuses the existing bounded OS and loopback Ollama observations; it does not add a second discovery pass. It marks only Ollama-reported capabilities as supported, labels memory requirements as estimates, leaves compatibility unknown until supported evidence exists, and declares personal-local-only collection with no Enterprise device reference. The v1 field remains during consumer migration.
