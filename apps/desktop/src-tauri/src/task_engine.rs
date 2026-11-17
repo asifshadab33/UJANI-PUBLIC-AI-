@@ -690,6 +690,19 @@ async fn summarise_document_content(
     Ok((summary, chunks.len(), chunks.len()))
 }
 
+/// Validate summarisation input at the native IPC boundary before task registration,
+/// capability discovery or receipt reservation. The engine repeats these checks.
+pub(crate) fn validate_summarize_input(file_name: &str, content: &str, mode: &str) -> Result<(), String> {
+    if mode != "fortress" && mode != "smart" {
+        return Err("Local file summarisation is available only in Fortress and Smart.".into());
+    }
+    validate_display_filename(file_name)?;
+    if content.trim().is_empty() || content.len() > 24 * 1024 {
+        return Err("Select a non-empty text file with no more than 24 KiB of text for AI summarisation.".into());
+    }
+    Ok(())
+}
+
 fn validate_display_filename(file_name: &str) -> Result<(), String> {
     if file_name.trim().is_empty()
         || file_name.len() > 255
@@ -750,6 +763,19 @@ pub(crate) fn validate_document_request(file_name: &str, content: &str, mode: &s
 #[cfg(test)]
 mod runtime_preflight_tests {
     use super::{clamp_utf8, fence_document, find_installed_model, plan_with_runtime_capabilities};
+
+    #[test]
+    fn summarise_ipc_preflight_rejects_invalid_inputs_before_runtime_work() {
+        use super::validate_summarize_input;
+
+        assert!(validate_summarize_input("notes.txt", "hello", "smart").is_ok());
+        assert!(validate_summarize_input("notes.txt", "hello", "fortress").is_ok());
+        assert!(validate_summarize_input("../notes.txt", "hello", "smart").is_err());
+        assert!(validate_summarize_input("notes.txt", "hello", "worker").is_err());
+        assert!(validate_summarize_input("notes.txt", "  ", "smart").is_err());
+        assert!(validate_summarize_input("notes.txt", &"x".repeat(24 * 1024), "smart").is_ok());
+        assert!(validate_summarize_input("notes.txt", &"x".repeat(24 * 1024 + 1), "smart").is_err());
+    }
 
     #[test]
     fn clamp_never_splits_utf8() {

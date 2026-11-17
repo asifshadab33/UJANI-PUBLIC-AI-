@@ -2031,6 +2031,9 @@ async fn summarize_selected_text(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    // Validate untrusted IPC input before registering a task or probing local services.
+    // LocalTaskEngine::summarize repeats the same checks before inference.
+    task_engine::validate_summarize_input(&file_name, &content, &mode)?;
     let registration = register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     ensure_task_not_cancelled(&token)?;
