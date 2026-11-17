@@ -179,6 +179,8 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
+      - name: Test signed updater feed versioning and validation
+        run: node --test scripts/publish-updater-feed.test.mjs
       - name: Test hardware-aware model recommendation boundaries
         working-directory: apps/desktop
         run: npm run test:model-recommendation
