@@ -1778,6 +1778,7 @@ mod model_inventory_recommendation_tests {
             cpu_logical_cores: Some(8),
             memory_total_mb: Some(8_192),
             memory_available_mb: Some(16_384),
+            runtime_observed_at_unix_ms: None,
         });
         let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
 

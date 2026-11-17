@@ -198,6 +198,7 @@ fn capabilities(reported: &[String], evidence: &Evidence) -> Vec<Capability> {
 
 /// Build v2 from the same already-collected observations as v1. Missing facts
 /// remain unknown; capability names, hardware and compatibility are never guessed.
+#[cfg(test)]
 pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> Option<ModelRuntimeInventoryV2> {
     let observed_at = now_unix_ms();
     build_inventory_v2_at(input, observed_at, observed_at)
@@ -218,7 +219,7 @@ fn build_inventory_v2_at(
 ) -> Option<ModelRuntimeInventoryV2> {
     let generated_at = generated_at.filter(|value| *value > 0)?;
     let ModelInventoryInput {
-        models, metadata, runtime_available, runtime_version, os_name, os_version,
+        models, metadata, runtime_available, runtime_version, os_name: _, os_version,
         architecture, cpu_logical_cores, memory_total_mb, memory_available_mb, accelerator,
     } = input;
     let (memory_total_mb, memory_available_mb) =
