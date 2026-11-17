@@ -1,0 +1,7 @@
+# GitHub Actions supports concurrency.queue for ordered release-feed publication.
+# actionlint 1.7.12 does not yet recognise this documented key; suppress only that
+# exact parser false positive for release.yml while retaining all other checks.
+paths:
+  .github/workflows/release.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

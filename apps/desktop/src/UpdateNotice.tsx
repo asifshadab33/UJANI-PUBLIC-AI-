@@ -1,28 +1,46 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const isDevBuild = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
 
+async function checkWithTimeout(): Promise<Update | null> {
+  return check({ timeout: 8_000 });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function UpdateNotice() {
   const [available, setAvailable] = useState<Update | null>(null);
   const [message, setMessage] = useState("");
   const [installing, setInstalling] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [downloadedBytes, setDownloadedBytes] = useState(0);
+  const [contentLength, setContentLength] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const checkingRef = useRef(false);
+  const installingRef = useRef(false);
 
   async function checkForUpdates() {
-    if (!isTauri() || isDevBuild || installing) return;
+    if (!isTauri() || isDevBuild || installingRef.current || checkingRef.current) return;
+    checkingRef.current = true;
+    setChecking(true);
+    setDismissed(false);
     setMessage("Checking for a signed update…");
     try {
-      const update = await Promise.race([
-        check(),
-        new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Update check exceeded 8 seconds. You can keep using UJANI and retry later.")), 8000))
-      ]);
+      const update = await checkWithTimeout();
       setAvailable(update);
       setMessage(update ? "" : "UJANI is up to date. No signed update is currently available.");
     } catch (error) {
       setMessage("Update check: " + String(error));
+    } finally {
+      checkingRef.current = false;
+      setChecking(false);
     }
   }
 
@@ -30,38 +48,77 @@ export default function UpdateNotice() {
     if (!isTauri() || isDevBuild) return;
     let active = true;
     const runInitialCheck = async () => {
+      if (checkingRef.current) return;
+      checkingRef.current = true;
+      setChecking(true);
       try {
-        const update = await Promise.race([
-          check(),
-          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Automatic update check exceeded 8 seconds. The workspace remains available; retry from Updates & releases.")), 8000))
-        ]);
+        const update = await checkWithTimeout();
         if (active) {
           setAvailable(update);
           setMessage(update ? "" : "No update available. UJANI is up to date.");
+        } else {
+          await update?.close();
         }
       } catch (error) {
         if (active) setMessage("Automatic update check failed: " + String(error));
+      } finally {
+        checkingRef.current = false;
+        if (active) setChecking(false);
       }
     };
     const onManualCheck = () => { void checkForUpdates(); };
     window.addEventListener("ujani-check-updates", onManualCheck);
     void runInitialCheck();
-    return () => { active = false; window.removeEventListener("ujani-check-updates", onManualCheck); };
+    return () => {
+      active = false;
+      window.removeEventListener("ujani-check-updates", onManualCheck);
+    };
   }, []);
 
   async function installUpdate() {
-    if (!available || installing) return;
+    if (!available || installingRef.current || checkingRef.current) return;
+    installingRef.current = true;
     setInstalling(true);
-    setMessage("Downloading and verifying the signed update…");
+    setDownloadedBytes(0);
+    setContentLength(null);
+    setMessage("Downloading the signed update…");
+    let downloaded = 0;
     try {
-      await available.downloadAndInstall();
+      await available.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            setContentLength(event.data.contentLength ?? null);
+            setDownloadedBytes(0);
+            setMessage("Downloading the signed update…");
+            break;
+          case "Progress":
+            downloaded += event.data.chunkLength;
+            setDownloadedBytes(downloaded);
+            break;
+          case "Finished":
+            setMessage("Download complete. Verifying and installing the signed update…");
+            break;
+        }
+      }, { timeout: 300_000 });
+      setAvailable(null);
       setMessage("Update installed. Restarting UJANI…");
-      await relaunch();
+      try {
+        await relaunch();
+      } catch (error) {
+        setMessage("Update installed, but UJANI could not restart automatically. Close and reopen the application. " + String(error));
+        setInstalling(false);
+        installingRef.current = false;
+      }
     } catch (error) {
       setMessage("Update could not be installed: " + String(error));
       setInstalling(false);
+      installingRef.current = false;
     }
   }
+
+  const downloadPercent = contentLength && contentLength > 0
+    ? Math.min(100, Math.floor((downloadedBytes / contentLength) * 100))
+    : null;
 
   if (dismissed || (!available && !message)) return null;
   return (
@@ -80,13 +137,20 @@ export default function UpdateNotice() {
         <span style={{ fontSize: 13, opacity: .85, overflowWrap: "anywhere" }}>
           {message || available?.body || "A signed update is ready to install."}
         </span>
+        {installing && <small style={{ display: "block", marginTop: 5 }}>
+          {downloadPercent === null
+            ? `Downloaded ${formatBytes(downloadedBytes)}`
+            : `${downloadPercent}% · ${formatBytes(downloadedBytes)} of ${formatBytes(contentLength ?? 0)}`}
+        </small>}
       </div>
       <div style={{ display: "flex", flexShrink: 0, gap: 8 }}>
-        {!available && !installing && <button type="button" onClick={() => { void checkForUpdates(); }}>Check again</button>}
-        {available && <button type="button" onClick={installUpdate} disabled={installing}>
+        {!available && !installing && <button type="button" onClick={() => { void checkForUpdates(); }} disabled={checking}>
+          {checking ? "Checking…" : "Check again"}
+        </button>}
+        {available && <button type="button" onClick={installUpdate} disabled={installing || checking}>
           {installing ? "Installing…" : "Install and restart"}
         </button>}
-        {!installing && <button type="button" onClick={() => { void available?.close(); setDismissed(true); }} aria-label="Dismiss update notice">Later</button>}
+        {!installing && <button type="button" onClick={() => { void available?.close(); setAvailable(null); setDismissed(true); }} disabled={checking} aria-label="Dismiss update notice">Later</button>}
       </div>
     </section>
   );
