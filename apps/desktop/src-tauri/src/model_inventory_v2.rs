@@ -4,9 +4,7 @@
 //! Ollama observations. It never sends inventory to Enterprise, installs models,
 //! reads prompts/files/paths, or grants model/workload execution permission.
 use crate::model_inventory::{normalize_memory_readings, ModelInventoryInput};
-use crate::ollama::{OllamaModelMetadata};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +36,9 @@ struct Evidence {
 impl Evidence {
     fn observed(source: &'static str, at: u64) -> Self {
         Self { source, confidence: "reported", observed_at_unix_ms: Some(at) }
+    }
+    fn verified_os(at: u64) -> Self {
+        Self { source: "os_api", confidence: "verified", observed_at_unix_ms: Some(at) }
     }
     fn unknown() -> Self {
         Self { source: "unknown", confidence: "unknown", observed_at_unix_ms: None }
@@ -200,11 +201,11 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
     let generated_at = now_unix_ms();
     let (memory_total_mb, memory_available_mb) =
         normalize_memory_readings(memory_total_mb, memory_available_mb);
-    let platform_evidence = Evidence::observed("os_api", generated_at);
+    let platform_evidence = Evidence::verified_os(generated_at);
     let hardware_has_measurement = cpu_logical_cores.is_some()
         || memory_total_mb.is_some() || memory_available_mb.is_some();
     let hardware_evidence = if hardware_has_measurement {
-        Evidence::observed("os_api", generated_at)
+        Evidence::verified_os(generated_at)
     } else { Evidence::unknown() };
     let runtime_evidence = if runtime_available {
         Evidence::observed("runtime_api", generated_at)
@@ -322,7 +323,8 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ollama::{OllamaModel, OllamaModelDetails};
+    use crate::ollama::{OllamaModel, OllamaModelDetails, OllamaModelMetadata};
+    use std::collections::HashMap;
 
     fn sample_model() -> OllamaModel {
         OllamaModel {
@@ -352,6 +354,8 @@ mod tests {
         assert_eq!(value["collection_context"]["owner_consent"], "not_required_local_only");
         assert!(value.get("device_ref").is_none());
         assert_eq!(value["platform"]["os"], "linux");
+        assert_eq!(value["platform"]["evidence"]["confidence"], "verified");
+        assert_eq!(value["hardware"]["evidence"]["confidence"], "verified");
         assert_eq!(value["models"][0]["availability"], "installed");
         assert_eq!(value["models"][0]["compatibility"]["status"], "unknown");
         assert_eq!(value["models"][0]["capabilities"].as_array().unwrap().len(), 0);
