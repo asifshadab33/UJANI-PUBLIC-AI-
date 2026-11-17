@@ -740,7 +740,7 @@ fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), St
     Ok(())
 }
 
-fn validate_translation_input(text: &str, target_language: &str, mode: &str) -> Result<(), String> {
+pub(crate) fn validate_translation_input(text: &str, target_language: &str, mode: &str) -> Result<(), String> {
     if mode != "fortress" && mode != "smart" { return Err("Local translation is available in Fortress and Smart only.".into()); }
     if text.trim().is_empty() || text.len() > 16 * 1024 { return Err("Enter non-empty text no larger than 16 KiB.".into()); }
     if target_language.trim().is_empty() || target_language.chars().count() > 40

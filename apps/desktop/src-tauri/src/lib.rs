@@ -2415,6 +2415,9 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    // Reject invalid translation input before task registration or local service probes.
+    // LocalTaskEngine::translate_local repeats this validation before inference.
+    task_engine::validate_translation_input(&text, &target_language, &mode)?;
     let registration = register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     ensure_task_not_cancelled(&token)?;
