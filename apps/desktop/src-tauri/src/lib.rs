@@ -478,6 +478,7 @@ struct OllamaStatusInput {
     cpu_logical_cores: Option<u32>,
     memory_total_mb: Option<u64>,
     memory_available_mb: Option<u64>,
+    runtime_observed_at_unix_ms: Option<u64>,
 }
 
 /// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
@@ -494,6 +495,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
+        runtime_observed_at_unix_ms,
     } = input;
     let (memory_total_mb, memory_available_mb) =
         model_inventory::normalize_memory_readings(memory_total_mb, memory_available_mb);
@@ -503,7 +505,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
     );
     // Build v2 from the same bounded OS and loopback runtime observations; do not
     // trigger a second discovery pass or send this personal inventory to Enterprise.
-    let inventory_v2 = model_inventory_v2::build_inventory_v2(model_inventory::ModelInventoryInput {
+    let inventory_v2 = model_inventory_v2::build_inventory_v2_with_observation(model_inventory::ModelInventoryInput {
         models: &models,
         metadata: &metadata,
         runtime_available: available,
@@ -515,7 +517,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         memory_total_mb,
         memory_available_mb,
         accelerator: accelerator.as_ref(),
-    });
+    }, runtime_observed_at_unix_ms);
     let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
         models: &models,
         metadata: &metadata,
@@ -919,6 +921,12 @@ async fn pull_ollama_model(
 /// Read-only model and device discovery. All runtime requests are fixed to loopback Ollama.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
+    // Conservative lower bound for all subsequent loopback/runtime observations.
+    let runtime_observed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .filter(|value| *value > 0);
     let available = ollama::is_available().await;
     let models = if available { ollama::list_models().await? } else { Vec::new() };
     let metadata = if available {
@@ -962,6 +970,7 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
+        runtime_observed_at_unix_ms,
     }))
 }
 

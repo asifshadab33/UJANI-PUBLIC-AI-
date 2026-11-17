@@ -199,12 +199,22 @@ fn capabilities(reported: &[String], evidence: &Evidence) -> Vec<Capability> {
 /// Build v2 from the same already-collected observations as v1. Missing facts
 /// remain unknown; capability names, hardware and compatibility are never guessed.
 pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> Option<ModelRuntimeInventoryV2> {
-    build_inventory_v2_at(input, now_unix_ms())
+    let observed_at = now_unix_ms();
+    build_inventory_v2_at(input, observed_at, observed_at)
+}
+
+/// Build v2 with a conservative timestamp captured before runtime discovery began.
+pub fn build_inventory_v2_with_observation(
+    input: ModelInventoryInput<'_>,
+    runtime_observed_at_unix_ms: Option<u64>,
+) -> Option<ModelRuntimeInventoryV2> {
+    build_inventory_v2_at(input, now_unix_ms(), runtime_observed_at_unix_ms)
 }
 
 fn build_inventory_v2_at(
     input: ModelInventoryInput<'_>,
     generated_at: Option<u64>,
+    runtime_observed_at_unix_ms: Option<u64>,
 ) -> Option<ModelRuntimeInventoryV2> {
     let generated_at = generated_at.filter(|value| *value > 0)?;
     let ModelInventoryInput {
@@ -220,7 +230,9 @@ fn build_inventory_v2_at(
         Evidence::verified_os(generated_at)
     } else { Evidence::unknown() };
     let runtime_evidence = if runtime_available {
-        Evidence::observed("runtime_api", generated_at)
+        runtime_observed_at_unix_ms
+            .map(|observed_at| Evidence::observed("runtime_api", observed_at))
+            .unwrap_or_else(Evidence::unknown)
     } else { Evidence::unknown() };
 
     // Keep the wire descriptor within the shared schema's hard bounds.
@@ -241,11 +253,15 @@ fn build_inventory_v2_at(
             let reported_capabilities = details
                 .map(|item| item.capabilities.as_slice())
                 .unwrap_or(&[]);
-            let model_evidence = if details.is_some() {
-                Evidence::observed("runtime_metadata", generated_at)
-            } else {
-                Evidence::observed("runtime_api", generated_at)
-            };
+            let model_evidence = runtime_observed_at_unix_ms
+                .map(|observed_at| {
+                    if details.is_some() {
+                        Evidence::observed("runtime_metadata", observed_at)
+                    } else {
+                        Evidence::observed("runtime_api", observed_at)
+                    }
+                })
+                .unwrap_or_else(Evidence::unknown);
             let context_tokens = details
                 .and_then(|item| item.context_length_tokens)
                 .filter(|tokens| *tokens > 0 && *tokens <= MAX_CONTEXT_TOKENS);
@@ -326,7 +342,9 @@ fn build_inventory_v2_at(
             policy_version: "public-local-v2",
         },
         platform: Platform {
-            os: canonical_os(&os_name),
+            // sysinfo reports distribution names (for example Ubuntu); use the
+            // compile-time OS family as the canonical platform identifier.
+            os: canonical_os(std::env::consts::OS),
             os_version: clean_text(os_version, 64),
             architecture: {
                 let value = architecture.trim();
@@ -352,7 +370,9 @@ fn build_inventory_v2_at(
                     device_family: None,
                     memory_mb: None,
                     runtime_api: Some("Ollama /api/ps".to_string()),
-                    evidence: Evidence::observed("runtime_api", generated_at),
+                    evidence: runtime_observed_at_unix_ms
+                        .map(|observed_at| Evidence::observed("runtime_api", observed_at))
+                        .unwrap_or_else(Evidence::unknown),
                 }])
                 .unwrap_or_default(),
             evidence: hardware_evidence,
@@ -426,7 +446,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: None,
-        }, None);
+        }, None, None);
         assert!(inventory.is_none());
     }
 
@@ -446,7 +466,7 @@ mod tests {
         assert_eq!(value["collection_context"]["scope"], "personal_local_only");
         assert_eq!(value["collection_context"]["owner_consent"], "not_required_local_only");
         assert!(value.get("device_ref").is_none());
-        assert_eq!(value["platform"]["os"], "linux");
+        assert_eq!(value["platform"]["os"], canonical_os(std::env::consts::OS));
         assert_eq!(value["platform"]["evidence"]["confidence"], "verified");
         assert_eq!(value["hardware"]["evidence"]["confidence"], "verified");
         assert_eq!(value["models"][0]["availability"], "installed");
@@ -457,6 +477,38 @@ mod tests {
         assert_eq!(value["privacy"]["contains_user_files"], false);
         assert_eq!(value["privacy"]["contains_local_paths"], false);
         assert_eq!(value["privacy"]["contains_credentials"], false);
+    }
+
+    #[test]
+    fn ubuntu_distribution_name_does_not_change_canonical_linux_family() {
+        let models: [OllamaModel; 0] = [];
+        let metadata = HashMap::new();
+        let value = serde_json::to_value(build_inventory_v2(ModelInventoryInput {
+            models: &models, metadata: &metadata, runtime_available: true,
+            runtime_version: None, os_name: "Ubuntu".into(), os_version: Some("24.04".into()),
+            architecture: "x86_64".into(), cpu_logical_cores: None,
+            memory_total_mb: None, memory_available_mb: None, accelerator: None,
+        }).expect("valid system clock")).unwrap();
+        assert_eq!(value["platform"]["os"], canonical_os(std::env::consts::OS));
+        assert_ne!(value["platform"]["os"], "other");
+    }
+
+    #[test]
+    fn runtime_evidence_uses_collection_start_not_inventory_assembly_time() {
+        let models = [sample_model()];
+        let metadata = HashMap::from([("llama3.2:latest".to_string(), OllamaModelMetadata {
+            context_length_tokens: Some(8192), capabilities: vec!["chat".into()],
+        })]);
+        let value = serde_json::to_value(build_inventory_v2_at(ModelInventoryInput {
+            models: &models, metadata: &metadata, runtime_available: true,
+            runtime_version: Some("0.5.0".into()), os_name: "Ubuntu".into(),
+            os_version: None, architecture: "x86_64".into(), cpu_logical_cores: Some(8),
+            memory_total_mb: Some(16_384), memory_available_mb: Some(8_192), accelerator: None,
+        }, Some(5_000), Some(1_000)).expect("timestamps are valid")).unwrap();
+        assert_eq!(value["generated_at_unix_ms"], 5_000);
+        assert_eq!(value["runtimes"][0]["evidence"]["observed_at_unix_ms"], 1_000);
+        assert_eq!(value["models"][0]["evidence"]["observed_at_unix_ms"], 1_000);
+        assert_eq!(value["models"][0]["context"]["evidence"]["observed_at_unix_ms"], 1_000);
     }
 
     #[test]
