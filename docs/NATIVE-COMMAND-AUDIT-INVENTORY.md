@@ -119,3 +119,11 @@ For every registered command, complete a row with:
 ## Release rule
 
 This inventory is a starting point, **not completion of issue #120**. Do not close the native-command audit or declare Public AI release-ready until all registered and conditional commands have complete mappings, sensitive commands enforce shared native authorization, required receipts are covered, negative tests pass, and CI rejects unreviewed command additions.
+
+
+## 2026-11-17 targeted consent hardening — saved-history opt-in
+
+- `history::set_task_history_enabled` now requires a native Yes/No confirmation before enabling persistent prompt/result recording. The confirmation explains AES-256-GCM encryption, OS credential-vault key custody, the 30-day/100-entry retention limits, and that history is not sent to a cloud service.
+- The confirmation runs before receipt reservation, vault-key access, legacy plaintext migration, or the settings write. Decline, timeout, or dialog-channel failure leaves the setting unchanged; disabling remains immediate.
+- The command-security checker now enforces confirmation and denial ordering before any history side effect, with regression tests for missing or late confirmation.
+- This closes one command-specific opt-in boundary only. The full 43-command default surface and seven-command peer-preview denial/authorization matrix remains in progress; this is not completion of issue #120 or a release certification.
