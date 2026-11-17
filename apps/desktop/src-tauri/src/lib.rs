@@ -479,6 +479,7 @@ struct OllamaStatusInput {
     memory_total_mb: Option<u64>,
     memory_available_mb: Option<u64>,
     runtime_observed_at_unix_ms: Option<u64>,
+    os_observed_at_unix_ms: Option<u64>,
 }
 
 /// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
@@ -496,6 +497,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         memory_total_mb,
         memory_available_mb,
         runtime_observed_at_unix_ms,
+        os_observed_at_unix_ms,
     } = input;
     let (memory_total_mb, memory_available_mb) =
         model_inventory::normalize_memory_readings(memory_total_mb, memory_available_mb);
@@ -517,7 +519,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         memory_total_mb,
         memory_available_mb,
         accelerator: accelerator.as_ref(),
-    }, runtime_observed_at_unix_ms);
+    }, runtime_observed_at_unix_ms, os_observed_at_unix_ms);
     let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
         models: &models,
         metadata: &metadata,
@@ -957,6 +959,15 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let total_memory_bytes = system.total_memory();
     let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
     let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
+    let os_name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+    let os_version = System::os_version();
+    let architecture = std::env::consts::ARCH.to_string();
+    // Capture OS evidence after the OS/hardware observations have been collected.
+    let os_observed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .filter(|value| *value > 0);
 
     Ok(build_ollama_status(OllamaStatusInput {
         available,
@@ -964,13 +975,14 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         metadata,
         runtime_version,
         accelerator,
-        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        os_version: System::os_version(),
-        architecture: std::env::consts::ARCH.to_string(),
+        os_name,
+        os_version,
+        architecture,
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
         runtime_observed_at_unix_ms,
+        os_observed_at_unix_ms,
     }))
 }
 
@@ -1779,6 +1791,7 @@ mod model_inventory_recommendation_tests {
             memory_total_mb: Some(8_192),
             memory_available_mb: Some(16_384),
             runtime_observed_at_unix_ms: None,
+            os_observed_at_unix_ms: None,
         });
         let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
 

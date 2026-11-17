@@ -201,21 +201,23 @@ fn capabilities(reported: &[String], evidence: &Evidence) -> Vec<Capability> {
 #[cfg(test)]
 pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> Option<ModelRuntimeInventoryV2> {
     let observed_at = now_unix_ms();
-    build_inventory_v2_at(input, observed_at, observed_at)
+    build_inventory_v2_at(input, observed_at, observed_at, observed_at)
 }
 
 /// Build v2 with a conservative timestamp captured before runtime discovery began.
 pub fn build_inventory_v2_with_observation(
     input: ModelInventoryInput<'_>,
     runtime_observed_at_unix_ms: Option<u64>,
+    os_observed_at_unix_ms: Option<u64>,
 ) -> Option<ModelRuntimeInventoryV2> {
-    build_inventory_v2_at(input, now_unix_ms(), runtime_observed_at_unix_ms)
+    build_inventory_v2_at(input, now_unix_ms(), runtime_observed_at_unix_ms, os_observed_at_unix_ms)
 }
 
 fn build_inventory_v2_at(
     input: ModelInventoryInput<'_>,
     generated_at: Option<u64>,
     runtime_observed_at_unix_ms: Option<u64>,
+    os_observed_at_unix_ms: Option<u64>,
 ) -> Option<ModelRuntimeInventoryV2> {
     let generated_at = generated_at.filter(|value| *value > 0)?;
     let ModelInventoryInput {
@@ -224,11 +226,15 @@ fn build_inventory_v2_at(
     } = input;
     let (memory_total_mb, memory_available_mb) =
         normalize_memory_readings(memory_total_mb, memory_available_mb);
-    let platform_evidence = Evidence::verified_os(generated_at);
+    let platform_evidence = os_observed_at_unix_ms
+        .map(Evidence::verified_os)
+        .unwrap_or_else(Evidence::unknown);
     let hardware_has_measurement = cpu_logical_cores.is_some()
         || memory_total_mb.is_some() || memory_available_mb.is_some();
     let hardware_evidence = if hardware_has_measurement {
-        Evidence::verified_os(generated_at)
+        os_observed_at_unix_ms
+            .map(Evidence::verified_os)
+            .unwrap_or_else(Evidence::unknown)
     } else { Evidence::unknown() };
     let runtime_evidence = if runtime_available {
         runtime_observed_at_unix_ms
@@ -447,7 +453,7 @@ mod tests {
             memory_total_mb: None,
             memory_available_mb: None,
             accelerator: None,
-        }, None, None);
+        }, None, None, None);
         assert!(inventory.is_none());
     }
 
@@ -505,8 +511,10 @@ mod tests {
             runtime_version: Some("0.5.0".into()), os_name: "Ubuntu".into(),
             os_version: None, architecture: "x86_64".into(), cpu_logical_cores: Some(8),
             memory_total_mb: Some(16_384), memory_available_mb: Some(8_192), accelerator: None,
-        }, Some(5_000), Some(1_000)).expect("timestamps are valid")).unwrap();
+        }, Some(5_000), Some(1_000), Some(4_000)).expect("timestamps are valid")).unwrap();
         assert_eq!(value["generated_at_unix_ms"], 5_000);
+        assert_eq!(value["platform"]["evidence"]["observed_at_unix_ms"], 4_000);
+        assert_eq!(value["hardware"]["evidence"]["observed_at_unix_ms"], 4_000);
         assert_eq!(value["runtimes"][0]["evidence"]["observed_at_unix_ms"], 1_000);
         assert_eq!(value["models"][0]["evidence"]["observed_at_unix_ms"], 1_000);
         assert_eq!(value["models"][0]["context"]["evidence"]["observed_at_unix_ms"], 1_000);
