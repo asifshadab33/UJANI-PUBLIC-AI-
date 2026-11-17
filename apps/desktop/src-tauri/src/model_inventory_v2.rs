@@ -370,7 +370,7 @@ mod tests {
         let models = [sample_model()];
         let metadata = HashMap::from([("llama3.2:latest".to_string(), OllamaModelMetadata {
             context_length_tokens: Some(8192),
-            capabilities: vec!["chat".into(), "vision".into()],
+            capabilities: vec!["chat".into(), "vision".into(), "tool_use".into()],
         })]);
         let value = serde_json::to_value(build_inventory_v2(ModelInventoryInput {
             models: &models, metadata: &metadata, runtime_available: true,
@@ -378,8 +378,10 @@ mod tests {
             architecture: "arm64".into(), cpu_logical_cores: None,
             memory_total_mb: None, memory_available_mb: None, accelerator: None,
         })).unwrap();
-        assert_eq!(value["models"][0]["capabilities"].as_array().unwrap().len(), 1);
+        assert_eq!(value["models"][0]["capabilities"].as_array().unwrap().len(), 2);
         assert_eq!(value["models"][0]["capabilities"][0]["name"], "chat");
+        assert_eq!(value["models"][0]["capabilities"][1]["name"], "tool_use");
+        assert_eq!(value["models"][0]["tool_use"]["supported"], true);
         assert_eq!(value["models"][0]["vision"]["supported"], serde_json::Value::Null);
         assert_eq!(value["models"][0]["vision"]["evidence"]["confidence"], "unknown");
         assert_eq!(value["models"][0]["context"]["max_tokens"], 8192);
