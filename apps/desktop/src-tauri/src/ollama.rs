@@ -391,11 +391,22 @@ pub async fn chat(
     system: Option<&str>,
     turns: &[Turn<'_>],
 ) -> Result<String, String> {
+    chat_with_client(client()?, BASE_URL, model, system, turns).await
+}
+
+/// Non-streaming transport seam. Dropping this future drops the active request
+/// or response body, allowing managed-task cancellation to reach HTTP work.
+async fn chat_with_client(
+    c: &reqwest::Client,
+    base_url: &str,
+    model: &str,
+    system: Option<&str>,
+    turns: &[Turn<'_>],
+) -> Result<String, String> {
     let body = build_chat_body(model, system, turns, false)?;
-    let c = client()?;
     let mut last_error = String::new();
     for attempt in 0..MAX_ATTEMPTS {
-        match c.post(format!("{BASE_URL}/api/chat")).json(&body).send().await {
+        match c.post(format!("{base_url}/api/chat")).json(&body).send().await {
             Ok(response) if retryable_status(response.status()) => {
                 last_error = format!("Local Ollama returned HTTP {}.", response.status());
             }
@@ -1016,6 +1027,101 @@ mod tests {
         );
         // Keep the original client alive so this assertion proves response-body
         // cancellation, not merely teardown of the client's connection pool.
+        drop(client);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_non_streaming_chat_drops_the_active_http_response() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            let mut header_end = None;
+            let mut content_length = 0usize;
+            loop {
+                let count = stream.read(&mut buffer).await.unwrap();
+                if count == 0 {
+                    return;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if header_end.is_none() {
+                    if let Some(position) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                        let header = String::from_utf8_lossy(&request[..position]);
+                        content_length = header.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        }).unwrap_or(0);
+                        header_end = Some(position + 4);
+                    }
+                }
+                if header_end.is_some_and(|end| request.len() >= end.saturating_add(content_length)) {
+                    break;
+                }
+            }
+
+            let fragment = b"{\"message\":{\"content\":\"";
+            let response_header = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n{:X}\r\n",
+                fragment.len()
+            );
+            stream.write_all(response_header.as_bytes()).await.unwrap();
+            stream.write_all(fragment).await.unwrap();
+            stream.write_all(b"\r\n").await.unwrap();
+            stream.flush().await.unwrap();
+            let _ = response_tx.send(());
+
+            // The JSON/HTTP response remains incomplete until cancellation.
+            let mut probe = [0_u8; 1];
+            let closed = matches!(
+                tokio::time::timeout(Duration::from_secs(3), stream.read(&mut probe)).await,
+                Ok(Ok(0)) | Ok(Err(_))
+            );
+            let _ = closed_tx.send(closed);
+        });
+
+        let client = build_client(Some(Duration::from_secs(30))).unwrap();
+        let worker_client = client.clone();
+        let base_url = format!("http://{address}");
+        let cancellation = CancellationToken::new();
+        let worker_cancellation = cancellation.clone();
+        let chat_task = tokio::spawn(async move {
+            let turns = [Turn { role: "user", content: "hello" }];
+            tokio::select! {
+                biased;
+                _ = worker_cancellation.cancelled() => Err("Task cancelled by user.".to_string()),
+                result = chat_with_client(
+                    &worker_client,
+                    &base_url,
+                    "llama3.2",
+                    None,
+                    &turns,
+                ) => result,
+            }
+        });
+
+        tokio::time::timeout(Duration::from_secs(3), response_rx)
+            .await.unwrap().unwrap();
+        cancellation.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(3), chat_task)
+            .await.unwrap().unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), closed_rx)
+                .await.unwrap().unwrap(),
+            "cancellation must close the in-flight non-streaming Ollama HTTP response"
+        );
         drop(client);
         server.await.unwrap();
     }
