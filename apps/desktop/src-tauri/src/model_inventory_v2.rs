@@ -224,19 +224,33 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
         })
         .take(512)
         .map(|model| {
-        let details = metadata.get(&model.name);
-        let reported_capabilities = details.map(|item| item.capabilities.as_slice()).unwrap_or(&[]);
-        let model_evidence = if details.is_some() {
-            Evidence::observed("runtime_metadata", generated_at)
-        } else { Evidence::observed("runtime_api", generated_at) };
-        let context_tokens = details.and_then(|item| item.context_length_tokens)
-            .filter(|tokens| *tokens > 0 && *tokens <= MAX_CONTEXT_TOKENS);
-        let memory_estimate = ujani_core::model_advisor::estimate_model_working_memory_mb(model.size)
-            .filter(|value| *value > 0 && *value <= 16_777_216);
-        let has_tool_use = capability_is(reported_capabilities, "tool_use");
-        let context_evidence = if context_tokens.is_some() { model_evidence.clone() } else { Evidence::unknown() };
-        let resource_evidence = if memory_estimate.is_some() { Evidence::estimate(generated_at) } else { Evidence::unknown() };
-        Model {
+            let details = metadata.get(&model.name);
+            let reported_capabilities = details
+                .map(|item| item.capabilities.as_slice())
+                .unwrap_or(&[]);
+            let model_evidence = if details.is_some() {
+                Evidence::observed("runtime_metadata", generated_at)
+            } else {
+                Evidence::observed("runtime_api", generated_at)
+            };
+            let context_tokens = details
+                .and_then(|item| item.context_length_tokens)
+                .filter(|tokens| *tokens > 0 && *tokens <= MAX_CONTEXT_TOKENS);
+            let memory_estimate =
+                ujani_core::model_advisor::estimate_model_working_memory_mb(model.size)
+                    .filter(|value| *value > 0 && *value <= 16_777_216);
+            let has_tool_use = capability_is(reported_capabilities, "tool_use");
+            let context_evidence = if context_tokens.is_some() {
+                model_evidence.clone()
+            } else {
+                Evidence::unknown()
+            };
+            let resource_evidence = if memory_estimate.is_some() {
+                Evidence::estimate(generated_at)
+            } else {
+                Evidence::unknown()
+            };
+            Model {
             model_ref: model.name.clone(),
             runtime_id: "ollama.local",
             display_name: model.name.clone(),
@@ -284,7 +298,7 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
                 evidence: Evidence::unknown(),
             },
             evidence: model_evidence,
-        }
+            }
         })
         .collect();
 
@@ -350,7 +364,10 @@ pub fn build_inventory_v2(input: ModelInventoryInput<'_>) -> ModelRuntimeInvento
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ollama::{AcceleratorObservation as OllamaAcceleratorObservation, OllamaModel, OllamaModelDetails, OllamaModelMetadata};
+    use crate::ollama::{
+        AcceleratorObservation as OllamaAcceleratorObservation, OllamaModel, OllamaModelDetails,
+        OllamaModelMetadata,
+    };
     use std::collections::HashMap;
 
     fn sample_model() -> OllamaModel {
