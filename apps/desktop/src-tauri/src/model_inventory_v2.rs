@@ -471,7 +471,7 @@ mod tests {
             runtime_version: None, os_name: "Darwin".into(), os_version: None,
             architecture: "arm64".into(), cpu_logical_cores: None,
             memory_total_mb: None, memory_available_mb: None, accelerator: None,
-        })).unwrap();
+        }).expect("valid system clock")).unwrap();
         assert_eq!(value["models"][0]["capabilities"].as_array().unwrap().len(), 2);
         assert_eq!(value["models"][0]["capabilities"][0]["name"], "chat");
         assert_eq!(value["models"][0]["capabilities"][1]["name"], "tool_use");
@@ -525,7 +525,7 @@ mod tests {
             runtime_version: None, os_name: "unknown".into(), os_version: None,
             architecture: "unknown".into(), cpu_logical_cores: None,
             memory_total_mb: None, memory_available_mb: None, accelerator: None,
-        })).unwrap();
+        }).expect("valid system clock")).unwrap();
         assert_eq!(value["hardware"]["evidence"]["confidence"], "unknown");
         assert_eq!(value["runtimes"][0]["evidence"]["confidence"], "unknown");
         assert_eq!(value["models"].as_array().unwrap().len(), 0);
