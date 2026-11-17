@@ -587,6 +587,9 @@ async fn execute_document_workflow(
  // Reject invalid metadata/content before task registration, receipts or capability probes.
  task_engine::validate_document_request(&file_name, &content, &mode)?;
  validate_document_workflow_content(&content)?;
+ if let Some(language) = translation_language.as_deref() {
+  task_engine::validate_translation_target_language(language)?;
+ }
  let registration = register_active_task(&control, &task_id)?;
  let token = registration.token.clone();
  ensure_task_not_cancelled(&token)?;
@@ -2072,6 +2075,9 @@ async fn process_selected_document(
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
     task_engine::validate_document_request(&file_name, &content, &mode)?;
+    if let Some(language) = translation_language.as_deref() {
+        task_engine::validate_translation_target_language(language)?;
+    }
     let registration = register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     ensure_task_not_cancelled(&token)?;
@@ -2370,6 +2376,9 @@ async fn process_selected_pdf(
     // capability discovery, receipt creation or the blocking decode worker.
     task_engine::validate_pdf_metadata(&file_name, &mode)?;
     validate_bounded_pdf_encoded_length(&data_base64, MAX_PDF_UPLOAD_BYTES)?;
+    if let Some(language) = translation_language.as_deref() {
+        task_engine::validate_translation_target_language(language)?;
+    }
     // Reserve before capability probes and decoding so cancellation covers the
     // entire preparation path and duplicate task IDs cause no runtime requests.
     let registration = register_active_task(&control, &task_id)?;

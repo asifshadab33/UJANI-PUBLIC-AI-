@@ -232,6 +232,9 @@ impl LocalTaskEngine {
         translation_language: Option<String>,
     ) -> Result<DocumentPipelineResult, String> {
         validate_document_request(&file_name, &content, &mode)?;
+        if let Some(language) = translation_language.as_deref() {
+            validate_translation_target_language(language)?;
+        }
         ensure_local_model_ready("document.summarize", &model).await?;
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
@@ -265,6 +268,9 @@ impl LocalTaskEngine {
         translation_language: Option<String>,
     ) -> Result<DocumentPipelineResult, String> {
         validate_pdf_input(&file_name, &data, &mode)?;
+        if let Some(language) = translation_language.as_deref() {
+            validate_translation_target_language(language)?;
+        }
         ensure_local_model_ready("pdf.extract_and_summarize", &model).await?;
         if translation_language.is_some() {
             ensure_local_model_ready("translate.text", &model).await?;
@@ -734,13 +740,19 @@ fn validate_pdf_input(file_name: &str, data: &[u8], mode: &str) -> Result<(), St
     Ok(())
 }
 
+pub(crate) fn validate_translation_target_language(target_language: &str) -> Result<(), String> {
+    if target_language.trim().is_empty() || target_language.chars().count() > 40
+        || !target_language.chars().all(|c| c.is_alphabetic() || c == ' ' || c == '-')
+    {
+        return Err("Target language must contain only letters, spaces, or hyphens and be at most 40 characters.".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_translation_input(text: &str, target_language: &str, mode: &str) -> Result<(), String> {
     if mode != "fortress" && mode != "smart" { return Err("Local translation is available in Fortress and Smart only.".into()); }
     if text.trim().is_empty() || text.len() > 16 * 1024 { return Err("Enter non-empty text no larger than 16 KiB.".into()); }
-    if target_language.trim().is_empty() || target_language.chars().count() > 40
-        || !target_language.chars().all(|c| c.is_alphabetic() || c == ' ' || c == '-')
-    { return Err("Target language must contain only letters, spaces, or hyphens and be at most 40 characters.".into()); }
-    Ok(())
+    validate_translation_target_language(target_language)
 }
 
 pub(crate) fn validate_document_request(file_name: &str, content: &str, mode: &str) -> Result<(), String> {
@@ -756,7 +768,16 @@ pub(crate) fn validate_document_request(file_name: &str, content: &str, mode: &s
 
 #[cfg(test)]
 mod runtime_preflight_tests {
-    use super::{clamp_utf8, fence_document, find_installed_model, plan_with_runtime_capabilities};
+    use super::{clamp_utf8, fence_document, find_installed_model, plan_with_runtime_capabilities, validate_translation_target_language};
+
+    #[test]
+    fn optional_translation_language_is_validated_before_document_inference() {
+        assert!(validate_translation_target_language("Hindi").is_ok());
+        assert!(validate_translation_target_language("Simplified Chinese").is_ok());
+        assert!(validate_translation_target_language(" ").is_err());
+        assert!(validate_translation_target_language("Hindi!".is_err());
+        assert!(validate_translation_target_language(&"a".repeat(41)).is_err());
+    }
 
     #[test]
     fn summarise_ipc_preflight_rejects_invalid_inputs_before_runtime_work() {
