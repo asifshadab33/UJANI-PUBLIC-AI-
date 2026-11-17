@@ -36,11 +36,21 @@ pub struct RecentSearch {
     pub created_at: i64,
 }
 
-/// Reads wall-clock Unix time and rejects clocks earlier than the epoch.
+fn unix_seconds_from_duration(duration: std::time::Duration) -> Result<i64, String> {
+    i64::try_from(duration.as_secs())
+        .map_err(|_| "System clock exceeds the supported cache timestamp range.".to_string())
+}
+
+/// Converts a wall-clock instant to the signed SQLite seconds range without wrapping or saturation.
+fn unix_seconds_at(time: SystemTime) -> Result<i64, String> {
+    let duration = time
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    unix_seconds_from_duration(duration)
+}
+
 fn now_seconds() -> Result<i64, String> {
-    SystemTime::now().duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
-        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+    unix_seconds_at(SystemTime::now())
 }
 
 /// Opens the app-local cache with restrictive directory permissions.
@@ -314,6 +324,12 @@ fn request_key_for_versions(
 
 /// Applies TTL, negative-result expiry, recent-query bounds and LRU/byte limits.
 fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(), String> {
+    // A backward wall-clock step can make entries appear to come from the future.
+    // Cache data is disposable: purge future-dated entries instead of extending their lifetime.
+    db.execute("DELETE FROM search_cache WHERE created_at > ?1 OR last_access > ?1", params![now])
+        .map_err(|error| error.to_string())?;
+    db.execute("DELETE FROM recent_searches WHERE created_at > ?1 OR last_access > ?1", params![now])
+        .map_err(|error| error.to_string())?;
     if settings.retention_days > 0 {
         let cutoff = now.saturating_sub(settings.retention_days.saturating_mul(86_400));
         db.execute("DELETE FROM search_cache WHERE created_at < ?1", params![cutoff])
@@ -352,6 +368,17 @@ fn trim_cache(db: &Connection, settings: &CacheSettings, now: i64) -> Result<(),
     Ok(())
 }
 
+/// Run cleanup under one writer transaction and sample wall time only after
+/// acquiring the lock. A concurrent store therefore cannot commit a newer row
+/// between the clock sample and the future-dated-row purge.
+fn trim_cache_current(db: &mut Connection, settings: &CacheSettings) -> Result<(), String> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| error.to_string())?;
+    let now = now_seconds()?;
+    trim_cache(&tx, settings, now)?;
+    tx.commit().map_err(|error| error.to_string())
+}
+
 /// Return a cached payload only when the full current metadata inventory matches exactly.
 /// Any keyring, database, decryption or freshness failure is a cache miss at the call site.
 pub fn load(
@@ -365,7 +392,7 @@ pub fn load(
     let mut db = open(app)?;
     let settings = settings_from_db(&db)?;
     if !settings.enabled { return Ok(None); }
-    trim_cache(&db, &settings, now_seconds()?)?;
+    trim_cache_current(&mut db, &settings)?;
     let key = cache_key()?;
     let scope_id = match scope_for_path(&mut db, &key, root, false) {
         Ok(Some(value)) => value,
@@ -492,9 +519,9 @@ pub fn store(
 #[tauri::command]
 pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSettings, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
+        let mut db = open(&app)?;
         let settings = settings_from_db(&db)?;
-        trim_cache(&db, &settings, now_seconds()?)?;
+        trim_cache_current(&mut db, &settings)?;
         Ok(settings)
     }).await.map_err(|error| format!("Cache settings worker failed: {error}"))?
 }
@@ -503,10 +530,10 @@ pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSett
 #[tauri::command]
 pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
+        let mut db = open(&app)?;
         let settings = settings_from_db(&db)?;
         if !settings.enabled { return Ok(Vec::new()); }
-        trim_cache(&db, &settings, now_seconds()?)?;
+        trim_cache_current(&mut db, &settings)?;
         // Do not prompt for or create a credential-vault key when no query needs decrypting.
         let has_rows: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM recent_searches)", [], |row| row.get(0)
@@ -624,6 +651,16 @@ pub async fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn cache_clock_rejects_pre_epoch_and_out_of_range_values_without_saturation() {
+        assert_eq!(unix_seconds_at(UNIX_EPOCH).unwrap(), 0);
+        assert_eq!(unix_seconds_at(UNIX_EPOCH + std::time::Duration::from_secs(123)).unwrap(), 123);
+        assert!(unix_seconds_at(UNIX_EPOCH - std::time::Duration::from_secs(1)).is_err());
+        assert!(unix_seconds_from_duration(
+            std::time::Duration::from_secs(i64::MAX as u64 + 1)
+        ).is_err());
+    }
+
     fn key() -> [u8; 32] {
         Aes256Gcm::generate_key(&mut OsRng).into()
     }
@@ -697,7 +734,13 @@ mod tests {
         db.execute("DELETE FROM approved_scopes WHERE scope_id='revoked-scope'", []).unwrap();
         let cached: i64 = db.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0)).unwrap();
         let recent: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        let future_access: i64 = db.query_row(
+            "SELECT COUNT(*) FROM search_cache WHERE request_key='future-access'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
         assert_eq!(cached, 0);
+        assert_eq!(future_access, 0);
         assert_eq!(recent, 0);
     }
 
@@ -817,6 +860,34 @@ mod tests {
         ).unwrap();
         assert_eq!(year_old, 1);
         assert_eq!(stale_negative, 0);
+    }
+
+    #[test]
+    fn backward_clock_step_purges_future_dated_cache_and_recent_search_rows() {
+        let db = memory_db();
+        insert_scope(&db, "scope");
+        insert_cache_row(&db, "scope", "future-cache", 101, 101, false, 8);
+        insert_cache_row(&db, "scope", "future-access", 99, 101, false, 8);
+        db.execute(
+            "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+             VALUES('scope','future-query','encrypted',0,99,101)",
+            [],
+        ).unwrap();
+
+        trim_cache(&db, &test_settings(0), 100).unwrap();
+
+        let cached: i64 = db.query_row(
+            "SELECT COUNT(*) FROM search_cache WHERE request_key='future-cache'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        let recent: i64 = db.query_row(
+            "SELECT COUNT(*) FROM recent_searches WHERE request_key='future-query'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(cached, 0);
+        assert_eq!(recent, 0);
     }
 
     #[test]
