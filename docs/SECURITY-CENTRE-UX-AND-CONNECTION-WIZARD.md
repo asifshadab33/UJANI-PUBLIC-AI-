@@ -241,7 +241,8 @@ Implemented in the current branch:
 Not implemented yet:
 - Third-party antivirus product identity and product-specific details beyond the built-in Defender status query.
 - Windows Firewall profile/rule details.
-- Threat events, ransomware protection details, scan history and update freshness.
+- Third-party antivirus/firewall update freshness and authoritative latest-release comparison for Defender engine/platform versions.
+- Threat events, ransomware protection details, scan history and third-party firewall profile/rule details.
 - Linux ClamAV/firewall and macOS/vendor adapters.
 - Persistent consent preferences, provider-specific permission management and platform manual acceptance tests.
 
@@ -252,6 +253,7 @@ Important interpretation: Windows Security Center returns aggregate category hea
 The existing Windows Security Center aggregate adapter remains unchanged. The current draft adds a separate, user-approved Microsoft Defender detail query:
 
 - Uses the documented `Get-MpComputerStatus` Defender cmdlet to read local Defender enabled flags, signature age and timestamp, signature version, engine version, product/platform version, service version and Defender's own `DefenderSignaturesOutOfDate` result.
+- Resolves the inbox PowerShell executable using the Windows `GetSystemDirectoryW` API; it does not trust PATH or a caller-controlled `SystemRoot` environment override.
 - Uses Defender's own out-of-date result, which reflects the effective Windows policy. Microsoft documents a seven-day default for the AV signature due policy, with administrator configuration supported. If the status field is unavailable, freshness remains unknown.
 - Missing/null protection flags, signature age or version metadata remain unknown rather than being displayed as disabled or current; empty version strings are normalised to not reported.
 - Resolves the inbox PowerShell executable with the Windows `GetSystemDirectoryW` API, not PATH or a caller-controlled environment variable.
