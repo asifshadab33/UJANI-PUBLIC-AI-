@@ -316,7 +316,7 @@ fn signature_update_status(signatures_out_of_date: Option<bool>) -> &'static str
 
 #[cfg(any(target_os = "windows", test))]
 fn parse_defender_status_result(output: &[u8]) -> Result<DefenderStatusResult, String> {
-    let parsed: DefenderStatusResult = serde_json::from_slice(output)
+    let mut parsed: DefenderStatusResult = serde_json::from_slice(output)
         .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
     for value in [
         parsed.antivirus_signature_version.as_ref(),
@@ -329,10 +329,14 @@ fn parse_defender_status_result(output: &[u8]) -> Result<DefenderStatusResult, S
         }
     }
     if parsed.antivirus_signature_last_updated.as_ref().is_some_and(|value| {
-        value.len() > 40 || value.chars().any(char::is_control)
+        value.is_empty() || value.len() > 40 || value.chars().any(char::is_control)
     }) {
         return Err("Windows Defender returned an invalid signature timestamp.".into());
     }
+    parsed.antivirus_signature_version = parsed.antivirus_signature_version.filter(|value| !value.is_empty());
+    parsed.engine_version = parsed.engine_version.filter(|value| !value.is_empty());
+    parsed.product_version = parsed.product_version.filter(|value| !value.is_empty());
+    parsed.service_version = parsed.service_version.filter(|value| !value.is_empty());
     Ok(parsed)
 }
 
