@@ -5,6 +5,8 @@
 //! files, collect threat events, or change security settings.
 
 use serde::Serialize;
+#[cfg(any(target_os = "windows", test))]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "windows")]
 use std::time::Duration;
@@ -286,6 +288,30 @@ struct ProductInventoryResult {
     checked_at_unix_ms: u64,
 }
 
+#[cfg(any(target_os = "windows", test))]
+struct SecurityProductQueryGuard<'a> {
+    slot: &'a AtomicBool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl<'a> SecurityProductQueryGuard<'a> {
+    fn try_acquire(slot: &'a AtomicBool) -> Option<Self> {
+        slot.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self { slot })
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl Drop for SecurityProductQueryGuard<'_> {
+    fn drop(&mut self) {
+        self.slot.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(target_os = "windows")]
+static SECURITY_PRODUCT_QUERY_RUNNING: AtomicBool = AtomicBool::new(false);
+
 impl ProductInventoryResult {
     #[cfg(target_os = "windows")]
     fn unavailable(detail: &str) -> Self {
@@ -326,11 +352,17 @@ pub async fn read_only_status(
         match tokio::time::timeout(
             Duration::from_secs(8),
             tokio::task::spawn_blocking(move || {
-                std::thread::spawn(move || read_windows_security_products(&ids))
-                    .join()
-                    .unwrap_or_else(|_| ProductInventoryResult::unavailable(
-                        "Windows Security Center product enumeration worker failed."
-                    ))
+                // A timed-out blocking task cannot be force-aborted safely. Keep
+                // one process-wide slot so a hung COM call cannot accumulate
+                // additional worker threads on repeated user requests.
+                let Some(_guard) =
+                    SecurityProductQueryGuard::try_acquire(&SECURITY_PRODUCT_QUERY_RUNNING)
+                else {
+                    return ProductInventoryResult::unavailable(
+                        "A previous Windows Security Center query is still running; no second query was started."
+                    );
+                };
+                read_windows_security_products(&ids)
             }),
         )
         .await
@@ -878,6 +910,15 @@ mod defender_tests {
       "product_version": "4.5.6.7",
       "service_version": "8.9.0.1"
     }"#;
+
+    #[test]
+    fn security_product_query_slot_prevents_overlapping_workers_and_releases_on_drop() {
+        let slot = AtomicBool::new(false);
+        let first = super::SecurityProductQueryGuard::try_acquire(&slot).unwrap();
+        assert!(super::SecurityProductQueryGuard::try_acquire(&slot).is_none());
+        drop(first);
+        assert!(super::SecurityProductQueryGuard::try_acquire(&slot).is_some());
+    }
 
     #[test]
     fn accepts_bounded_read_only_defender_metadata() {
