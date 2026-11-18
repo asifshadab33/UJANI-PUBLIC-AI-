@@ -253,13 +253,13 @@ The existing Windows Security Center aggregate adapter remains unchanged. The cu
 
 - Uses the documented `Get-MpComputerStatus` Defender cmdlet to read local Defender enabled flags, signature age and timestamp, signature version, engine version, product/platform version, service version and Defender's own `DefenderSignaturesOutOfDate` result.
 - Uses Defender's own out-of-date result, which reflects the effective Windows policy. Microsoft documents a seven-day default for the AV signature due policy, with administrator configuration supported. If the status field is unavailable, freshness remains unknown.
-- Shows an explicit **OUT OF DATE** warning when the reported signature age reaches the effective due threshold. A signature age below the due threshold is described only as within policy—not proof that it matches the latest published release.
+- Shows an explicit **OUT OF DATE** warning when Defender itself reports signatures out of date under its effective policy. A not-out-of-date result is described only as within policy—not proof that it matches the latest published release.
 - Runs only after a separate native confirmation. The fixed read-only PowerShell cmdlet call has an eight-second timeout, a 16 KiB output cap, no caller-controlled command text, no network access and no settings changes.
-- Adds bounded response parsing and tests for malformed metadata, invalid thresholds and the out-of-date boundary.
+- Adds bounded response parsing and tests for malformed metadata and Defender-reported out-of-date state.
 
 Still not implemented:
 - Authoritative comparison of Defender engine/platform versions against the latest Microsoft release feed.
 - Third-party antivirus identity/details, Windows Firewall profile status, Linux provider adapters and macOS provider adapters. Built-in Windows Firewall is serviced through Windows Update rather than a universal antivirus-style signature feed; third-party firewall update status must come from its own supported provider integration.
 - Enterprise provider integrations for any specific vendor.
 
-The adapter therefore reports local Defender evidence and the OS-configured signature-age policy; it does not claim that all security components or every installed security product are current.
+The adapter therefore reports local Defender evidence and Defender's effective signature-freshness result; it does not claim that all security components or every installed security product are current.
