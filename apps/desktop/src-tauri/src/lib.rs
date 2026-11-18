@@ -2567,18 +2567,18 @@ fn validate_security_provider_ids(provider_ids: &[String]) -> Result<(), &'stati
 async fn get_security_provider_status(
     app: AppHandle,
     provider_ids: Vec<String>,
-) -> Result<Vec<security_providers::SecurityProviderStatus>, String> {
+) -> Result<security_providers::SecurityProviderSnapshot, String> {
     validate_security_provider_ids(&provider_ids).map_err(str::to_owned)?;
 
     let scope = provider_ids.iter().map(|id| match id.as_str() {
-        "windows.antivirus" => "Windows Security Center antivirus category",
-        "windows.firewall" => "Windows Security Center firewall category",
+        "windows.antivirus" => "Windows Security Center antivirus category, registered product names/state, provider-reported signature status and antivirus update substatus",
+        "windows.firewall" => "Windows Security Center firewall category, registered product names/state and domain/private/public firewall profile substatus",
         _ => unreachable!("provider identifiers were validated above"),
     }).collect::<Vec<_>>().join("\n• ");
     let approved = crate::native_consent::confirm_native(
         &app,
         "Approve UJANI local security status check",
-        format!("UJANI is requesting a read-only local status query for:\n• {scope}\n\nOnly aggregate health and a local observation timestamp are read. No settings are changed and no data is uploaded. Allow this one-time query?"),
+        format!("UJANI is requesting a read-only local status query for:\n• {scope}\n\nWindows Security Center may return provider-reported product names, product state, antivirus signature/update status and firewall profile status. Product paths, product GUIDs and remediation paths are not collected. Product identity and latest engine/platform versions are not independently verified. No files are scanned, no settings are changed and no data is uploaded. Allow this one-time query?"),
         CancellationToken::new(),
         Duration::from_secs(120),
     ).await;
@@ -2586,7 +2586,7 @@ async fn get_security_provider_status(
         return Err("The native confirmation was declined, cancelled or expired; no provider query was made.".into());
     }
 
-    security_providers::read_only_status(&provider_ids)
+    security_providers::read_only_status(&provider_ids).await
 }
 
 /// Reads detailed local Defender update and protection metadata only after a
