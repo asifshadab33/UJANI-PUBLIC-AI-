@@ -1883,6 +1883,10 @@ async fn execute_local_ai_task(
     if !validate_model_identifier(&model) {
         return Err("Model identifier cannot be recorded safely in execution provenance.".into());
     }
+    // Reject invalid or oversized input before task registration, OS/runtime discovery,
+    // resource reservation or receipt persistence. The adapter repeats this check
+    // immediately before constructing the HTTP request.
+    ollama::validate_chat_input(&model, &prompt)?;
     // Register before local runtime probes so duplicate IDs are rejected and
     // cancellation reaches capability discovery and model inventory, not only inference.
     let registration = register_active_task(&control, &task_id)?;
