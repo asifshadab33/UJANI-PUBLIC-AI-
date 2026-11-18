@@ -514,7 +514,28 @@ mod defender_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::status_from_windows_result;
+    use super::{assess_provider_status, status_from_windows_result};
+
+    #[test]
+    fn shared_posture_model_preserves_aggregate_identity_limits() {
+        let (assessment, recommendation, identity) = assess_provider_status(
+            "windows.antivirus",
+            "healthy",
+            "Windows Security Center aggregate health API",
+            100_000,
+        );
+        assert_eq!(assessment, "protection_reported_healthy");
+        assert!(!identity);
+        assert!(recommendation.contains("Keep the existing protection enabled"));
+
+        let (unknown, _, _) = assess_provider_status(
+            "windows.firewall",
+            "unsupported",
+            "Windows Security Center API (Windows only)",
+            100_000,
+        );
+        assert_eq!(unknown, "cannot_verify");
+    }
 
     #[test]
     fn maps_documented_windows_health_values_without_overstating_protection() {
