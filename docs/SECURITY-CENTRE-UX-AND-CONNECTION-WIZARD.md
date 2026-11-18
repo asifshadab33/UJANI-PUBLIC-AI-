@@ -239,10 +239,31 @@ Implemented in the current branch:
 - No background polling, provider-data upload, file scanning, threat-event ingestion or security-setting changes.
 
 Not implemented yet:
-- Individual antivirus product identity and product-specific Defender status/signature details.
+- Third-party antivirus product identity and product-specific details beyond the built-in Defender status query.
 - Windows Firewall profile/rule details.
-- Threat events, ransomware protection details, scan history and update freshness.
+- Third-party antivirus/firewall update freshness and authoritative latest-release comparison for Defender engine/platform versions.
+- Threat events, ransomware protection details, scan history and third-party firewall profile/rule details.
 - Linux ClamAV/firewall and macOS/vendor adapters.
 - Persistent consent preferences, provider-specific permission management and platform manual acceptance tests.
 
 Important interpretation: Windows Security Center returns aggregate category health. A healthy result is not proof that every protection feature is enabled, current or effective, and it does not identify which product supplied protection. UJANI must retain that limitation in all labels and explanations.
+
+## 15. Implementation status (2026-11-18, draft PR #336)
+
+The existing Windows Security Center aggregate adapter remains unchanged. The current draft adds a separate, user-approved Microsoft Defender detail query:
+
+- Uses the documented `Get-MpComputerStatus` Defender cmdlet to read local Defender enabled flags, signature age and timestamp, signature version, engine version, product/platform version, service version and Defender's own `DefenderSignaturesOutOfDate` result.
+- Resolves the inbox PowerShell executable using the Windows `GetSystemDirectoryW` API; it does not trust PATH or a caller-controlled `SystemRoot` environment override.
+- Uses Defender's own out-of-date result, which reflects the effective Windows policy. Microsoft documents a seven-day default for the AV signature due policy, with administrator configuration supported. If the status field is unavailable, freshness remains unknown.
+- Missing/null protection flags, signature age or version metadata remain unknown rather than being displayed as disabled or current; empty version strings are normalised to not reported.
+- Resolves the inbox PowerShell executable with the Windows `GetSystemDirectoryW` API, not PATH or a caller-controlled environment variable.
+- Shows an explicit **OUT OF DATE** warning when Defender itself reports signatures out of date under its effective policy. A not-out-of-date result is described only as within policy—not proof that it matches the latest published release.
+- Runs only after a separate native confirmation. The fixed read-only PowerShell cmdlet call has an eight-second timeout, a 16 KiB output cap, no caller-controlled command text, no network access and no settings changes.
+- Adds bounded response parsing and tests for malformed metadata, Defender-reported out-of-date state, missing/null fields and empty version metadata.
+
+Still not implemented:
+- Authoritative comparison of Defender engine/platform versions against the latest Microsoft release feed.
+- Third-party antivirus identity/details, Windows Firewall profile status, Linux provider adapters and macOS provider adapters. Built-in Windows Firewall is serviced through Windows Update rather than a universal antivirus-style signature feed; third-party firewall update status must come from its own supported provider integration.
+- Enterprise provider integrations for any specific vendor.
+
+The adapter therefore reports local Defender evidence and Defender's effective signature-freshness result; it does not claim that all security components or every installed security product are current.
