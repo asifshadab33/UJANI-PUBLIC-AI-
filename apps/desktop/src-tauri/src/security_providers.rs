@@ -264,7 +264,6 @@ pub struct DefenderStatus {
     pub antivirus_enabled: Option<bool>,
     pub real_time_protection_enabled: Option<bool>,
     pub signature_age_days: Option<u32>,
-    pub signature_due_days: Option<u32>,
     pub signature_update_status: String,
     pub signature_last_updated: Option<String>,
     pub signature_version: Option<String>,
@@ -280,7 +279,7 @@ struct DefenderWmiResult {
     antivirus_enabled: bool,
     real_time_protection_enabled: bool,
     antivirus_signature_age_days: u32,
-    signature_due_days: Option<u32>,
+    defender_signatures_out_of_date: bool,
     antivirus_signature_last_updated: Option<String>,
     antivirus_signature_version: String,
     engine_version: String,
@@ -291,25 +290,13 @@ struct DefenderWmiResult {
 #[cfg(target_os = "windows")]
 const DEFENDER_WMI_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$s = Get-CimInstance -Namespace 'root/Microsoft/Windows/Defender' -ClassName 'MSFT_MpComputerStatus' -ErrorAction Stop
+$s = Get-MpComputerStatus -ErrorAction Stop
 if ($null -eq $s) { throw 'Defender status is unavailable' }
-# Microsoft documents a seven-day default due threshold; administrators can
-# override it through the AVSignatureDue policy. Read the effective policy only.
-$configuredDue = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates' -Name 'AVSignatureDue' -ErrorAction SilentlyContinue
-$signatureDueDays = 7
-if ($null -ne $configuredDue) {
-  $parsedDue = 0
-  if ([int]::TryParse([string]$configuredDue, [ref]$parsedDue) -and $parsedDue -ge 1 -and $parsedDue -le 365) {
-    $signatureDueDays = $parsedDue
-  } else {
-    $signatureDueDays = $null
-  }
-}
 [pscustomobject]@{
   antivirus_enabled = [bool]$s.AntivirusEnabled
   real_time_protection_enabled = [bool]$s.RealTimeProtectionEnabled
   antivirus_signature_age_days = [uint32]$s.AntivirusSignatureAge
-  signature_due_days = $signatureDueDays
+  defender_signatures_out_of_date = [bool]$s.DefenderSignaturesOutOfDate
   antivirus_signature_last_updated = if ($null -ne $s.AntivirusSignatureLastUpdated) { $s.AntivirusSignatureLastUpdated.ToUniversalTime().ToString('o') } else { $null }
   antivirus_signature_version = [string]$s.AntivirusSignatureVersion
   engine_version = [string]$s.AMEngineVersion
@@ -319,12 +306,8 @@ if ($null -ne $configuredDue) {
 "#;
 
 #[cfg(any(target_os = "windows", test))]
-fn signature_update_status(signature_age_days: u32, due_days: Option<u32>) -> &'static str {
-    match due_days {
-        Some(limit) if signature_age_days >= limit => "out_of_date",
-        Some(_) => "within_policy_age_limit",
-        None => "unknown",
-    }
+fn signature_update_status(signatures_out_of_date: bool) -> &'static str {
+    if signatures_out_of_date { "out_of_date" } else { "within_policy_age_limit" }
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -345,9 +328,6 @@ fn parse_defender_wmi_result(output: &[u8]) -> Result<DefenderWmiResult, String>
         value.len() > 40 || value.chars().any(char::is_control)
     }) {
         return Err("Windows Defender returned an invalid signature timestamp.".into());
-    }
-    if parsed.signature_due_days.is_some_and(|days| !(1..=365).contains(&days)) {
-        return Err("Windows Defender returned an invalid signature due threshold.".into());
     }
     Ok(parsed)
 }
@@ -404,8 +384,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
         }
         let parsed = parse_defender_wmi_result(&output)?;
         let signature_update_status = signature_update_status(
-            parsed.antivirus_signature_age_days,
-            parsed.signature_due_days,
+            parsed.defender_signatures_out_of_date,
         );
         Ok(DefenderStatus {
             status: "reported".into(),
@@ -414,7 +393,6 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
             antivirus_enabled: Some(parsed.antivirus_enabled),
             real_time_protection_enabled: Some(parsed.real_time_protection_enabled),
             signature_age_days: Some(parsed.antivirus_signature_age_days),
-            signature_due_days: parsed.signature_due_days,
             signature_update_status: signature_update_status.into(),
             signature_last_updated: parsed.antivirus_signature_last_updated,
             signature_version: Some(parsed.antivirus_signature_version),
@@ -447,7 +425,7 @@ mod defender_tests {
       "antivirus_enabled": true,
       "real_time_protection_enabled": true,
       "antivirus_signature_age_days": 1,
-      "signature_due_days": 7,
+      "defender_signatures_out_of_date": false,
       "antivirus_signature_last_updated": "2026-11-18T01:02:03.0000000Z",
       "antivirus_signature_version": "1.2.3.4",
       "engine_version": "2.3.4.5",
@@ -461,16 +439,14 @@ mod defender_tests {
         assert!(result.antivirus_enabled);
         assert!(result.real_time_protection_enabled);
         assert_eq!(result.antivirus_signature_age_days, 1);
-        assert_eq!(result.signature_due_days, Some(7));
+        assert!(!result.defender_signatures_out_of_date);
         assert_eq!(result.antivirus_signature_version, "1.2.3.4");
     }
 
     #[test]
     fn flags_signatures_at_or_beyond_the_effective_due_threshold() {
-        assert_eq!(super::signature_update_status(6, Some(7)), "within_policy_age_limit");
-        assert_eq!(super::signature_update_status(7, Some(7)), "out_of_date");
-        assert_eq!(super::signature_update_status(65535, Some(7)), "out_of_date");
-        assert_eq!(super::signature_update_status(1, None), "unknown");
+        assert_eq!(super::signature_update_status(false), "within_policy_age_limit");
+        assert_eq!(super::signature_update_status(true), "out_of_date");
     }
 
     #[test]
@@ -486,20 +462,6 @@ mod defender_tests {
             })
             .unwrap();
         assert!(parse_defender_wmi_result(&oversized).is_err());
-    }
-
-    #[test]
-    fn rejects_invalid_effective_signature_due_threshold() {
-        let invalid = VALID
-            .windows(b"\"signature_due_days\": 7".len())
-            .position(|window| window == b"\"signature_due_days\": 7")
-            .map(|index| {
-                let mut bytes = VALID.to_vec();
-                bytes.splice(index..index + b"\"signature_due_days\": 7".len(), b"\"signature_due_days\": 0".to_vec());
-                bytes
-            })
-            .unwrap();
-        assert!(parse_defender_wmi_result(&invalid).is_err());
     }
 
     #[test]
