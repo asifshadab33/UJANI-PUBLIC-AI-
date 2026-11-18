@@ -333,6 +333,7 @@ fn parse_defender_status_result(output: &[u8]) -> Result<DefenderStatusResult, S
     }) {
         return Err("Windows Defender returned an invalid signature timestamp.".into());
     }
+    parsed.antivirus_signature_age_days = parsed.antivirus_signature_age_days.filter(|age| *age <= 3650);
     parsed.antivirus_signature_version = parsed.antivirus_signature_version.filter(|value| !value.is_empty());
     parsed.engine_version = parsed.engine_version.filter(|value| !value.is_empty());
     parsed.product_version = parsed.product_version.filter(|value| !value.is_empty());
@@ -459,6 +460,13 @@ mod defender_tests {
         assert_eq!(result.antivirus_signature_age_days, Some(1));
         assert_eq!(result.defender_signatures_out_of_date, Some(false));
         assert_eq!(result.antivirus_signature_version.as_deref(), Some("1.2.3.4"));
+    }
+
+    #[test]
+    fn treats_unavailable_signature_age_sentinel_as_unknown() {
+        let output = VALID.replace("\\"antivirus_signature_age_days\\": 1", "\\"antivirus_signature_age_days\\": 4294967295");
+        let parsed = super::parse_defender_status_result(output.as_bytes()).unwrap();
+        assert_eq!(parsed.antivirus_signature_age_days, None);
     }
 
     #[test]
