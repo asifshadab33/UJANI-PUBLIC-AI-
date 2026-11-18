@@ -54,6 +54,7 @@ tauri-plugin-updater = "2"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_SecurityCenter"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_Storage_FileSystem", "Win32_System_SecurityCenter", "Win32_System_LibraryLoader", "Win32_System_SystemInformation"] }
 
 [workspace]
