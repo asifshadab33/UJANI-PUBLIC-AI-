@@ -351,14 +351,21 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     const QUERY_TIMEOUT: Duration = Duration::from_secs(8);
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    // Resolve the inbox Windows PowerShell executable from SystemRoot rather
-    // than searching PATH. The script and all arguments are constants; no
-    // caller-controlled text is interpolated or executed.
-    let system_root = std::env::var_os("SystemRoot").ok_or_else(|| {
-        "Windows SystemRoot is unavailable; Defender status cannot be queried.".to_string()
-    })?;
-    let executable = std::path::PathBuf::from(system_root)
-        .join("System32")
+    // Resolve the inbox Windows PowerShell executable from the OS-reported
+    // system directory, never from PATH or a caller-controlled environment variable.
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+    let mut system_directory = [0u16; 32_768];
+    let directory_length = unsafe {
+        GetSystemDirectoryW(system_directory.as_mut_ptr(), system_directory.len() as u32)
+    };
+    if directory_length == 0 || directory_length as usize >= system_directory.len() {
+        return Err("Windows system directory could not be resolved safely.".into());
+    }
+    let system_directory = std::ffi::OsString::from_wide(
+        &system_directory[..directory_length as usize],
+    );
+    let executable = std::path::PathBuf::from(system_directory)
         .join("WindowsPowerShell")
         .join("v1.0")
         .join("powershell.exe");
