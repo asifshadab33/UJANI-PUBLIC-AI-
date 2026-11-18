@@ -992,6 +992,7 @@ mod local_model_evidence_tests {
 
     fn metadata(capabilities: &[&str], context: Option<u64>) -> OllamaModelMetadata {
         OllamaModelMetadata {
+            model_digest: None,
             context_length_tokens: context,
             capabilities: capabilities.iter().map(|value| (*value).to_string()).collect(),
         }
