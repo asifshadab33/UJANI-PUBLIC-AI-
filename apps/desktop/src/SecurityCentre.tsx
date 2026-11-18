@@ -122,7 +122,7 @@ export default function SecurityCentre() {
       <article className="security-metric"><ShieldCheck/><small>ANTIVIRUS CATEGORY</small><b>{statusLabel(antivirus?.status)}</b><span>{statusDetail(antivirus)}</span></article>
       <article className="security-metric"><Shield/><small>FIREWALL CATEGORY</small><b>{statusLabel(firewall?.status)}</b><span>{statusDetail(firewall)}</span></article>
       <article className="security-metric"><ShieldAlert/><small>THREAT ALERTS</small><b>Not collected</b><span>No threat-event feed is connected</span></article>
-      <article className="security-metric"><AlertTriangle/><small>UPDATE FRESHNESS</small><b>Not verified</b><span>Defender signature age is reported when available, but latest vendor release status and firewall update currency are not independently verified. Check the installed product directly.</span></article>
+      <article className="security-metric"><AlertTriangle/><small>LATEST RELEASE CHECK</small><b>Not verified</b><span>Defender signature age is checked against the effective Windows due threshold, but latest Defender engine/platform release status and firewall update currency are not independently verified. Check the installed product directly.</span></article>
     </div>
     <div className="security-workspace">
       <div className="security-panel"><h3>Local provider status</h3><p>Nothing is queried until you explicitly enable a local status check.</p>
