@@ -281,8 +281,7 @@ def missing_defender_status_guards(source: str, adapter_source: str) -> list[str
         "MAX_OUTPUT_BYTES: usize = 16 * 1024",
         "QUERY_TIMEOUT: Duration = Duration::from_secs(8)",
         ".kill_on_drop(true)",
-        "Get-CimInstance -Namespace 'root/Microsoft/Windows/Defender'",
-        "Get-ItemPropertyValue",
+        "Get-MpComputerStatus -ErrorAction Stop",
     ):
         if token not in adapter_source:
             missing.append("Defender adapter " + token)
