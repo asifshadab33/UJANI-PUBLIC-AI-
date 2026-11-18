@@ -185,6 +185,155 @@ pub fn read_only_status(
     }
 }
 
+
+/// Detailed, read-only Microsoft Defender status from the documented
+/// MSFT_MpComputerStatus WMI class. This is separate from Windows Security
+/// Center's aggregate category health and does not claim to verify the latest
+/// vendor release.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct DefenderStatus {
+    pub status: String,
+    pub source: String,
+    pub detail: String,
+    pub antivirus_enabled: Option<bool>,
+    pub real_time_protection_enabled: Option<bool>,
+    pub signature_age_days: Option<u32>,
+    pub signature_last_updated: Option<String>,
+    pub signature_version: Option<String>,
+    pub engine_version: Option<String>,
+    pub product_version: Option<String>,
+    pub service_version: Option<String>,
+    pub checked_at_unix_ms: u64,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, serde::Deserialize)]
+struct DefenderWmiResult {
+    antivirus_enabled: bool,
+    real_time_protection_enabled: bool,
+    antivirus_signature_age_days: u32,
+    antivirus_signature_last_updated: Option<String>,
+    antivirus_signature_version: String,
+    engine_version: String,
+    product_version: String,
+    service_version: String,
+}
+
+#[cfg(target_os = "windows")]
+const DEFENDER_WMI_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$s = Get-CimInstance -Namespace 'root/Microsoft/Windows/Defender' -ClassName 'MSFT_MpComputerStatus' -ErrorAction Stop
+if ($null -eq $s) { throw 'Defender status is unavailable' }
+[pscustomobject]@{
+  antivirus_enabled = [bool]$s.AntivirusEnabled
+  real_time_protection_enabled = [bool]$s.RealTimeProtectionEnabled
+  antivirus_signature_age_days = [uint32]$s.AntivirusSignatureAge
+  antivirus_signature_last_updated = if ($null -ne $s.AntivirusSignatureLastUpdated) { $s.AntivirusSignatureLastUpdated.ToUniversalTime().ToString('o') } else { $null }
+  antivirus_signature_version = [string]$s.AntivirusSignatureVersion
+  engine_version = [string]$s.AMEngineVersion
+  product_version = [string]$s.AMProductVersion
+  service_version = [string]$s.AMServiceVersion
+} | ConvertTo-Json -Compress
+"#;
+
+#[cfg(target_os = "windows")]
+pub async fn read_defender_status() -> Result<DefenderStatus, String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use tokio::io::AsyncReadExt;
+    use tokio::process::Command;
+    use tokio::time::{timeout, Duration};
+
+    const MAX_OUTPUT_BYTES: usize = 16 * 1024;
+    const QUERY_TIMEOUT: Duration = Duration::from_secs(8);
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // Resolve the inbox Windows PowerShell executable from SystemRoot rather
+    // than searching PATH. The script and all arguments are constants; no
+    // caller-controlled text is interpolated or executed.
+    let system_root = std::env::var_os("SystemRoot")
+        .ok_or_else(|| "Windows SystemRoot is unavailable; Defender status cannot be queried.".to_string())?;
+    let executable = std::path::PathBuf::from(system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    if !executable.is_file() {
+        return Err("Windows PowerShell is unavailable; Defender status cannot be queried.".into());
+    }
+
+    let mut child = Command::new(executable)
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", DEFENDER_WMI_SCRIPT])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_| "Could not start the read-only Defender status query.".to_string())?;
+
+    let mut stdout = child.stdout.take()
+        .ok_or_else(|| "Defender status output is unavailable.".to_string())?;
+    let query = async {
+        let mut output = Vec::new();
+        stdout.take((MAX_OUTPUT_BYTES + 1) as u64).read_to_end(&mut output).await
+            .map_err(|_| "Could not read Defender status output.".to_string())?;
+        if output.len() > MAX_OUTPUT_BYTES {
+            let _ = child.kill().await;
+            return Err("Defender status output exceeded the safety limit.".to_string());
+        }
+        let exit = child.wait().await
+            .map_err(|_| "Defender status query did not complete.".to_string())?;
+        if !exit.success() {
+            return Err("Windows Defender status is unavailable or the query was denied.".to_string());
+        }
+        let parsed: DefenderWmiResult = serde_json::from_slice(&output)
+            .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
+        for value in [
+            &parsed.antivirus_signature_version,
+            &parsed.engine_version,
+            &parsed.product_version,
+            &parsed.service_version,
+        ] {
+            if value.len() > 64 || value.chars().any(char::is_control) {
+                return Err("Windows Defender returned invalid version metadata.".into());
+            }
+        }
+        if parsed.antivirus_signature_last_updated.as_ref().is_some_and(|value| {
+            value.len() > 40 || value.chars().any(char::is_control)
+        }) {
+            return Err("Windows Defender returned an invalid signature timestamp.".into());
+        }
+        Ok(DefenderStatus {
+            status: "reported".into(),
+            source: "Microsoft Defender MSFT_MpComputerStatus (read-only WMI)".into(),
+            detail: "Local Defender status was read. Signature age and versions are provider-reported; comparison with the latest Microsoft release has not been performed.".into(),
+            antivirus_enabled: Some(parsed.antivirus_enabled),
+            real_time_protection_enabled: Some(parsed.real_time_protection_enabled),
+            signature_age_days: Some(parsed.antivirus_signature_age_days),
+            signature_last_updated: parsed.antivirus_signature_last_updated,
+            signature_version: Some(parsed.antivirus_signature_version),
+            engine_version: Some(parsed.engine_version),
+            product_version: Some(parsed.product_version),
+            service_version: Some(parsed.service_version),
+            checked_at_unix_ms: observed_at_unix_ms(),
+        })
+    };
+
+    match timeout(QUERY_TIMEOUT, query).await {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = child.kill().await;
+            Err("Defender status query timed out; no status was assumed.".into())
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub async fn read_defender_status() -> Result<DefenderStatus, String> {
+    Err("Detailed Microsoft Defender status is supported only on Windows.".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::status_from_windows_result;
