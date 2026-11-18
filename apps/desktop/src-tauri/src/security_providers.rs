@@ -5,7 +5,9 @@
 //! files, collect threat events, or change security settings.
 
 use serde::Serialize;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "windows")]
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SecurityProviderStatus {
@@ -285,6 +287,7 @@ struct ProductInventoryResult {
 }
 
 impl ProductInventoryResult {
+    #[cfg(target_os = "windows")]
     fn unavailable(detail: &str) -> Self {
         Self {
             products: Vec::new(),
@@ -538,8 +541,10 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     Err("Detailed Microsoft Defender status is supported only on Windows.".into())
 }
 
+#[cfg(target_os = "windows")]
 const MAX_SECURITY_PRODUCTS_PER_CATEGORY: i32 = 32;
 
+#[cfg(target_os = "windows")]
 fn product_state_label(value: i32) -> &'static str {
     match value {
         0 => "on",
@@ -550,6 +555,7 @@ fn product_state_label(value: i32) -> &'static str {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn signature_status_label(value: i32) -> &'static str {
     match value {
         0 => "out_of_date",
@@ -558,6 +564,7 @@ fn signature_status_label(value: i32) -> &'static str {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn product_substatus_label(value: i32) -> &'static str {
     match value {
         0 => "not_set",
@@ -568,6 +575,7 @@ fn product_substatus_label(value: i32) -> &'static str {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn assess_wsc_product(
     provider_type: &str,
     product_state: &str,
@@ -634,6 +642,7 @@ fn assess_wsc_product(
     )
 }
 
+#[cfg(target_os = "windows")]
 fn sanitize_wsc_text(value: &str, max_chars: usize) -> Option<String> {
     let sanitized = value
         .chars()
@@ -1012,20 +1021,20 @@ mod tests {
         assert_eq!(status_from_windows_result(0, 99).0, "unknown");
     }
 
-    #[test]
-    fn rejects_empty_unknown_and_duplicate_provider_selections() {
-        assert!(super::read_only_status(&[]).is_err());
-        assert!(super::read_only_status(&["windows.defender".into()]).is_err());
+    #[tokio::test]
+    async fn rejects_empty_unknown_and_duplicate_provider_selections() {
+        assert!(super::read_only_status(&[]).await.is_err());
+        assert!(super::read_only_status(&["windows.defender".into()]).await.is_err());
         assert!(super::read_only_status(&[
             "windows.antivirus".into(),
             "windows.antivirus".into()
-        ]).is_err());
+        ]).await.is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn reports_windows_categories_as_unsupported_on_other_platforms() {
-        let result = super::read_only_status(&["windows.firewall".into()]).unwrap();
+    #[tokio::test]
+    async fn reports_windows_categories_as_unsupported_on_other_platforms() {
+        let result = super::read_only_status(&["windows.firewall".into()]).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].status, "unsupported");
     }
