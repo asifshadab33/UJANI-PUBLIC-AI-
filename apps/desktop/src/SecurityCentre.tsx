@@ -103,6 +103,7 @@ export default function SecurityCentre() {
 
   const checkDefenderStatus = async () => {
     setDefenderChecking(true);
+    setDefenderStatus(null);
     setDefenderError("");
     try {
       const result = await invoke<DefenderStatus>("get_defender_status");
