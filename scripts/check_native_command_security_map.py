@@ -283,9 +283,12 @@ def missing_defender_status_guards(source: str, adapter_source: str) -> list[str
         ".kill_on_drop(true)",
         "GetSystemDirectoryW",
         "Get-MpComputerStatus -ErrorAction Stop",
+        "GetSystemDirectoryW",
     ):
         if token not in adapter_source:
             missing.append("Defender adapter " + token)
+    if 'std::env::var_os("SystemRoot")' in adapter_source:
+        missing.append("Defender adapter must not trust SystemRoot environment override")
     return missing
 
 
