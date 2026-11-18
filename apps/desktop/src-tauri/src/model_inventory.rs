@@ -212,7 +212,9 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
     let inventory_models = models
         .iter()
         .map(|model| {
-            let model_metadata = metadata.get(&model.name);
+            let model_metadata = metadata
+                .get(&model.name)
+                .filter(|item| crate::ollama::metadata_matches_model_identity(model, item));
             let capabilities = model_metadata
                 .map(|item| item.capabilities.clone())
                 .filter(|items| !items.is_empty())
@@ -288,7 +290,7 @@ pub fn build_inventory(input: ModelInventoryInput<'_>) -> ModelRuntimeInventory 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ollama::OllamaModelDetails;
+    use crate::ollama::{OllamaModelDetails, OllamaModelMetadata};
 
     fn model(name: &str, size: u64) -> OllamaModel {
         OllamaModel {
@@ -448,6 +450,37 @@ mod tests {
     }
 
     #[test]
+    fn inventory_ignores_name_only_metadata_without_matching_digest() {
+        let mut installed = model("qwen2.5:3b", 2_000_000);
+        installed.digest = Some(format!("sha256:{}", "a".repeat(64)));
+        let models = [installed.clone()];
+        let metadata = HashMap::from([(
+            installed.name.clone(),
+            OllamaModelMetadata {
+                model_digest: None,
+                context_length_tokens: Some(32_768),
+                capabilities: vec!["chat".into(), "vision".into()],
+            },
+        )]);
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        });
+        assert_eq!(inventory.models[0].context_length_tokens, None);
+        assert_eq!(inventory.models[0].capabilities, vec!["unknown".to_string()]);
+        assert_eq!(inventory.models[0].evidence.source, "runtime_api");
+    }
+
+    #[test]
     fn inventory_preserves_only_runtime_reported_capabilities_and_context() {
         let mut model = model("qwen2.5:3b", 2_000_000);
         model.digest = Some(format!("sha256:{}", "A".repeat(64)));
@@ -455,6 +488,7 @@ mod tests {
         let metadata = HashMap::from([(
             model.name.clone(),
             OllamaModelMetadata {
+                model_digest: model.digest.clone(),
                 context_length_tokens: Some(32_768),
                 capabilities: vec!["chat".into(), "vision".into(), "tool_use".into()],
             },
