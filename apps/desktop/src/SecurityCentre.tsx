@@ -21,7 +21,6 @@ type DefenderStatus = {
   antivirus_enabled: boolean | null;
   real_time_protection_enabled: boolean | null;
   signature_age_days: number | null;
-  signature_due_days: number | null;
   signature_update_status: string;
   signature_last_updated: string | null;
   signature_version: string | null;
@@ -143,9 +142,9 @@ export default function SecurityCentre() {
             <b>{defenderStatus.antivirus_enabled ? "Antivirus enabled" : "Antivirus not enabled"} · {defenderStatus.real_time_protection_enabled ? "Real-time protection enabled" : "Real-time protection not enabled"}</b>
             {(defenderStatus.antivirus_enabled === false || defenderStatus.real_time_protection_enabled === false) && <p className="security-error" role="alert"><b>Defender protection needs attention.</b> Microsoft Defender reports antivirus or real-time protection disabled. This is Defender-specific evidence only; check Windows Security Center to confirm whether another approved antivirus provider is active. If no other protection is active, the device may be at risk.</p>}
             <p>Security intelligence age: {defenderStatus.signature_age_days ?? "Not reported"} day(s)</p>
-            <p>Windows signature due threshold: {defenderStatus.signature_due_days ?? "Not verifiable"} day(s)</p>
-            {defenderStatus.signature_update_status === "out_of_date" && <p className="security-error" role="alert"><b>Security intelligence is OUT OF DATE.</b> The configured Windows due threshold has been reached. Open Windows Security and update protection immediately, or contact your administrator.</p>}
-            {defenderStatus.signature_update_status === "within_policy_age_limit" && <p className="security-muted">Signature age is within the configured Windows due threshold. This does not independently confirm the latest Microsoft release.</p>}
+            <p>Defender-reported signature freshness: {defenderStatus.signature_update_status === "out_of_date" ? "OUT OF DATE" : defenderStatus.signature_update_status === "within_policy_age_limit" ? "Not reported out of date by Defender" : "Unknown"}</p>
+            {defenderStatus.signature_update_status === "out_of_date" && <p className="security-error" role="alert"><b>Security intelligence is OUT OF DATE.</b> Microsoft Defender reports that its effective signature-freshness policy has been breached. Open Windows Security and update protection immediately, or contact your administrator.</p>}
+            {defenderStatus.signature_update_status === "within_policy_age_limit" && <p className="security-muted">Microsoft Defender does not report its signatures as out of date under the effective Windows policy. This does not independently confirm the latest Microsoft release.</p>}
             {defenderStatus.signature_update_status === "unknown" && <p className="security-error" role="alert">Update freshness cannot be verified because the effective Windows due threshold is unavailable or invalid.</p>}
             <p>Last signature update: {defenderStatus.signature_last_updated ?? "Not reported"}</p>
             <p>Signature version: {defenderStatus.signature_version ?? "Not reported"}</p>
