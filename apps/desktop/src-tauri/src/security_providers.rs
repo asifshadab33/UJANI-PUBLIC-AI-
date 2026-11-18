@@ -253,7 +253,7 @@ pub fn read_only_status(
 
 
 /// Detailed, read-only Microsoft Defender status from the documented
-/// MSFT_MpComputerStatus WMI class. This is separate from Windows Security
+/// Get-MpComputerStatus cmdlet. This is separate from Windows Security
 /// Center's aggregate category health and does not claim to verify the latest
 /// vendor release.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -288,7 +288,7 @@ struct DefenderStatusResult {
 }
 
 #[cfg(target_os = "windows")]
-const DEFENDER_WMI_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+const DEFENDER_STATUS_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $s = Get-MpComputerStatus -ErrorAction Stop
 if ($null -eq $s) { throw 'Defender status is unavailable' }
@@ -358,7 +358,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     }
 
     let mut child = Command::new(executable)
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", DEFENDER_WMI_SCRIPT])
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", DEFENDER_STATUS_SCRIPT])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -388,7 +388,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
         );
         Ok(DefenderStatus {
             status: "reported".into(),
-            source: "Microsoft Defender MSFT_MpComputerStatus (read-only WMI)".into(),
+            source: "Microsoft Defender Get-MpComputerStatus (read-only)".into(),
             detail: "Local Defender status was read. Signature age and versions are provider-reported; comparison with the latest Microsoft release has not been performed.".into(),
             antivirus_enabled: Some(parsed.antivirus_enabled),
             real_time_protection_enabled: Some(parsed.real_time_protection_enabled),
