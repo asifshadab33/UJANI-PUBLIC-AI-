@@ -132,7 +132,7 @@ export default function SecurityCentre() {
         {!localChecksEnabled && <button type="button" className="model-run" onClick={() => setStep(1)}><Plug size={15}/> Review local status checks <ChevronRight size={15}/></button>}
         <div className="security-provider">
           <b>Microsoft Defender detailed status (Windows)</b>
-          <small>Read-only WMI · {defenderStatus ? "Reported" : "Not checked"}</small>
+          <small>Read-only Defender cmdlet · {defenderStatus ? "Reported" : "Not checked"}</small>
           <p>Reads Defender's local protection flags, signature age and timestamp, and engine/product/service versions. It does not compare versions with Microsoft's latest release feed.</p>
           <button type="button" className="model-run" onClick={checkDefenderStatus} disabled={defenderChecking}>
             <RefreshCw size={15}/> {defenderChecking ? "Checking Defender…" : "Check Defender status"}
