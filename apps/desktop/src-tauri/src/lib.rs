@@ -450,13 +450,16 @@ fn chat_capable_model_sizes(
     models
         .iter()
         .filter(|model| {
-            metadata.get(&model.name).is_some_and(|item| {
-                item.context_length_tokens
-                    .is_some_and(|context| context >= ollama::NUM_CTX as u64)
-                    && item.capabilities
-                        .iter()
-                        .any(|capability| capability == "chat")
-            })
+            metadata
+                .get(&model.name)
+                .filter(|item| ollama::metadata_matches_model_identity(model, item))
+                .is_some_and(|item| {
+                    item.context_length_tokens
+                        .is_some_and(|context| context >= ollama::NUM_CTX as u64)
+                        && item.capabilities
+                            .iter()
+                            .any(|capability| capability == "chat")
+                })
         })
         .map(|model| InstalledModelSize {
             name: model.name.clone(),
@@ -1761,6 +1764,37 @@ mod local_operation_policy_tests {
 #[cfg(test)]
 mod model_inventory_recommendation_tests {
     use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn chat_recommendation_requires_digest_bound_metadata() {
+        let model = ollama::OllamaModel {
+            name: "small-chat".into(),
+            size: 512 * 1024 * 1024,
+            digest: Some(format!("sha256:{}", "a".repeat(64))),
+            details: None,
+        };
+        let models = [model.clone()];
+        let unbound = HashMap::from([(
+            model.name.clone(),
+            ollama::OllamaModelMetadata {
+                model_digest: None,
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["chat".into()],
+            },
+        )]);
+        assert!(chat_capable_model_sizes(&models, &unbound).is_empty());
+
+        let bound = HashMap::from([(
+            model.name.clone(),
+            ollama::OllamaModelMetadata {
+                model_digest: model.digest.clone(),
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["chat".into()],
+            },
+        )]);
+        assert_eq!(chat_capable_model_sizes(&models, &bound).len(), 1);
+    }
 
     #[test]
     fn displayed_recommendation_uses_the_same_normalized_ram_as_inventory() {
@@ -1773,6 +1807,7 @@ mod model_inventory_recommendation_tests {
         let metadata = HashMap::from([(
             "small-chat".to_string(),
             ollama::OllamaModelMetadata {
+                model_digest: None,
                 context_length_tokens: Some(4_096),
                 capabilities: vec!["chat".into()],
             },
@@ -2768,18 +2803,22 @@ mod model_capability_selection_tests {
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
+                model_digest: None,
                 context_length_tokens: Some(crate::ollama::NUM_CTX as u64),
                 capabilities: vec!["chat".into()],
             }),
             ("vision-model".into(), OllamaModelMetadata {
+                model_digest: None,
                 context_length_tokens: Some(4_096),
                 capabilities: vec!["vision".into()],
             }),
             ("short-context-chat".into(), OllamaModelMetadata {
+                model_digest: None,
                 context_length_tokens: Some(2_048),
                 capabilities: vec!["chat".into()],
             }),
             ("unknown-context-chat".into(), OllamaModelMetadata {
+                model_digest: None,
                 context_length_tokens: None,
                 capabilities: vec!["chat".into()],
             }),
