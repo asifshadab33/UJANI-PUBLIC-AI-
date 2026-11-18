@@ -18,6 +18,8 @@ type DefenderStatus = {
   antivirus_enabled: boolean | null;
   real_time_protection_enabled: boolean | null;
   signature_age_days: number | null;
+  signature_due_days: number | null;
+  signature_update_status: string;
   signature_last_updated: string | null;
   signature_version: string | null;
   engine_version: string | null;
@@ -136,6 +138,10 @@ export default function SecurityCentre() {
           {defenderStatus && <div className="security-provider">
             <b>{defenderStatus.antivirus_enabled ? "Antivirus enabled" : "Antivirus not enabled"} · {defenderStatus.real_time_protection_enabled ? "Real-time protection enabled" : "Real-time protection not enabled"}</b>
             <p>Security intelligence age: {defenderStatus.signature_age_days ?? "Not reported"} day(s)</p>
+            <p>Windows signature due threshold: {defenderStatus.signature_due_days ?? "Not verifiable"} day(s)</p>
+            {defenderStatus.signature_update_status === "out_of_date" && <p className="security-error" role="alert"><b>Security intelligence is OUT OF DATE.</b> The configured Windows due threshold has been reached. Open Windows Security and update protection immediately, or contact your administrator.</p>}
+            {defenderStatus.signature_update_status === "within_policy_age_limit" && <p className="security-muted">Signature age is within the configured Windows due threshold. This does not independently confirm the latest Microsoft release.</p>}
+            {defenderStatus.signature_update_status === "unknown" && <p className="security-error" role="alert">Update freshness cannot be verified because the effective Windows due threshold is unavailable or invalid.</p>}
             <p>Last signature update: {defenderStatus.signature_last_updated ?? "Not reported"}</p>
             <p>Signature version: {defenderStatus.signature_version ?? "Not reported"}</p>
             <p>Engine: {defenderStatus.engine_version ?? "Not reported"} · Platform/product: {defenderStatus.product_version ?? "Not reported"} · Service: {defenderStatus.service_version ?? "Not reported"}</p>
