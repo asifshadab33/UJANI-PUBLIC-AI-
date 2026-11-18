@@ -2589,11 +2589,31 @@ async fn get_security_provider_status(
     security_providers::read_only_status(&provider_ids)
 }
 
+/// Reads detailed local Defender update and protection metadata only after a
+/// separate native confirmation. No vendor network request or remediation occurs.
+#[tauri::command]
+async fn get_defender_status(
+    app: AppHandle,
+) -> Result<security_providers::DefenderStatus, String> {
+    let approved = crate::native_consent::confirm_native(
+        &app,
+        "Approve Microsoft Defender status check",
+        "UJANI requests a bounded, read-only query of Microsoft Defender status on this device: protection enabled flags, signature age and timestamp, and engine/product/service versions. No files are scanned, no settings are changed, and no data is uploaded. This does not independently verify the latest Microsoft release. Allow this one-time query?",
+        CancellationToken::new(),
+        Duration::from_secs(120),
+    ).await;
+    if !approved {
+        return Err("The native confirmation was declined, cancelled or expired; no Defender query was made.".into());
+    }
+    security_providers::read_defender_status().await
+}
+
 macro_rules! ujani_invoke_handler {
     ($($peer_command:path),* $(,)?) => {
         tauri::generate_handler![
             execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
             get_security_provider_status,
+            get_defender_status,
             plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
             run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
             get_model_recommendation, execute_document_workflow, execute_local_ai_task,
