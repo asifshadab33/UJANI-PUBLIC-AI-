@@ -464,7 +464,7 @@ mod defender_tests {
 
     #[test]
     fn treats_unavailable_signature_age_sentinel_as_unknown() {
-        let output = VALID.replace("\\"antivirus_signature_age_days\\": 1", "\\"antivirus_signature_age_days\\": 4294967295");
+        let output = VALID.replace("\"antivirus_signature_age_days\": 1", "\"antivirus_signature_age_days\": 4294967295");
         let parsed = super::parse_defender_status_result(output.as_bytes()).unwrap();
         assert_eq!(parsed.antivirus_signature_age_days, None);
     }
