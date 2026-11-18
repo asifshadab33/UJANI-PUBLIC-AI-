@@ -259,7 +259,7 @@ The existing Windows Security Center aggregate adapter remains unchanged. The cu
 
 Still not implemented:
 - Authoritative comparison of Defender engine/platform versions against the latest Microsoft release feed.
-- Third-party antivirus identity/details, Windows Firewall profile/update freshness, Linux provider adapters and macOS provider adapters.
+- Third-party antivirus identity/details, Windows Firewall profile status, Linux provider adapters and macOS provider adapters. Built-in Windows Firewall is serviced through Windows Update rather than a universal antivirus-style signature feed; third-party firewall update status must come from its own supported provider integration.
 - Enterprise provider integrations for any specific vendor.
 
 The adapter therefore reports local Defender evidence and the OS-configured signature-age policy; it does not claim that all security components or every installed security product are current.
