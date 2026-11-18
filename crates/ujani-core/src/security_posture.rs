@@ -84,7 +84,7 @@ pub fn assess_category(
         .filter(|item| {
             valid_text(&item.provider_id, MAX_ID_LEN)
                 && valid_text(&item.evidence_source, MAX_SOURCE_LEN)
-                && item.display_name.as_ref().map_or(true, |name| valid_text(name, MAX_LABEL_LEN))
+                && item.display_name.as_ref().is_none_or(|name| valid_text(name, MAX_LABEL_LEN))
                 && item.observed_at_unix_ms <= now_unix_ms.saturating_add(MAX_CLOCK_SKEW_MS)
                 && now_unix_ms.saturating_sub(item.observed_at_unix_ms) <= max_age_ms
         })
