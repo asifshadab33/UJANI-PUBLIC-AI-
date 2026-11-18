@@ -252,6 +252,9 @@ pub mod router;
 pub mod reminders;
 pub use reminders::{upcoming_reminders, LocalReminder, ReminderState, ReminderValidationError};
 pub mod file_processor;
+/// Evidence-based security-provider posture; no installation or remediation.
+pub mod security_posture;
+pub use security_posture::{assess_category, EvidenceStatus, PostureAssessment, PostureResult, ProviderObservation, SecurityCategory};
 pub mod image_processor;
 pub mod capability;
 pub mod local_first;
