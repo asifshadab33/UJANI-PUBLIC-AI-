@@ -2598,7 +2598,7 @@ async fn get_defender_status(
     let approved = crate::native_consent::confirm_native(
         &app,
         "Approve Microsoft Defender status check",
-        "UJANI requests a bounded, read-only query of Microsoft Defender status on this device: protection enabled flags, signature age and timestamp, and engine/product/service versions. No files are scanned, no settings are changed, and no data is uploaded. This does not independently verify the latest Microsoft release. Allow this one-time query?",
+        "UJANI requests a bounded, read-only query of Microsoft Defender status on this device: protection enabled flags, signature age and timestamp, and engine/product/service versions. No files are scanned, no settings are changed, and no data is uploaded. This does not independently verify the latest Microsoft release. Allow this one-time query?".to_string(),
         CancellationToken::new(),
         Duration::from_secs(120),
     ).await;
