@@ -484,6 +484,22 @@ mod defender_tests {
     }
 
     #[test]
+    fn empty_version_strings_are_normalized_to_unknown() {
+        let mut value: serde_json::Value = serde_json::from_slice(VALID).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("antivirus_signature_version".into(), serde_json::Value::String(String::new()));
+        object.insert("engine_version".into(), serde_json::Value::String(String::new()));
+        object.insert("product_version".into(), serde_json::Value::String(String::new()));
+        object.insert("service_version".into(), serde_json::Value::String(String::new()));
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let parsed = super::parse_defender_status_result(&bytes).unwrap();
+        assert_eq!(parsed.antivirus_signature_version, None);
+        assert_eq!(parsed.engine_version, None);
+        assert_eq!(parsed.product_version, None);
+        assert_eq!(parsed.service_version, None);
+    }
+
+    #[test]
     fn missing_defender_freshness_field_stays_unknown() {
         let missing = VALID
             .windows(b",\n      \"defender_signatures_out_of_date\": false".len())
