@@ -198,6 +198,8 @@ pub struct DefenderStatus {
     pub antivirus_enabled: Option<bool>,
     pub real_time_protection_enabled: Option<bool>,
     pub signature_age_days: Option<u32>,
+    pub signature_due_days: Option<u32>,
+    pub signature_update_status: String,
     pub signature_last_updated: Option<String>,
     pub signature_version: Option<String>,
     pub engine_version: Option<String>,
@@ -212,6 +214,7 @@ struct DefenderWmiResult {
     antivirus_enabled: bool,
     real_time_protection_enabled: bool,
     antivirus_signature_age_days: u32,
+    signature_due_days: Option<u32>,
     antivirus_signature_last_updated: Option<String>,
     antivirus_signature_version: String,
     engine_version: String,
@@ -224,10 +227,23 @@ const DEFENDER_WMI_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $s = Get-CimInstance -Namespace 'root/Microsoft/Windows/Defender' -ClassName 'MSFT_MpComputerStatus' -ErrorAction Stop
 if ($null -eq $s) { throw 'Defender status is unavailable' }
+# Microsoft documents a seven-day default due threshold; administrators can
+# override it through the AVSignatureDue policy. Read the effective policy only.
+$configuredDue = Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates' -Name 'AVSignatureDue' -ErrorAction SilentlyContinue
+$signatureDueDays = 7
+if ($null -ne $configuredDue) {
+  $parsedDue = 0
+  if ([int]::TryParse([string]$configuredDue, [ref]$parsedDue) -and $parsedDue -ge 1 -and $parsedDue -le 365) {
+    $signatureDueDays = $parsedDue
+  } else {
+    $signatureDueDays = $null
+  }
+}
 [pscustomobject]@{
   antivirus_enabled = [bool]$s.AntivirusEnabled
   real_time_protection_enabled = [bool]$s.RealTimeProtectionEnabled
   antivirus_signature_age_days = [uint32]$s.AntivirusSignatureAge
+  signature_due_days = $signatureDueDays
   antivirus_signature_last_updated = if ($null -ne $s.AntivirusSignatureLastUpdated) { $s.AntivirusSignatureLastUpdated.ToUniversalTime().ToString('o') } else { $null }
   antivirus_signature_version = [string]$s.AntivirusSignatureVersion
   engine_version = [string]$s.AMEngineVersion
@@ -254,6 +270,9 @@ fn parse_defender_wmi_result(output: &[u8]) -> Result<DefenderWmiResult, String>
         value.len() > 40 || value.chars().any(char::is_control)
     }) {
         return Err("Windows Defender returned an invalid signature timestamp.".into());
+    }
+    if parsed.signature_due_days.is_some_and(|days| !(1..=365).contains(&days)) {
+        return Err("Windows Defender returned an invalid signature due threshold.".into());
     }
     Ok(parsed)
 }
@@ -309,6 +328,11 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
             return Err("Windows Defender status is unavailable or the query was denied.".to_string());
         }
         let parsed = parse_defender_wmi_result(&output)?;
+        let signature_update_status = match parsed.signature_due_days {
+            Some(due_days) if parsed.antivirus_signature_age_days >= due_days => "out_of_date",
+            Some(_) => "within_policy_age_limit",
+            None => "unknown",
+        };
         Ok(DefenderStatus {
             status: "reported".into(),
             source: "Microsoft Defender MSFT_MpComputerStatus (read-only WMI)".into(),
@@ -316,6 +340,8 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
             antivirus_enabled: Some(parsed.antivirus_enabled),
             real_time_protection_enabled: Some(parsed.real_time_protection_enabled),
             signature_age_days: Some(parsed.antivirus_signature_age_days),
+            signature_due_days: parsed.signature_due_days,
+            signature_update_status: signature_update_status.into(),
             signature_last_updated: parsed.antivirus_signature_last_updated,
             signature_version: Some(parsed.antivirus_signature_version),
             engine_version: Some(parsed.engine_version),
@@ -347,6 +373,7 @@ mod defender_tests {
       "antivirus_enabled": true,
       "real_time_protection_enabled": true,
       "antivirus_signature_age_days": 1,
+      "signature_due_days": 7,
       "antivirus_signature_last_updated": "2026-11-18T01:02:03.0000000Z",
       "antivirus_signature_version": "1.2.3.4",
       "engine_version": "2.3.4.5",
@@ -360,6 +387,7 @@ mod defender_tests {
         assert!(result.antivirus_enabled);
         assert!(result.real_time_protection_enabled);
         assert_eq!(result.antivirus_signature_age_days, 1);
+        assert_eq!(result.signature_due_days, Some(7));
         assert_eq!(result.antivirus_signature_version, "1.2.3.4");
     }
 
