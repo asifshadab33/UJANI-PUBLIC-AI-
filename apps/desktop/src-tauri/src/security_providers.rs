@@ -443,8 +443,8 @@ mod defender_tests {
     #[test]
     fn accepts_bounded_read_only_defender_metadata() {
         let result = parse_defender_status_result(VALID).unwrap();
-        assert!(result.antivirus_enabled);
-        assert!(result.real_time_protection_enabled);
+        assert_eq!(result.antivirus_enabled, Some(true));
+        assert_eq!(result.real_time_protection_enabled, Some(true));
         assert_eq!(result.antivirus_signature_age_days, 1);
         assert_eq!(result.defender_signatures_out_of_date, Some(false));
         assert_eq!(result.antivirus_signature_version, "1.2.3.4");
@@ -455,6 +455,28 @@ mod defender_tests {
         assert_eq!(super::signature_update_status(Some(false)), "within_policy_age_limit");
         assert_eq!(super::signature_update_status(Some(true)), "out_of_date");
         assert_eq!(super::signature_update_status(None), "unknown");
+    }
+
+    #[test]
+    fn missing_protection_fields_remain_unknown_not_disabled() {
+        let mut value: serde_json::Value = serde_json::from_slice(VALID).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("antivirus_enabled");
+        object.remove("real_time_protection_enabled");
+        object.remove("antivirus_signature_age_days");
+        object.remove("antivirus_signature_version");
+        object.remove("engine_version");
+        object.remove("product_version");
+        object.remove("service_version");
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let parsed = super::parse_defender_status_result(&bytes).unwrap();
+        assert_eq!(parsed.antivirus_enabled, None);
+        assert_eq!(parsed.real_time_protection_enabled, None);
+        assert_eq!(parsed.antivirus_signature_age_days, None);
+        assert_eq!(parsed.antivirus_signature_version, None);
+        assert_eq!(parsed.engine_version, None);
+        assert_eq!(parsed.product_version, None);
+        assert_eq!(parsed.service_version, None);
     }
 
     #[test]
