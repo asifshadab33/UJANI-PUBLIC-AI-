@@ -5,7 +5,7 @@
 //! files, collect threat events, or change security settings.
 
 use serde::Serialize;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SecurityProviderStatus {
@@ -183,7 +183,7 @@ fn windows_category(
 
 /// Read the supported provider categories on this platform. No polling occurs;
 /// callers invoke this only after the user explicitly requests a status check.
-pub fn read_only_status(
+fn read_provider_status(
     requested_provider_ids: &[String],
 ) -> Result<Vec<SecurityProviderStatus>, String> {
     if requested_provider_ids.is_empty()
@@ -251,6 +251,108 @@ pub fn read_only_status(
     }
 }
 
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecurityProductStatus {
+    pub provider_id: String,
+    pub provider_type: String,
+    pub display_name: Option<String>,
+    pub product_state: String,
+    pub signature_status: String,
+    pub antivirus_update_substatus: Option<String>,
+    pub firewall_domain_profile_substatus: Option<String>,
+    pub firewall_private_profile_substatus: Option<String>,
+    pub firewall_public_profile_substatus: Option<String>,
+    pub product_state_timestamp: Option<String>,
+    pub assessment: String,
+    pub recommendation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecurityProviderSnapshot {
+    pub providers: Vec<SecurityProviderStatus>,
+    pub products: Vec<SecurityProductStatus>,
+    pub products_status: String,
+    pub products_detail: String,
+    pub products_checked_at_unix_ms: u64,
+}
+
+struct ProductInventoryResult {
+    products: Vec<SecurityProductStatus>,
+    status: String,
+    detail: String,
+    checked_at_unix_ms: u64,
+}
+
+impl ProductInventoryResult {
+    fn unavailable(detail: &str) -> Self {
+        Self {
+            products: Vec::new(),
+            status: "unavailable".into(),
+            detail: detail.into(),
+            checked_at_unix_ms: unix_now_ms(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn unsupported() -> Self {
+        Self {
+            products: Vec::new(),
+            status: "unsupported".into(),
+            detail: "Windows Security Center product enumeration is available only on supported Windows client editions.".into(),
+            checked_at_unix_ms: unix_now_ms(),
+        }
+    }
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+pub async fn read_only_status(
+    requested_provider_ids: &[String],
+) -> Result<SecurityProviderSnapshot, String> {
+    let providers = read_provider_status(requested_provider_ids)?;
+
+    #[cfg(target_os = "windows")]
+    let inventory = {
+        let ids = requested_provider_ids.to_vec();
+        match tokio::time::timeout(
+            Duration::from_secs(8),
+            tokio::task::spawn_blocking(move || {
+                std::thread::spawn(move || read_windows_security_products(&ids))
+                    .join()
+                    .unwrap_or_else(|_| ProductInventoryResult::unavailable(
+                        "Windows Security Center product enumeration worker failed."
+                    ))
+            }),
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => ProductInventoryResult::unavailable(
+                "Windows Security Center product enumeration worker failed."
+            ),
+            Err(_) => ProductInventoryResult::unavailable(
+                "Windows Security Center product enumeration timed out; individual product status is unknown."
+            ),
+        }
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let inventory = ProductInventoryResult::unsupported();
+
+    Ok(SecurityProviderSnapshot {
+        providers,
+        products: inventory.products,
+        products_status: inventory.status,
+        products_detail: inventory.detail,
+        products_checked_at_unix_ms: inventory.checked_at_unix_ms,
+    })
+}
 
 /// Detailed, read-only Microsoft Defender status from the documented
 /// Get-MpComputerStatus cmdlet. This is separate from Windows Security
