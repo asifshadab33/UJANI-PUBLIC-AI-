@@ -688,7 +688,7 @@
       "consent": "Fresh native confirmation describes the exact Defender fields read; decline, cancellation or expiry prevents the query.",
       "cancellation": "Eight-second timeout; child process is killed on timeout or dropped command future.",
       "resource_limits": "Fixed PowerShell path under SystemRoot, no caller-controlled script text, stderr discarded, stdout capped at 16 KiB, version strings capped at 64 bytes and timestamp at 40 bytes.",
-      "failure_mode": "Return bounded unavailable/unknown errors on missing WMI, denied query, malformed output, invalid policy or timeout; never assume current or change OS state."
+      "failure_mode": "Return bounded unavailable/unknown errors when Defender status is unavailable, access is denied, output is malformed or the query times out; never assume current or change OS state."
     },
     "reminder_store::manage_local_reminders": {
       "classification": "encrypted_local_state_mutation",
