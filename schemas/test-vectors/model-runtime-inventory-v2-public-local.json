@@ -89,7 +89,7 @@
         }
       },
       "resource_estimates": {
-        "minimum_memory_mb": 514,
+        "minimum_memory_mb": 2420,
         "minimum_accelerator_memory_mb": null,
         "minimum_storage_bytes": null,
         "recommended_cpu_threads": null,
