@@ -13,6 +13,27 @@ class PublicReleaseReadinessTests(unittest.TestCase):
     def test_complete_evidence_is_required_for_release(self):
         self.assertTrue(release_ready(set(REQUIRED_EVIDENCE)))
 
+    def test_each_required_security_gate_blocks_release_when_missing(self):
+        complete = set(REQUIRED_EVIDENCE)
+        for required_item in REQUIRED_EVIDENCE:
+            with self.subTest(missing=required_item):
+                evidence = complete - {required_item}
+                self.assertFalse(release_ready(evidence))
+                self.assertIn(required_item, missing_release_evidence(evidence))
+
+    def test_dependency_audit_and_os_isolation_are_independent_release_gates(self):
+        evidence = set(REQUIRED_EVIDENCE)
+        evidence.remove("frontend_and_rust_dependency_audits")
+        evidence.remove("os_enforced_sandbox_all_supported_os")
+        self.assertFalse(release_ready(evidence))
+        self.assertEqual(
+            set(missing_release_evidence(evidence)),
+            {
+                "frontend_and_rust_dependency_audits",
+                "os_enforced_sandbox_all_supported_os",
+            },
+        )
+
     def test_one_missing_external_report_blocks_release(self):
         evidence = set(REQUIRED_EVIDENCE) - {"independent_external_test_report"}
         self.assertFalse(release_ready(evidence))
