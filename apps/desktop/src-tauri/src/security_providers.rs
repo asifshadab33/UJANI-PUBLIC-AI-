@@ -445,9 +445,9 @@ mod defender_tests {
         let result = parse_defender_status_result(VALID).unwrap();
         assert_eq!(result.antivirus_enabled, Some(true));
         assert_eq!(result.real_time_protection_enabled, Some(true));
-        assert_eq!(result.antivirus_signature_age_days, 1);
+        assert_eq!(result.antivirus_signature_age_days, Some(1));
         assert_eq!(result.defender_signatures_out_of_date, Some(false));
-        assert_eq!(result.antivirus_signature_version, "1.2.3.4");
+        assert_eq!(result.antivirus_signature_version.as_deref(), Some("1.2.3.4"));
     }
 
     #[test]
