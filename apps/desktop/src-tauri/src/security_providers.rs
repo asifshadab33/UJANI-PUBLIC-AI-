@@ -275,7 +275,7 @@ pub struct DefenderStatus {
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Debug, serde::Deserialize)]
-struct DefenderWmiResult {
+struct DefenderStatusResult {
     antivirus_enabled: bool,
     real_time_protection_enabled: bool,
     antivirus_signature_age_days: u32,
@@ -311,8 +311,8 @@ fn signature_update_status(signatures_out_of_date: bool) -> &'static str {
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn parse_defender_wmi_result(output: &[u8]) -> Result<DefenderWmiResult, String> {
-    let parsed: DefenderWmiResult = serde_json::from_slice(output)
+fn parse_defender_status_result(output: &[u8]) -> Result<DefenderStatusResult, String> {
+    let parsed: DefenderStatusResult = serde_json::from_slice(output)
         .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
     for value in [
         &parsed.antivirus_signature_version,
@@ -382,7 +382,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
         if !exit.success() {
             return Err("Windows Defender status is unavailable or the query was denied.".to_string());
         }
-        let parsed = parse_defender_wmi_result(&output)?;
+        let parsed = parse_defender_status_result(&output)?;
         let signature_update_status = signature_update_status(
             parsed.defender_signatures_out_of_date,
         );
@@ -419,7 +419,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
 
 #[cfg(test)]
 mod defender_tests {
-    use super::parse_defender_wmi_result;
+    use super::parse_defender_status_result;
 
     const VALID: &[u8] = br#"{
       "antivirus_enabled": true,
@@ -435,7 +435,7 @@ mod defender_tests {
 
     #[test]
     fn accepts_bounded_read_only_defender_metadata() {
-        let result = parse_defender_wmi_result(VALID).unwrap();
+        let result = parse_defender_status_result(VALID).unwrap();
         assert!(result.antivirus_enabled);
         assert!(result.real_time_protection_enabled);
         assert_eq!(result.antivirus_signature_age_days, 1);
@@ -451,7 +451,7 @@ mod defender_tests {
 
     #[test]
     fn rejects_malformed_and_unbounded_version_metadata() {
-        assert!(parse_defender_wmi_result(b"not-json").is_err());
+        assert!(parse_defender_status_result(b"not-json").is_err());
         let oversized = VALID
             .windows(b"1.2.3.4".len())
             .position(|window| window == b"1.2.3.4")
@@ -461,7 +461,7 @@ mod defender_tests {
                 bytes
             })
             .unwrap();
-        assert!(parse_defender_wmi_result(&oversized).is_err());
+        assert!(parse_defender_status_result(&oversized).is_err());
     }
 
     #[test]
@@ -470,7 +470,7 @@ mod defender_tests {
         let index = bytes.windows(b"1.2.3.4".len())
             .position(|window| window == b"1.2.3.4").unwrap();
         bytes[index] = 0x01;
-        assert!(parse_defender_wmi_result(&bytes).is_err());
+        assert!(parse_defender_status_result(&bytes).is_err());
     }
 }
 
