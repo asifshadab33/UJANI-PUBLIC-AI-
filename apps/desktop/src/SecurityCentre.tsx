@@ -148,12 +148,12 @@ export default function SecurityCentre() {
             <p>Engine: {defenderStatus.engine_version ?? "Not reported"} · Platform/product: {defenderStatus.product_version ?? "Not reported"} · Service: {defenderStatus.service_version ?? "Not reported"}</p>
             <small>Checked: {new Date(defenderStatus.checked_at_unix_ms).toLocaleString()} · Source: {defenderStatus.source}</small>
             <p className="security-muted">{defenderStatus.detail}</p>
-            <p className="security-muted">If the signature age is unexpectedly high or protection is disabled, open Windows Security and check for updates. UJANI does not infer a universal freshness threshold or claim that a version is the latest.</p>
+            <p className="security-muted">If Defender reports an out-of-date signature or disabled protection, open Windows Security and update protection or contact your administrator. A signature age below the configured due threshold does not prove that the installed version is the latest release.</p>
           </div>}
         </div>
         {providers.map((p) => {
           const result = statuses.find((item) => item.provider_id === p.id);
-          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <small>Source: {result.source}</small></div>;
+          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <small>Source: {result.source}</small>}</div>;
         })}
         {plannedProviders.map((p) => <div className="security-provider" key={p.name}><b>{p.name}</b><small>{p.os} · Planned, not connected</small><p>{p.detail}</p></div>)}
         {statuses.length > 0 && <p className="security-muted">Last checked: {new Date(Math.max(...statuses.map((s) => s.observed_at_unix_ms))).toLocaleString()}</p>}
