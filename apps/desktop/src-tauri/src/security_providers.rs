@@ -423,6 +423,20 @@ mod defender_tests {
     }
 
     #[test]
+    fn rejects_invalid_effective_signature_due_threshold() {
+        let invalid = VALID
+            .windows(b"\\"signature_due_days\\": 7".len())
+            .position(|window| window == b"\\"signature_due_days\\": 7")
+            .map(|index| {
+                let mut bytes = VALID.to_vec();
+                bytes.splice(index..index + b"\\"signature_due_days\\": 7".len(), b"\\"signature_due_days\\": 0".to_vec());
+                bytes
+            })
+            .unwrap();
+        assert!(parse_defender_wmi_result(&invalid).is_err());
+    }
+
+    #[test]
     fn rejects_control_characters_in_vendor_metadata() {
         let mut bytes = VALID.to_vec();
         let index = bytes.windows(b"1.2.3.4".len())
