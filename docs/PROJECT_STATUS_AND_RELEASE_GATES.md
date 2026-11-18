@@ -1,6 +1,6 @@
 # UJANI project status and release gates
 
-**Project status: pre-alpha / prototype.** This file consolidates the verified implementation boundary and outstanding work across UJANI Public AI and UJANI Enterprise AI as of 16 November 2026. It is a project planning record, not a security certification.
+**Project status: pre-alpha / prototype.** This file consolidates the verified implementation boundary and outstanding work across UJANI Public AI and UJANI Enterprise AI as of 18 November 2026. It is a project planning record, not a security certification.
 
 ## Product architecture
 
@@ -96,7 +96,20 @@
 
 ## Verification checklist
 
+The fail-closed release-readiness helper now requires separate evidence for every item below. A passing unit test or successful compile is not a substitute for the underlying evidence.
+
 - [ ] Rust core tests and clippy on locked dependencies.
+- [ ] Frontend and Rust dependency audits pass with no unresolved release-blocking advisories.
+- [ ] OS-enforced sandbox controls are implemented and tested on every supported desktop OS.
+- [ ] PDF worker containment is independently verified on every supported desktop OS.
+- [ ] Command-by-command IPC authorization and side-effect ordering audit is complete.
+- [ ] Model download transport, host validation, progress bounds, cancellation and artifact verification tests pass.
+- [ ] History key rotation, backup/restore and credential-vault recovery tests pass.
+- [ ] Signed release artifacts, SBOM/provenance and updater signature/version binding are verified.
+- [ ] Update rollback, crash recovery and backup/restore drills pass.
+- [ ] Required parser fuzz campaigns have completed with retained evidence.
+- [ ] Independent external security review/penetration test is complete.
+- [ ] Independent external test report is complete.
 - [ ] Native Tauri compile/tests on Windows, macOS and Linux.
 - [ ] Frontend TypeScript build and dependency audit.
 - [ ] CodeQL and dependency/SBOM review.

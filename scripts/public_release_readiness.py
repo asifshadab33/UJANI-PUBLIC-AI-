@@ -8,6 +8,16 @@ REQUIRED_EVIDENCE = frozenset({
     "privacy_consent_transport_tests",
     "document_parser_limits_and_fuzzing",
     "crash_freeze_regression_tests",
+    "frontend_and_rust_dependency_audits",
+    "os_enforced_sandbox_all_supported_os",
+    "pdf_worker_containment_all_supported_os",
+    "ipc_authorization_coverage_audit",
+    "model_download_security_tests",
+    "history_key_rotation_and_recovery_tests",
+    "signed_release_and_update_provenance",
+    "update_rollback_and_recovery_tests",
+    "fuzz_campaign_completion",
+    "independent_external_security_review",
     "independent_external_test_report",
 })
 
