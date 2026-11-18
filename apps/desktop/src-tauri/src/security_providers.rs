@@ -350,8 +350,9 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     // Resolve the inbox Windows PowerShell executable from SystemRoot rather
     // than searching PATH. The script and all arguments are constants; no
     // caller-controlled text is interpolated or executed.
-    let system_root = std::env::var_os("SystemRoot")
-        .ok_or_else(|| "Windows SystemRoot is unavailable; Defender status cannot be queried.".to_string())?;
+    let system_root = std::env::var_os("SystemRoot").ok_or_else(|| {
+        "Windows SystemRoot is unavailable; Defender status cannot be queried.".to_string()
+    })?;
     let executable = std::path::PathBuf::from(system_root)
         .join("System32")
         .join("WindowsPowerShell")
@@ -384,7 +385,9 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
         let exit = child.wait().await
             .map_err(|_| "Defender status query did not complete.".to_string())?;
         if !exit.success() {
-            return Err("Windows Defender status is unavailable or the query was denied.".to_string());
+            return Err(
+                "Windows Defender status is unavailable or the query was denied.".to_string(),
+            );
         }
         let parsed = parse_defender_status_result(&output)?;
         let signature_update_status = signature_update_status(
@@ -461,13 +464,18 @@ mod defender_tests {
             .position(|window| window == b",\n      \"defender_signatures_out_of_date\": false")
             .map(|index| {
                 let mut bytes = VALID.to_vec();
-                bytes.drain(index..index + b",\n      \"defender_signatures_out_of_date\": false".len());
+                bytes.drain(
+                    index..index + b",\n      \"defender_signatures_out_of_date\": false".len(),
+                );
                 bytes
             })
             .unwrap();
         let parsed = super::parse_defender_status_result(&missing).unwrap();
         assert_eq!(parsed.defender_signatures_out_of_date, None);
-        assert_eq!(super::signature_update_status(parsed.defender_signatures_out_of_date), "unknown");
+        assert_eq!(
+            super::signature_update_status(parsed.defender_signatures_out_of_date),
+            "unknown"
+        );
     }
 
     #[test]
