@@ -1082,6 +1082,62 @@ mod tests {
         assert!(result.products_detail.contains("available only on supported Windows"));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn warns_when_windows_security_center_reports_stale_antivirus_signatures() {
+        let (assessment, detail) = super::assess_wsc_product(
+            "antivirus",
+            "on",
+            "out_of_date",
+            None,
+            [None, None, None],
+        );
+        assert_eq!(assessment, "alert");
+        assert!(detail.contains("outdated signatures"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn warns_when_any_firewall_profile_needs_action() {
+        let (assessment, detail) = super::assess_wsc_product(
+            "firewall",
+            "on",
+            "unknown",
+            None,
+            [Some("no_action"), Some("action_needed"), Some("no_action")],
+        );
+        assert_eq!(assessment, "alert");
+        assert!(detail.contains("firewall profile needs attention"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn never_claims_firewall_update_freshness_from_active_product_state() {
+        let (assessment, detail) = super::assess_wsc_product(
+            "firewall",
+            "on",
+            "unknown",
+            None,
+            [Some("no_action"), Some("no_action"), Some("no_action")],
+        );
+        assert_eq!(assessment, "reported_healthy");
+        assert!(detail.contains("update freshness is not provided"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn missing_antivirus_freshness_evidence_remains_unknown() {
+        let (assessment, detail) = super::assess_wsc_product(
+            "antivirus",
+            "on",
+            "unknown",
+            None,
+            [None, None, None],
+        );
+        assert_eq!(assessment, "unknown");
+        assert!(detail.contains("not provide enough information"));
+    }
+
     #[test]
     fn distinguishes_stopped_service_and_api_failure() {
         assert_eq!(status_from_windows_result(1, 2).0, "unavailable");
