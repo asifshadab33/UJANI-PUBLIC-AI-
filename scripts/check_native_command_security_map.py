@@ -653,7 +653,7 @@ def main() -> int:
     missing_defender_guards = missing_defender_status_guards(source, defender_adapter_source)
     if missing_defender_guards:
         errors.append(
-            "Defender status: native confirmation and bounded read-only WMI query required in "
+            "Defender status: native confirmation and bounded read-only Defender cmdlet required in "
             + ", ".join(missing_defender_guards)
         )
 
