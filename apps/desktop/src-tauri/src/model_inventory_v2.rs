@@ -7,6 +7,8 @@ use crate::model_inventory::{normalize_memory_readings, ModelInventoryInput};
 use serde::Serialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const MAX_SCHEMA_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelRuntimeInventoryV2 {
     schema_version: u8,
@@ -155,7 +157,9 @@ struct Privacy {
 }
 
 fn unix_ms_from_duration(duration: Duration) -> Option<u64> {
-    u64::try_from(duration.as_millis()).ok().filter(|value| *value > 0)
+    u64::try_from(duration.as_millis())
+        .ok()
+        .filter(|value| *value > 0 && *value <= MAX_SCHEMA_SAFE_INTEGER)
 }
 
 fn unix_ms_at(now: SystemTime) -> Option<u64> {
@@ -219,7 +223,14 @@ fn build_inventory_v2_at(
     runtime_observed_at_unix_ms: Option<u64>,
     os_observed_at_unix_ms: Option<u64>,
 ) -> Option<ModelRuntimeInventoryV2> {
-    let generated_at = generated_at.filter(|value| *value > 0)?;
+    if [generated_at, runtime_observed_at_unix_ms, os_observed_at_unix_ms]
+        .into_iter()
+        .flatten()
+        .any(|value| value == 0 || value > MAX_SCHEMA_SAFE_INTEGER)
+    {
+        return None;
+    }
+    let generated_at = generated_at?;
     let ModelInventoryInput {
         models, metadata, runtime_available, runtime_version, os_name: _, os_version,
         architecture, cpu_logical_cores, memory_total_mb, memory_available_mb, accelerator,
@@ -256,7 +267,9 @@ fn build_inventory_v2_at(
         })
         .take(512)
         .map(|model| {
-            let details = metadata.get(&model.name);
+            let details = metadata
+                .get(&model.name)
+                .filter(|item| crate::ollama::metadata_matches_model_identity(model, item));
             let reported_capabilities = details
                 .map(|item| item.capabilities.as_slice())
                 .unwrap_or(&[]);
@@ -411,11 +424,15 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    fn sample_digest() -> String {
+        format!("sha256:{}", "a".repeat(64))
+    }
+
     fn sample_model() -> OllamaModel {
         OllamaModel {
             name: "llama3.2:latest".into(),
             size: 1_000_000_000,
-            digest: None,
+            digest: Some(sample_digest()),
             details: Some(OllamaModelDetails {
                 format: Some("gguf".into()), family: Some("llama".into()),
                 families: None, parameter_size: Some("3B".into()),
@@ -428,13 +445,42 @@ mod tests {
         assert_eq!(unix_ms_at(UNIX_EPOCH), None);
         assert_eq!(unix_ms_at(UNIX_EPOCH - Duration::from_millis(1)), None);
         assert_eq!(
-            unix_ms_from_duration(Duration::from_millis(u64::MAX)),
-            Some(u64::MAX)
+            unix_ms_from_duration(Duration::from_millis(MAX_SCHEMA_SAFE_INTEGER)),
+            Some(MAX_SCHEMA_SAFE_INTEGER)
         );
+        assert_eq!(
+            unix_ms_from_duration(Duration::from_millis(MAX_SCHEMA_SAFE_INTEGER + 1)),
+            None
+        );
+        assert_eq!(unix_ms_from_duration(Duration::from_millis(u64::MAX)), None);
         assert_eq!(
             unix_ms_from_duration(Duration::from_millis(u64::MAX) + Duration::from_millis(1)),
             None
         );
+    }
+
+    #[test]
+    fn supplied_timestamps_must_fit_the_schema_safe_integer_range() {
+        let models: [OllamaModel; 0] = [];
+        let metadata = HashMap::new();
+        let input = || ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        };
+        let above_max = MAX_SCHEMA_SAFE_INTEGER + 1;
+        assert!(build_inventory_v2_at(input(), Some(above_max), None, None).is_none());
+        assert!(build_inventory_v2_at(input(), Some(1), Some(above_max), None).is_none());
+        assert!(build_inventory_v2_at(input(), Some(1), None, Some(above_max)).is_none());
+        assert!(build_inventory_v2_at(input(), Some(1), Some(0), None).is_none());
     }
 
     #[test]
@@ -479,6 +525,7 @@ mod tests {
         assert_eq!(value["models"][0]["availability"], "installed");
         assert_eq!(value["models"][0]["compatibility"]["status"], "unknown");
         assert_eq!(value["models"][0]["capabilities"].as_array().unwrap().len(), 0);
+        assert_eq!(value["models"][0]["resource_estimates"]["minimum_memory_mb"], 2_420);
         assert_eq!(value["models"][0]["resource_estimates"]["evidence"]["confidence"], "estimated");
         assert_eq!(value["privacy"]["contains_prompts"], false);
         assert_eq!(value["privacy"]["contains_user_files"], false);
@@ -504,6 +551,7 @@ mod tests {
     fn runtime_evidence_uses_collection_start_not_inventory_assembly_time() {
         let models = [sample_model()];
         let metadata = HashMap::from([("llama3.2:latest".to_string(), OllamaModelMetadata {
+            model_digest: Some(sample_digest()),
             context_length_tokens: Some(8192), capabilities: vec!["chat".into()],
         })]);
         let value = serde_json::to_value(build_inventory_v2_at(ModelInventoryInput {
@@ -521,9 +569,41 @@ mod tests {
     }
 
     #[test]
+    fn ignores_runtime_metadata_without_a_matching_immutable_model_digest() {
+        let models = [sample_model()];
+        for metadata_digest in [None, Some(format!("sha256:{}", "b".repeat(64)))] {
+            let metadata = HashMap::from([(
+                "llama3.2:latest".to_string(),
+                OllamaModelMetadata {
+                    model_digest: metadata_digest,
+                    context_length_tokens: Some(8_192),
+                    capabilities: vec!["chat".into()],
+                },
+            )]);
+            let value = serde_json::to_value(build_inventory_v2(ModelInventoryInput {
+                models: &models,
+                metadata: &metadata,
+                runtime_available: true,
+                runtime_version: None,
+                os_name: "Linux".into(),
+                os_version: None,
+                architecture: "x86_64".into(),
+                cpu_logical_cores: None,
+                memory_total_mb: None,
+                memory_available_mb: None,
+                accelerator: None,
+            }).expect("valid system clock")).unwrap();
+            assert!(value["models"][0]["context"]["max_tokens"].is_null());
+            assert!(value["models"][0]["capabilities"].as_array().unwrap().is_empty());
+            assert_eq!(value["models"][0]["context"]["evidence"]["confidence"], "unknown");
+        }
+    }
+
+    #[test]
     fn only_runtime_reported_capabilities_are_marked_supported() {
         let models = [sample_model()];
         let metadata = HashMap::from([("llama3.2:latest".to_string(), OllamaModelMetadata {
+            model_digest: Some(sample_digest()),
             context_length_tokens: Some(8192),
             capabilities: vec!["chat".into(), "vision".into(), "tools".into()],
         })]);
