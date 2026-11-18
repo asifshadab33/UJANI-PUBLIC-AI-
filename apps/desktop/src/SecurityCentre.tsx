@@ -11,13 +11,27 @@ type ProviderStatus = {
   observed_at_unix_ms: number;
 };
 
+type DefenderStatus = {
+  status: string;
+  source: string;
+  detail: string;
+  antivirus_enabled: boolean | null;
+  real_time_protection_enabled: boolean | null;
+  signature_age_days: number | null;
+  signature_last_updated: string | null;
+  signature_version: string | null;
+  engine_version: string | null;
+  product_version: string | null;
+  service_version: string | null;
+  checked_at_unix_ms: number;
+};
+
 const providers = [
   { id: "windows.antivirus", name: "Windows Security Center — antivirus category", os: "Windows", detail: "Read aggregate antivirus category health. Does not identify the installed product." },
   { id: "windows.firewall", name: "Windows Security Center — firewall category", os: "Windows", detail: "Read aggregate firewall category health. Does not inspect or change firewall rules." }
 ];
 
 const plannedProviders = [
-  { name: "Microsoft Defender details", os: "Windows", detail: "A separate documented Defender status adapter is not implemented yet." },
   { name: "ClamAV / Linux firewall", os: "Linux", detail: "Optional local provider adapters are planned; no Linux service is queried in this build." },
   { name: "macOS / vendor security APIs", os: "macOS", detail: "Supported documented APIs must be implemented and tested before status can be reported." }
 ];
@@ -47,6 +61,9 @@ export default function SecurityCentre() {
   const [localChecksEnabled, setLocalChecksEnabled] = useState(false);
   const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
   const [checking, setChecking] = useState(false);
+  const [defenderStatus, setDefenderStatus] = useState<DefenderStatus | null>(null);
+  const [defenderChecking, setDefenderChecking] = useState(false);
+  const [defenderError, setDefenderError] = useState("");
   const [error, setError] = useState("");
   const chosen = providers.filter((p) => selected.includes(p.id));
   const antivirus = statuses.find((p) => p.provider_id === "windows.antivirus");
@@ -79,6 +96,19 @@ export default function SecurityCentre() {
     setStep(4);
   };
 
+  const checkDefenderStatus = async () => {
+    setDefenderChecking(true);
+    setDefenderError("");
+    try {
+      const result = await invoke<DefenderStatus>("get_defender_status");
+      setDefenderStatus(result);
+    } catch (cause) {
+      setDefenderError(cause instanceof Error ? cause.message : "Defender status could not be verified.");
+    } finally {
+      setDefenderChecking(false);
+    }
+  };
+
   return <section className="security-centre" id="security-centre" tabIndex={-1} aria-labelledby="security-title">
     <div className="section-heading"><div><h2 id="security-title"><Shield size={19}/> Security Centre</h2><p>Review supported security-provider status already available on this device.</p></div><span className="security-prototype-label">READ-ONLY PREVIEW</span></div>
     <div className="security-disclaimer" role="note"><LockKeyhole size={17}/><span><b>UJANI coordinates; it is not an antivirus or firewall.</b> The first native adapter reads Windows Security Center's aggregate antivirus and firewall health only. It does not identify individual products, inspect files, collect threat events, change settings, block traffic, quarantine files or remediate threats. Linux and macOS adapters are not implemented yet.</span></div>
@@ -95,9 +125,28 @@ export default function SecurityCentre() {
         {localChecksEnabled && <div className="security-empty"><b>Local status check enabled for this session</b><small>Results remain on this device. Each query requires a fresh native confirmation; no standing permission is stored.</small></div>}
         {localChecksEnabled && <button type="button" className="model-run" onClick={() => refreshStatus()} disabled={checking}><RefreshCw size={15}/> {checking ? "Checking…" : "Refresh local status"}</button>}
         {!localChecksEnabled && <button type="button" className="model-run" onClick={() => setStep(1)}><Plug size={15}/> Review local status checks <ChevronRight size={15}/></button>}
+        <div className="security-provider">
+          <b>Microsoft Defender detailed status (Windows)</b>
+          <small>Read-only WMI · {defenderStatus ? "Reported" : "Not checked"}</small>
+          <p>Reads Defender's local protection flags, signature age and timestamp, and engine/product/service versions. It does not compare versions with Microsoft's latest release feed.</p>
+          <button type="button" className="model-run" onClick={checkDefenderStatus} disabled={defenderChecking}>
+            <RefreshCw size={15}/> {defenderChecking ? "Checking Defender…" : "Check Defender status"}
+          </button>
+          {defenderError && <p className="security-error" role="alert">{defenderError}</p>}
+          {defenderStatus && <div className="security-provider">
+            <b>{defenderStatus.antivirus_enabled ? "Antivirus enabled" : "Antivirus not enabled"} · {defenderStatus.real_time_protection_enabled ? "Real-time protection enabled" : "Real-time protection not enabled"}</b>
+            <p>Security intelligence age: {defenderStatus.signature_age_days ?? "Not reported"} day(s)</p>
+            <p>Last signature update: {defenderStatus.signature_last_updated ?? "Not reported"}</p>
+            <p>Signature version: {defenderStatus.signature_version ?? "Not reported"}</p>
+            <p>Engine: {defenderStatus.engine_version ?? "Not reported"} · Platform/product: {defenderStatus.product_version ?? "Not reported"} · Service: {defenderStatus.service_version ?? "Not reported"}</p>
+            <small>Checked: {new Date(defenderStatus.checked_at_unix_ms).toLocaleString()} · Source: {defenderStatus.source}</small>
+            <p className="security-muted">{defenderStatus.detail}</p>
+            <p className="security-muted">If the signature age is unexpectedly high or protection is disabled, open Windows Security and check for updates. UJANI does not infer a universal freshness threshold or claim that a version is the latest.</p>
+          </div>}
+        </div>
         {providers.map((p) => {
           const result = statuses.find((item) => item.provider_id === p.id);
-          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <small>Source: {result.source}</small>}</div>;
+          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <small>Source: {result.source}</small></div>;
         })}
         {plannedProviders.map((p) => <div className="security-provider" key={p.name}><b>{p.name}</b><small>{p.os} · Planned, not connected</small><p>{p.detail}</p></div>)}
         {statuses.length > 0 && <p className="security-muted">Last checked: {new Date(Math.max(...statuses.map((s) => s.observed_at_unix_ms))).toLocaleString()}</p>}
