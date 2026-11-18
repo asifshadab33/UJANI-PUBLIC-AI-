@@ -913,7 +913,7 @@ mod defender_tests {
 
     #[test]
     fn security_product_query_slot_prevents_overlapping_workers_and_releases_on_drop() {
-        let slot = AtomicBool::new(false);
+        let slot = std::sync::atomic::AtomicBool::new(false);
         let first = super::SecurityProductQueryGuard::try_acquire(&slot).unwrap();
         assert!(super::SecurityProductQueryGuard::try_acquire(&slot).is_none());
         drop(first);
