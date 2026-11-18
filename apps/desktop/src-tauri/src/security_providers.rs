@@ -206,7 +206,7 @@ pub struct DefenderStatus {
     pub checked_at_unix_ms: u64,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 #[derive(Debug, serde::Deserialize)]
 struct DefenderWmiResult {
     antivirus_enabled: bool,
@@ -236,7 +236,7 @@ if ($null -eq $s) { throw 'Defender status is unavailable' }
 } | ConvertTo-Json -Compress
 "#;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn parse_defender_wmi_result(output: &[u8]) -> Result<DefenderWmiResult, String> {
     let parsed: DefenderWmiResult = serde_json::from_slice(output)
         .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
@@ -339,7 +339,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     Err("Detailed Microsoft Defender status is supported only on Windows.".into())
 }
 
-#[cfg(all(test, target_os = "windows"))]
+#[cfg(test)]
 mod defender_tests {
     use super::parse_defender_wmi_result;
 
