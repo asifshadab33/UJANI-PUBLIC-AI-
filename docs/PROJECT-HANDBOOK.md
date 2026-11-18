@@ -133,6 +133,14 @@ Do not assume that a path in an old handbook still exists: check `git ls-files` 
 
 The authoritative registered command list, conditional feature-gated commands, current command count, command areas and known security gaps are maintained in [Native IPC Command Inventory](NATIVE-COMMAND-AUDIT-INVENTORY.md). The machine-readable security map is [native-command-security-map.json](native-command-security-map.json).
 
+### Open-source completeness and version warning
+
+For the final public release, the Native IPC Command Inventory and this handbook are intended to be the complete public reference for the software we actually ship. The command index must account for every registered command (including platform- or feature-gated commands) and, for each one, explain its purpose, inputs and validation limits, permissions/consent requirements, side effects, outputs and errors, cancellation/timeout behaviour, platform availability, implementation location and relevant tests. It must also link to the supporting operations, scripts, configuration, folder map and troubleshooting guidance needed to understand and maintain the complete application. Anything not shipped must be clearly labelled as experimental, unavailable or planned—not presented as a working command.
+
+UJANI Public AI is open source. Subject to the repository's open-source licence and applicable law, members of the public may inspect, modify, extend, fork and redistribute it. This handbook is documentation, not a restriction on those freedoms.
+
+> **Version warning:** This handbook and command index describe the software version/commit identified by the documentation. If later development changes commands, folders, configuration, permissions, interfaces or behaviour, the technical handbook and command index may also need to change. Always use the documentation corresponding to the exact version being built; do not assume an older handbook describes newer code.
+
 Useful source entry points:
 
 - Tauri command registration: `apps/desktop/src-tauri/src/lib.rs`.
