@@ -891,7 +891,8 @@ mod defender_tests {
 
     #[test]
     fn treats_unavailable_signature_age_sentinel_as_unknown() {
-        let output = VALID.replace("\"antivirus_signature_age_days\": 1", "\"antivirus_signature_age_days\": 4294967295");
+        let output = String::from_utf8_lossy(VALID)
+            .replace("\"antivirus_signature_age_days\": 1", "\"antivirus_signature_age_days\": 4294967295");
         let parsed = super::parse_defender_status_result(output.as_bytes()).unwrap();
         assert_eq!(parsed.antivirus_signature_age_days, None);
     }
@@ -1035,8 +1036,9 @@ mod tests {
     #[tokio::test]
     async fn reports_windows_categories_as_unsupported_on_other_platforms() {
         let result = super::read_only_status(&["windows.firewall".into()]).await.unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].status, "unsupported");
+        assert_eq!(result.products_status, "unsupported");
+        assert!(result.products.is_empty());
+        assert!(result.products_detail.contains("available only on supported Windows"));
     }
 
     #[test]
