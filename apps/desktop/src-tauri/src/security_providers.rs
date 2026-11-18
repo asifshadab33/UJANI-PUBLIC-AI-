@@ -339,6 +339,55 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     Err("Detailed Microsoft Defender status is supported only on Windows.".into())
 }
 
+#[cfg(all(test, target_os = "windows"))]
+mod defender_tests {
+    use super::parse_defender_wmi_result;
+
+    const VALID: &[u8] = br#"{
+      "antivirus_enabled": true,
+      "real_time_protection_enabled": true,
+      "antivirus_signature_age_days": 1,
+      "antivirus_signature_last_updated": "2026-11-18T01:02:03.0000000Z",
+      "antivirus_signature_version": "1.2.3.4",
+      "engine_version": "2.3.4.5",
+      "product_version": "4.5.6.7",
+      "service_version": "8.9.0.1"
+    }"#;
+
+    #[test]
+    fn accepts_bounded_read_only_defender_metadata() {
+        let result = parse_defender_wmi_result(VALID).unwrap();
+        assert!(result.antivirus_enabled);
+        assert!(result.real_time_protection_enabled);
+        assert_eq!(result.antivirus_signature_age_days, 1);
+        assert_eq!(result.antivirus_signature_version, "1.2.3.4");
+    }
+
+    #[test]
+    fn rejects_malformed_and_unbounded_version_metadata() {
+        assert!(parse_defender_wmi_result(b"not-json").is_err());
+        let oversized = VALID
+            .windows(b"1.2.3.4".len())
+            .position(|window| window == b"1.2.3.4")
+            .map(|index| {
+                let mut bytes = VALID.to_vec();
+                bytes.splice(index..index + b"1.2.3.4".len(), vec![b'v'; 65]);
+                bytes
+            })
+            .unwrap();
+        assert!(parse_defender_wmi_result(&oversized).is_err());
+    }
+
+    #[test]
+    fn rejects_control_characters_in_vendor_metadata() {
+        let mut bytes = VALID.to_vec();
+        let index = bytes.windows(b"1.2.3.4".len())
+            .position(|window| window == b"1.2.3.4").unwrap();
+        bytes[index] = 0x01;
+        assert!(parse_defender_wmi_result(&bytes).is_err());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::status_from_windows_result;
