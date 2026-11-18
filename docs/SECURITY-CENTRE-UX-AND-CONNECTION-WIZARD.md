@@ -246,3 +246,20 @@ Not implemented yet:
 - Persistent consent preferences, provider-specific permission management and platform manual acceptance tests.
 
 Important interpretation: Windows Security Center returns aggregate category health. A healthy result is not proof that every protection feature is enabled, current or effective, and it does not identify which product supplied protection. UJANI must retain that limitation in all labels and explanations.
+
+## 15. Implementation status (2026-11-18, draft PR #336)
+
+The existing Windows Security Center aggregate adapter remains unchanged. The current draft adds a separate, user-approved Microsoft Defender detail query:
+
+- Reads the documented `MSFT_MpComputerStatus` WMIv2 class for Defender enabled flags, signature age and timestamp, signature version, engine version, product/platform version and service version.
+- Uses the effective Windows `AVSignatureDue` policy when present; when it is not configured, uses Microsoft's documented seven-day default. Invalid or unsupported policy values remain unknown rather than being treated as current.
+- Shows an explicit **OUT OF DATE** warning when the reported signature age reaches the effective due threshold. A signature age below the due threshold is described only as within policy—not proof that it matches the latest published release.
+- Runs only after a separate native confirmation. The fixed read-only PowerShell query has an eight-second timeout, a 16 KiB output cap, no caller-controlled command text, no network access and no settings changes.
+- Adds bounded response parsing and tests for malformed metadata, invalid thresholds and the out-of-date boundary.
+
+Still not implemented:
+- Authoritative comparison of Defender engine/platform versions against the latest Microsoft release feed.
+- Third-party antivirus identity/details, Windows Firewall profile/update freshness, Linux provider adapters and macOS provider adapters.
+- Enterprise provider integrations for any specific vendor.
+
+The adapter therefore reports local Defender evidence and the OS-configured signature-age policy; it does not claim that all security components or every installed security product are current.
