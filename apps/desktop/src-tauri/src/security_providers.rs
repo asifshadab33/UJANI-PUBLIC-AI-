@@ -457,11 +457,11 @@ mod defender_tests {
     #[test]
     fn missing_defender_freshness_field_stays_unknown() {
         let missing = VALID
-            .windows(b",\\n      \\"defender_signatures_out_of_date\\": false".len())
-            .position(|window| window == b",\\n      \\"defender_signatures_out_of_date\\": false")
+            .windows(b",\n      \"defender_signatures_out_of_date\": false".len())
+            .position(|window| window == b",\n      \"defender_signatures_out_of_date\": false")
             .map(|index| {
                 let mut bytes = VALID.to_vec();
-                bytes.drain(index..index + b",\\n      \\"defender_signatures_out_of_date\\": false".len());
+                bytes.drain(index..index + b",\n      \"defender_signatures_out_of_date\": false".len());
                 bytes
             })
             .unwrap();
