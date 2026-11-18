@@ -741,7 +741,7 @@ fn sanitize_wsc_text(value: &str, max_chars: usize) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn read_windows_security_products(provider_ids: &[String]) -> ProductInventoryResult {
-    use windows::core::{BSTR, IUnknown};
+    use windows::core::{BSTR, IUnknown, Interface};
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
         COINIT_APARTMENTTHREADED,
