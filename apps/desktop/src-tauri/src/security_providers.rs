@@ -279,7 +279,7 @@ struct DefenderStatusResult {
     antivirus_enabled: bool,
     real_time_protection_enabled: bool,
     antivirus_signature_age_days: u32,
-    defender_signatures_out_of_date: bool,
+    defender_signatures_out_of_date: Option<bool>,
     antivirus_signature_last_updated: Option<String>,
     antivirus_signature_version: String,
     engine_version: String,
@@ -296,7 +296,7 @@ if ($null -eq $s) { throw 'Defender status is unavailable' }
   antivirus_enabled = [bool]$s.AntivirusEnabled
   real_time_protection_enabled = [bool]$s.RealTimeProtectionEnabled
   antivirus_signature_age_days = [uint32]$s.AntivirusSignatureAge
-  defender_signatures_out_of_date = [bool]$s.DefenderSignaturesOutOfDate
+  defender_signatures_out_of_date = if ($null -ne $s.PSObject.Properties['DefenderSignaturesOutOfDate'] -and $null -ne $s.PSObject.Properties['DefenderSignaturesOutOfDate'].Value) { [bool]$s.PSObject.Properties['DefenderSignaturesOutOfDate'].Value } else { $null }
   antivirus_signature_last_updated = if ($null -ne $s.AntivirusSignatureLastUpdated) { $s.AntivirusSignatureLastUpdated.ToUniversalTime().ToString('o') } else { $null }
   antivirus_signature_version = [string]$s.AntivirusSignatureVersion
   engine_version = [string]$s.AMEngineVersion
@@ -306,8 +306,12 @@ if ($null -eq $s) { throw 'Defender status is unavailable' }
 "#;
 
 #[cfg(any(target_os = "windows", test))]
-fn signature_update_status(signatures_out_of_date: bool) -> &'static str {
-    if signatures_out_of_date { "out_of_date" } else { "within_policy_age_limit" }
+fn signature_update_status(signatures_out_of_date: Option<bool>) -> &'static str {
+    match signatures_out_of_date {
+        Some(true) => "out_of_date",
+        Some(false) => "within_policy_age_limit",
+        None => "unknown",
+    }
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -439,14 +443,15 @@ mod defender_tests {
         assert!(result.antivirus_enabled);
         assert!(result.real_time_protection_enabled);
         assert_eq!(result.antivirus_signature_age_days, 1);
-        assert!(!result.defender_signatures_out_of_date);
+        assert_eq!(result.defender_signatures_out_of_date, Some(false));
         assert_eq!(result.antivirus_signature_version, "1.2.3.4");
     }
 
     #[test]
     fn maps_defender_reported_signature_freshness() {
-        assert_eq!(super::signature_update_status(false), "within_policy_age_limit");
-        assert_eq!(super::signature_update_status(true), "out_of_date");
+        assert_eq!(super::signature_update_status(Some(false)), "within_policy_age_limit");
+        assert_eq!(super::signature_update_status(Some(true)), "out_of_date");
+        assert_eq!(super::signature_update_status(None), "unknown");
     }
 
     #[test]
