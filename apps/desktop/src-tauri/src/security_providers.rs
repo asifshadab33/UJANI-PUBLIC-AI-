@@ -253,6 +253,15 @@ if ($null -ne $configuredDue) {
 "#;
 
 #[cfg(any(target_os = "windows", test))]
+fn signature_update_status(signature_age_days: u32, due_days: Option<u32>) -> &'static str {
+    match due_days {
+        Some(limit) if signature_age_days >= limit => "out_of_date",
+        Some(_) => "within_policy_age_limit",
+        None => "unknown",
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
 fn parse_defender_wmi_result(output: &[u8]) -> Result<DefenderWmiResult, String> {
     let parsed: DefenderWmiResult = serde_json::from_slice(output)
         .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
@@ -328,11 +337,10 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
             return Err("Windows Defender status is unavailable or the query was denied.".to_string());
         }
         let parsed = parse_defender_wmi_result(&output)?;
-        let signature_update_status = match parsed.signature_due_days {
-            Some(due_days) if parsed.antivirus_signature_age_days >= due_days => "out_of_date",
-            Some(_) => "within_policy_age_limit",
-            None => "unknown",
-        };
+        let signature_update_status = signature_update_status(
+            parsed.antivirus_signature_age_days,
+            parsed.signature_due_days,
+        );
         Ok(DefenderStatus {
             status: "reported".into(),
             source: "Microsoft Defender MSFT_MpComputerStatus (read-only WMI)".into(),
@@ -389,6 +397,14 @@ mod defender_tests {
         assert_eq!(result.antivirus_signature_age_days, 1);
         assert_eq!(result.signature_due_days, Some(7));
         assert_eq!(result.antivirus_signature_version, "1.2.3.4");
+    }
+
+    #[test]
+    fn flags_signatures_at_or_beyond_the_effective_due_threshold() {
+        assert_eq!(super::signature_update_status(6, Some(7)), "within_policy_age_limit");
+        assert_eq!(super::signature_update_status(7, Some(7)), "out_of_date");
+        assert_eq!(super::signature_update_status(65535, Some(7)), "out_of_date");
+        assert_eq!(super::signature_update_status(1, None), "unknown");
     }
 
     #[test]
