@@ -1,8 +1,11 @@
 //! Read-only operating-system security provider status adapters.
 //!
-//! The first adapter reads Windows Security Center's aggregate antivirus and
-//! firewall health only. It does not identify individual products, inspect
-//! files, collect threat events, or change security settings.
+//! The Windows adapter reads aggregate antivirus/firewall health, bounded
+//! product state, and Defender-reported signature metadata. It does not scan
+//! files, collect threat events, install updates, or change security settings.
+//! Windows Security Center does not expose firewall signature freshness, so
+//! firewall update state remains explicitly unknown unless another trusted
+//! provider reports it.
 
 use serde::Serialize;
 #[cfg(any(target_os = "windows", test))]
