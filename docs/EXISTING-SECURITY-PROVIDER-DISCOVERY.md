@@ -33,6 +33,17 @@ A provider's existence does not prove that every capability is enabled. For exam
 - If unsupported or unavailable: say "could not verify", not "unprotected".
 - Offer free and paid product information only as optional user/admin guidance. Never auto-download, auto-install, elevate privileges, or accept affiliate-driven ranking.
 
+## Update-freshness warning semantics (Windows adapter)
+
+The Windows implementation deliberately separates aggregate category health, registered-product evidence, and detailed Microsoft Defender evidence:
+
+- Windows Security Center product `SignatureStatus` and antivirus update substatus are provider-reported. An explicit out-of-date/action-needed result is an alert; an active product with no freshness evidence remains unknown.
+- A provider-reported up-to-date signature state is not proof that the product has the latest engine, platform, or definition release. Third-party vendor freshness is not independently compared with a vendor release catalogue.
+- The separate, one-time Defender query reads `Get-MpComputerStatus` fields for protection flags, signature age/timestamp, and provider versions. It does not contact Microsoft, compare against the latest release, scan files, change settings, or remediate.
+- Windows Security Center does not expose firewall signature freshness. Firewall software/rule-feed update posture remains unknown unless the selected vendor supplies a separately verified integration; users should check the installed firewall's own console and Windows Update.
+- The UI warns that current antivirus and firewall updates are a security requirement. When evidence is stale, outdated, or unknown, it directs the user to the existing OS/vendor console or administrator. UJANI never silently updates or replaces protection software.
+- This implementation is Windows-only. Linux/macOS and unsupported Windows configurations must say that status cannot be verified; they must not be represented as healthy or unprotected.
+
 ## Integration phases
 
 - P1: normalized evidence contract and conservative posture assessment (this change).
