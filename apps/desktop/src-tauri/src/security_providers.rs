@@ -276,15 +276,15 @@ pub struct DefenderStatus {
 #[cfg(any(target_os = "windows", test))]
 #[derive(Debug, serde::Deserialize)]
 struct DefenderStatusResult {
-    antivirus_enabled: bool,
-    real_time_protection_enabled: bool,
-    antivirus_signature_age_days: u32,
+    antivirus_enabled: Option<bool>,
+    real_time_protection_enabled: Option<bool>,
+    antivirus_signature_age_days: Option<u32>,
     defender_signatures_out_of_date: Option<bool>,
     antivirus_signature_last_updated: Option<String>,
-    antivirus_signature_version: String,
-    engine_version: String,
-    product_version: String,
-    service_version: String,
+    antivirus_signature_version: Option<String>,
+    engine_version: Option<String>,
+    product_version: Option<String>,
+    service_version: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -293,15 +293,15 @@ $ProgressPreference = 'SilentlyContinue'
 $s = Get-MpComputerStatus -ErrorAction Stop
 if ($null -eq $s) { throw 'Defender status is unavailable' }
 [pscustomobject]@{
-  antivirus_enabled = [bool]$s.AntivirusEnabled
-  real_time_protection_enabled = [bool]$s.RealTimeProtectionEnabled
-  antivirus_signature_age_days = [uint32]$s.AntivirusSignatureAge
+  antivirus_enabled = if ($null -ne $s.PSObject.Properties['AntivirusEnabled'] -and $null -ne $s.AntivirusEnabled) { [bool]$s.AntivirusEnabled } else { $null }
+  real_time_protection_enabled = if ($null -ne $s.PSObject.Properties['RealTimeProtectionEnabled'] -and $null -ne $s.RealTimeProtectionEnabled) { [bool]$s.RealTimeProtectionEnabled } else { $null }
+  antivirus_signature_age_days = if ($null -ne $s.PSObject.Properties['AntivirusSignatureAge'] -and $null -ne $s.AntivirusSignatureAge) { [uint32]$s.AntivirusSignatureAge } else { $null }
   defender_signatures_out_of_date = if ($null -ne $s.PSObject.Properties['DefenderSignaturesOutOfDate'] -and $null -ne $s.PSObject.Properties['DefenderSignaturesOutOfDate'].Value) { [bool]$s.PSObject.Properties['DefenderSignaturesOutOfDate'].Value } else { $null }
   antivirus_signature_last_updated = if ($null -ne $s.AntivirusSignatureLastUpdated) { $s.AntivirusSignatureLastUpdated.ToUniversalTime().ToString('o') } else { $null }
-  antivirus_signature_version = [string]$s.AntivirusSignatureVersion
-  engine_version = [string]$s.AMEngineVersion
-  product_version = [string]$s.AMProductVersion
-  service_version = [string]$s.AMServiceVersion
+  antivirus_signature_version = if ($null -ne $s.PSObject.Properties['AntivirusSignatureVersion'] -and $null -ne $s.AntivirusSignatureVersion) { [string]$s.AntivirusSignatureVersion } else { $null }
+  engine_version = if ($null -ne $s.PSObject.Properties['AMEngineVersion'] -and $null -ne $s.AMEngineVersion) { [string]$s.AMEngineVersion } else { $null }
+  product_version = if ($null -ne $s.PSObject.Properties['AMProductVersion'] -and $null -ne $s.AMProductVersion) { [string]$s.AMProductVersion } else { $null }
+  service_version = if ($null -ne $s.PSObject.Properties['AMServiceVersion'] -and $null -ne $s.AMServiceVersion) { [string]$s.AMServiceVersion } else { $null }
 } | ConvertTo-Json -Compress
 "#;
 
@@ -319,11 +319,11 @@ fn parse_defender_status_result(output: &[u8]) -> Result<DefenderStatusResult, S
     let parsed: DefenderStatusResult = serde_json::from_slice(output)
         .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
     for value in [
-        &parsed.antivirus_signature_version,
-        &parsed.engine_version,
-        &parsed.product_version,
-        &parsed.service_version,
-    ] {
+        parsed.antivirus_signature_version.as_ref(),
+        parsed.engine_version.as_ref(),
+        parsed.product_version.as_ref(),
+        parsed.service_version.as_ref(),
+    ].into_iter().flatten() {
         if value.len() > 64 || value.chars().any(char::is_control) {
             return Err("Windows Defender returned invalid version metadata.".into());
         }
@@ -397,15 +397,15 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
             status: "reported".into(),
             source: "Microsoft Defender Get-MpComputerStatus (read-only)".into(),
             detail: "Local Defender status was read. Signature age and versions are provider-reported; comparison with the latest Microsoft release has not been performed.".into(),
-            antivirus_enabled: Some(parsed.antivirus_enabled),
-            real_time_protection_enabled: Some(parsed.real_time_protection_enabled),
-            signature_age_days: Some(parsed.antivirus_signature_age_days),
+            antivirus_enabled: parsed.antivirus_enabled,
+            real_time_protection_enabled: parsed.real_time_protection_enabled,
+            signature_age_days: parsed.antivirus_signature_age_days,
             signature_update_status: signature_update_status.into(),
             signature_last_updated: parsed.antivirus_signature_last_updated,
-            signature_version: Some(parsed.antivirus_signature_version),
-            engine_version: Some(parsed.engine_version),
-            product_version: Some(parsed.product_version),
-            service_version: Some(parsed.service_version),
+            signature_version: parsed.antivirus_signature_version,
+            engine_version: parsed.engine_version,
+            product_version: parsed.product_version,
+            service_version: parsed.service_version,
             checked_at_unix_ms: observed_at_unix_ms(),
         })
     };
