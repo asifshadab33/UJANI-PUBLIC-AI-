@@ -137,6 +137,7 @@ export default function SecurityCentre() {
           {defenderError && <p className="security-error" role="alert">{defenderError}</p>}
           {defenderStatus && <div className="security-provider">
             <b>{defenderStatus.antivirus_enabled ? "Antivirus enabled" : "Antivirus not enabled"} · {defenderStatus.real_time_protection_enabled ? "Real-time protection enabled" : "Real-time protection not enabled"}</b>
+            {(defenderStatus.antivirus_enabled === false || defenderStatus.real_time_protection_enabled === false) && <p className="security-error" role="alert"><b>Defender protection needs attention.</b> Microsoft Defender reports antivirus or real-time protection disabled. This is Defender-specific evidence only; check Windows Security Center to confirm whether another approved antivirus provider is active. If no other protection is active, the device may be at risk.</p>}
             <p>Security intelligence age: {defenderStatus.signature_age_days ?? "Not reported"} day(s)</p>
             <p>Windows signature due threshold: {defenderStatus.signature_due_days ?? "Not verifiable"} day(s)</p>
             {defenderStatus.signature_update_status === "out_of_date" && <p className="security-error" role="alert"><b>Security intelligence is OUT OF DATE.</b> The configured Windows due threshold has been reached. Open Windows Security and update protection immediately, or contact your administrator.</p>}
