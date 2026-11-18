@@ -20,7 +20,6 @@ pub struct SecurityProviderStatus {
     pub product_identity_known: bool,
 }
 
-#[cfg(any(target_os = "windows", test))]
 fn assess_provider_status(
     provider_id: &str,
     status: &str,
@@ -227,30 +226,26 @@ pub fn read_only_status(
     {
         Ok(requested_provider_ids
             .iter()
-            .map(|provider_id| SecurityProviderStatus {
-                provider_id: provider_id.clone(),
-                label: if provider_id == "windows.antivirus" {
-                    "Windows Security Center — antivirus category".into()
-                } else {
-                    "Windows Security Center — firewall category".into()
-                },
-                status: "unsupported".into(),
-                source: "Windows Security Center API (Windows only)".into(),
-                detail: "This provider adapter is available only on Windows.".into(),
-                observed_at_unix_ms: observed_at_unix_ms(),
-                assessment: assess_provider_status(
-                    provider_id,
-                    "unsupported",
-                    "Windows Security Center API (Windows only)",
-                    observed_at_unix_ms(),
-                ).0,
-                recommendation: assess_provider_status(
-                    provider_id,
-                    "unsupported",
-                    "Windows Security Center API (Windows only)",
-                    observed_at_unix_ms(),
-                ).1,
-                product_identity_known: false,
+            .map(|provider_id| {
+                let observed_at = observed_at_unix_ms();
+                let source = "Windows Security Center API (Windows only)";
+                let (assessment, recommendation, product_identity_known) =
+                    assess_provider_status(provider_id, "unsupported", source, observed_at);
+                SecurityProviderStatus {
+                    provider_id: provider_id.clone(),
+                    label: if provider_id == "windows.antivirus" {
+                        "Windows Security Center — antivirus category".into()
+                    } else {
+                        "Windows Security Center — firewall category".into()
+                    },
+                    status: "unsupported".into(),
+                    source: source.into(),
+                    detail: "This provider adapter is available only on Windows.".into(),
+                    observed_at_unix_ms: observed_at,
+                    assessment,
+                    recommendation,
+                    product_identity_known,
+                }
             })
             .collect())
     }
