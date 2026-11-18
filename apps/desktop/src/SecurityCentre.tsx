@@ -156,7 +156,7 @@ export default function SecurityCentre() {
         </div>
         {providers.map((p) => {
           const result = statuses.find((item) => item.provider_id === p.id);
-          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <><small>Assessment: {result.assessment.replaceAll("_", " ")} · Product identity {result.product_identity_known ? "known" : "not exposed by aggregate API"}</small><p>{result.recommendation}</p><small>Source: {result.source}</small></>}</div>;
+          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <><small>Assessment: {result.assessment.replace(/_/g, " ")} · Product identity {result.product_identity_known ? "known" : "not exposed by aggregate API"}</small><p>{result.recommendation}</p><small>Source: {result.source}</small></>}</div>;
         })}
         {plannedProviders.map((p) => <div className="security-provider" key={p.name}><b>{p.name}</b><small>{p.os} · Planned, not connected</small><p>{p.detail}</p></div>)}
         {statuses.length > 0 && <p className="security-muted">Last checked: {new Date(Math.max(...statuses.map((s) => s.observed_at_unix_ms))).toLocaleString()}</p>}
