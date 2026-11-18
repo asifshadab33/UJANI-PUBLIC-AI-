@@ -444,7 +444,7 @@ mod defender_tests {
     }
 
     #[test]
-    fn flags_signatures_at_or_beyond_the_effective_due_threshold() {
+    fn maps_defender_reported_signature_freshness() {
         assert_eq!(super::signature_update_status(false), "within_policy_age_limit");
         assert_eq!(super::signature_update_status(true), "out_of_date");
     }
