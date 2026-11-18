@@ -237,8 +237,29 @@ if ($null -eq $s) { throw 'Defender status is unavailable' }
 "#;
 
 #[cfg(target_os = "windows")]
+fn parse_defender_wmi_result(output: &[u8]) -> Result<DefenderWmiResult, String> {
+    let parsed: DefenderWmiResult = serde_json::from_slice(output)
+        .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
+    for value in [
+        &parsed.antivirus_signature_version,
+        &parsed.engine_version,
+        &parsed.product_version,
+        &parsed.service_version,
+    ] {
+        if value.len() > 64 || value.chars().any(char::is_control) {
+            return Err("Windows Defender returned invalid version metadata.".into());
+        }
+    }
+    if parsed.antivirus_signature_last_updated.as_ref().is_some_and(|value| {
+        value.len() > 40 || value.chars().any(char::is_control)
+    }) {
+        return Err("Windows Defender returned an invalid signature timestamp.".into());
+    }
+    Ok(parsed)
+}
+
+#[cfg(target_os = "windows")]
 pub async fn read_defender_status() -> Result<DefenderStatus, String> {
-    use std::os::windows::process::CommandExt;
     use std::process::Stdio;
     use tokio::io::AsyncReadExt;
     use tokio::process::Command;
@@ -287,23 +308,7 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
         if !exit.success() {
             return Err("Windows Defender status is unavailable or the query was denied.".to_string());
         }
-        let parsed: DefenderWmiResult = serde_json::from_slice(&output)
-            .map_err(|_| "Windows Defender returned an invalid status response.".to_string())?;
-        for value in [
-            &parsed.antivirus_signature_version,
-            &parsed.engine_version,
-            &parsed.product_version,
-            &parsed.service_version,
-        ] {
-            if value.len() > 64 || value.chars().any(char::is_control) {
-                return Err("Windows Defender returned invalid version metadata.".into());
-            }
-        }
-        if parsed.antivirus_signature_last_updated.as_ref().is_some_and(|value| {
-            value.len() > 40 || value.chars().any(char::is_control)
-        }) {
-            return Err("Windows Defender returned an invalid signature timestamp.".into());
-        }
+        let parsed = parse_defender_wmi_result(&output)?;
         Ok(DefenderStatus {
             status: "reported".into(),
             source: "Microsoft Defender MSFT_MpComputerStatus (read-only WMI)".into(),
