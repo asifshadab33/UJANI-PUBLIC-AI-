@@ -251,10 +251,10 @@ Important interpretation: Windows Security Center returns aggregate category hea
 
 The existing Windows Security Center aggregate adapter remains unchanged. The current draft adds a separate, user-approved Microsoft Defender detail query:
 
-- Reads the documented `MSFT_MpComputerStatus` WMIv2 class for Defender enabled flags, signature age and timestamp, signature version, engine version, product/platform version and service version.
-- Uses the effective Windows `AVSignatureDue` policy when present; when it is not configured, uses Microsoft's documented seven-day default. Invalid or unsupported policy values remain unknown rather than being treated as current.
+- Uses the documented `Get-MpComputerStatus` Defender cmdlet to read local Defender enabled flags, signature age and timestamp, signature version, engine version, product/platform version, service version and Defender's own `DefenderSignaturesOutOfDate` result.
+- Uses Defender's own out-of-date result, which reflects the effective Windows policy. Microsoft documents a seven-day default for the AV signature due policy, with administrator configuration supported. If the status field is unavailable, freshness remains unknown.
 - Shows an explicit **OUT OF DATE** warning when the reported signature age reaches the effective due threshold. A signature age below the due threshold is described only as within policy—not proof that it matches the latest published release.
-- Runs only after a separate native confirmation. The fixed read-only PowerShell query has an eight-second timeout, a 16 KiB output cap, no caller-controlled command text, no network access and no settings changes.
+- Runs only after a separate native confirmation. The fixed read-only PowerShell cmdlet call has an eight-second timeout, a 16 KiB output cap, no caller-controlled command text, no network access and no settings changes.
 - Adds bounded response parsing and tests for malformed metadata, invalid thresholds and the out-of-date boundary.
 
 Still not implemented:
