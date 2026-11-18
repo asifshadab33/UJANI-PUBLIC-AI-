@@ -108,7 +108,7 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
         "The selected model '{model}' is not installed in local Ollama. Refresh the model list or download it before running this task."
     ))?;
     let metadata = ollama::inspect_model_metadata(model).await?;
-    validate_local_model_metadata(model, selected.size, &metadata, available_memory_mb)?;
+    validate_local_model_metadata(selected, &metadata, available_memory_mb)?;
     Ok(())
 }
 
@@ -123,11 +123,18 @@ fn find_installed_model<'a>(
 /// Apply fail-closed checks to Ollama-reported metadata. This is not cryptographic
 /// model attestation; the memory-fit estimate is advisory and cannot guarantee runtime fit.
 fn validate_local_model_metadata(
-    model: &str,
-    size_bytes: u64,
+    selected: &ollama::OllamaModel,
     metadata: &ollama::OllamaModelMetadata,
     available_memory_mb: u64,
 ) -> Result<(), String> {
+    if !ollama::metadata_matches_model_identity(selected, metadata) {
+        return Err(format!(
+            "Local model '{}' metadata did not include the same immutable digest as the installed model. Refresh the model inventory; no inference was started.",
+            selected.name
+        ));
+    }
+    let model = selected.name.as_str();
+    let size_bytes = selected.size;
     if !metadata.capabilities.iter().any(|capability| capability == "chat") {
         return Err(format!(
             "Local model '{model}' does not report chat capability in Ollama metadata. UJANI will not infer capability from its name."
@@ -988,19 +995,61 @@ mod pdf_worker_seccomp_tests {
 #[cfg(test)]
 mod local_model_evidence_tests {
     use super::validate_local_model_metadata;
-    use crate::ollama::OllamaModelMetadata;
+    use crate::ollama::{OllamaModel, OllamaModelMetadata};
+
+    const TEST_MODEL_DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn model(name: &str, size: u64) -> OllamaModel {
+        OllamaModel {
+            name: name.into(),
+            size,
+            digest: Some(TEST_MODEL_DIGEST.into()),
+            details: None,
+        }
+    }
 
     fn metadata(capabilities: &[&str], context: Option<u64>) -> OllamaModelMetadata {
         OllamaModelMetadata {
-            model_digest: None,
+            model_digest: Some(TEST_MODEL_DIGEST.into()),
             context_length_tokens: context,
             capabilities: capabilities.iter().map(|value| (*value).to_string()).collect(),
         }
     }
 
+    fn validate(
+        name: &str,
+        size: u64,
+        metadata: &OllamaModelMetadata,
+        available_memory_mb: u64,
+    ) -> Result<(), String> {
+        validate_local_model_metadata(&model(name, size), metadata, available_memory_mb)
+    }
+
+    #[test]
+    fn rejects_missing_or_mismatched_immutable_model_digest() {
+        let selected = model("small-chat", 512 * 1024 * 1024);
+        let mut missing = metadata(&["chat"], Some(8192));
+        missing.model_digest = None;
+        assert!(validate_local_model_metadata(&selected, &missing, 4096)
+            .unwrap_err()
+            .contains("immutable digest"));
+
+        let mut mismatched = metadata(&["chat"], Some(8192));
+        mismatched.model_digest = Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+        assert!(validate_local_model_metadata(&selected, &mismatched, 4096)
+            .unwrap_err()
+            .contains("immutable digest"));
+
+        let mut unversioned = selected;
+        unversioned.digest = None;
+        assert!(validate_local_model_metadata(&unversioned, &metadata(&["chat"], Some(8192)), 4096)
+            .unwrap_err()
+            .contains("immutable digest"));
+    }
+
     #[test]
     fn accepts_runtime_reported_chat_model_that_fits_context_and_memory() {
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "small-chat",
             512 * 1024 * 1024,
             &metadata(&["chat"], Some(8192)),
@@ -1010,13 +1059,13 @@ mod local_model_evidence_tests {
 
     #[test]
     fn rejects_unknown_or_non_chat_capability() {
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "unknown",
             512 * 1024 * 1024,
             &metadata(&["unknown"], Some(8192)),
             4096,
         ).is_err());
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "no-chat",
             512 * 1024 * 1024,
             &metadata(&["embeddings"], Some(8192)),
@@ -1026,13 +1075,13 @@ mod local_model_evidence_tests {
 
     #[test]
     fn rejects_unknown_or_insufficient_context_capacity() {
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "unknown-context",
             512 * 1024 * 1024,
             &metadata(&["chat"], None),
             4096,
         ).is_err());
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "short-context",
             512 * 1024 * 1024,
             &metadata(&["chat"], Some(2048)),
@@ -1042,19 +1091,19 @@ mod local_model_evidence_tests {
 
     #[test]
     fn rejects_unknown_size_or_insufficient_available_memory() {
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "unknown-size",
             0,
             &metadata(&["chat"], Some(8192)),
             4096,
         ).is_err());
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "too-large",
             8 * 1024 * 1024 * 1024,
             &metadata(&["chat"], Some(8192)),
             4096,
         ).is_err());
-        assert!(validate_local_model_metadata(
+        assert!(validate(
             "unknown-ram",
             512 * 1024 * 1024,
             &metadata(&["chat"], Some(8192)),
