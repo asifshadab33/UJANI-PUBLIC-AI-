@@ -82,11 +82,12 @@ export default function SecurityCentre() {
   return <section className="security-centre" id="security-centre" tabIndex={-1} aria-labelledby="security-title">
     <div className="section-heading"><div><h2 id="security-title"><Shield size={19}/> Security Centre</h2><p>Review supported security-provider status already available on this device.</p></div><span className="security-prototype-label">READ-ONLY PREVIEW</span></div>
     <div className="security-disclaimer" role="note"><LockKeyhole size={17}/><span><b>UJANI coordinates; it is not an antivirus or firewall.</b> The first native adapter reads Windows Security Center's aggregate antivirus and firewall health only. It does not identify individual products, inspect files, collect threat events, change settings, block traffic, quarantine files or remediate threats. Linux and macOS adapters are not implemented yet.</span></div>
+    <div className="security-disclaimer" role="alert"><AlertTriangle size={17}/><span><b>Important: latest protection updates must be installed.</b> This build cannot verify whether an installed antivirus has the latest security intelligence/virus definitions, engine and platform updates, or whether a firewall has current software, signatures and rule feeds. An installed but outdated product is a security risk. Open the existing product or operating-system security console and check for updates; if it reports out of date, update it promptly or contact your administrator. UJANI will not silently install, update, replace or reconfigure security software.</span></div>
     <div className="security-metrics">
       <article className="security-metric"><ShieldCheck/><small>ANTIVIRUS CATEGORY</small><b>{statusLabel(antivirus?.status)}</b><span>{statusDetail(antivirus)}</span></article>
       <article className="security-metric"><Shield/><small>FIREWALL CATEGORY</small><b>{statusLabel(firewall?.status)}</b><span>{statusDetail(firewall)}</span></article>
       <article className="security-metric"><ShieldAlert/><small>THREAT ALERTS</small><b>Not collected</b><span>No threat-event feed is connected</span></article>
-      <article className="security-metric"><AlertTriangle/><small>UPDATES & SCANS</small><b>Unknown</b><span>Update and scan freshness are not provided by this aggregate API</span></article>
+      <article className="security-metric"><AlertTriangle/><small>UPDATE FRESHNESS</small><b>Not verified</b><span>Latest antivirus definitions, engine/platform and firewall updates cannot be confirmed by the aggregate API. Check the installed product directly.</span></article>
     </div>
     <div className="security-workspace">
       <div className="security-panel"><h3>Local provider status</h3><p>Nothing is queried until you explicitly enable a local status check.</p>
@@ -106,6 +107,7 @@ export default function SecurityCentre() {
         <p><b>Local-only by default</b><br/>The Windows API result is returned to this application and is not uploaded or shared.</p>
         <p><b>Read-only first</b><br/>No firewall changes, quarantine, process termination or automatic remediation.</p>
         <p><b>Honest status</b><br/>Missing, stale, unsupported or conflicting information is never shown as protected.</p>
+        <p><b>Update freshness is a separate security check</b><br/>A healthy category does not prove that virus definitions, antivirus engine/platform or firewall software and signature/rule feeds are current. This adapter cannot compare installed versions with the latest vendor releases; users must verify updates in the existing product or OS console.</p>
         <p><b>Aggregate status only</b><br/>Windows Security Center reports category health, not the name or full capabilities of each installed security product.</p>
       </div>
     </div>
