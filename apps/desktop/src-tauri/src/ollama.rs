@@ -45,8 +45,23 @@ pub struct OllamaModelDetails {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OllamaModelMetadata {
+    /// Digest of the exact model version associated with this metadata observation.
+    /// The current adapter leaves this unset unless /api/show provides a digest.
+    pub model_digest: Option<String>,
     pub context_length_tokens: Option<u64>,
     pub capabilities: Vec<String>,
+}
+
+/// Metadata may be joined to an installed model only when both observations carry
+/// the same immutable digest. A matching mutable tag name is not sufficient.
+pub(crate) fn metadata_matches_model_identity(
+    model: &OllamaModel,
+    metadata: &OllamaModelMetadata,
+) -> bool {
+    matches!(
+        (model.digest.as_deref(), metadata.model_digest.as_deref()),
+        (Some(model_digest), Some(metadata_digest)) if model_digest == metadata_digest
+    )
 }
 
 #[derive(Deserialize)]
@@ -67,6 +82,8 @@ struct ShowModelRequest<'a> {
 
 #[derive(Deserialize, Default)]
 struct ShowModelResponse {
+    #[serde(default)]
+    digest: Option<String>,
     #[serde(default)]
     capabilities: Vec<String>,
     #[serde(default)]
@@ -266,6 +283,7 @@ pub async fn inspect_model_metadata(model: &str) -> Result<OllamaModelMetadata, 
         .map_err(|error| format!("Could not inspect local Ollama model metadata: {error}"))?;
     let details: ShowModelResponse = parse_limited(response).await?;
     Ok(OllamaModelMetadata {
+        model_digest: details.digest,
         context_length_tokens: context_length_tokens(&details.model_info),
         capabilities: canonical_model_capabilities(&details.capabilities),
     })
