@@ -455,6 +455,22 @@ mod defender_tests {
     }
 
     #[test]
+    fn missing_defender_freshness_field_stays_unknown() {
+        let missing = VALID
+            .windows(b",\\n      \\"defender_signatures_out_of_date\\": false".len())
+            .position(|window| window == b",\\n      \\"defender_signatures_out_of_date\\": false")
+            .map(|index| {
+                let mut bytes = VALID.to_vec();
+                bytes.drain(index..index + b",\\n      \\"defender_signatures_out_of_date\\": false".len());
+                bytes
+            })
+            .unwrap();
+        let parsed = super::parse_defender_status_result(&missing).unwrap();
+        assert_eq!(parsed.defender_signatures_out_of_date, None);
+        assert_eq!(super::signature_update_status(parsed.defender_signatures_out_of_date), "unknown");
+    }
+
+    #[test]
     fn rejects_malformed_and_unbounded_version_metadata() {
         assert!(parse_defender_status_result(b"not-json").is_err());
         let oversized = VALID
