@@ -23,6 +23,7 @@ REMINDER_STORE = ROOT / "apps/desktop/src-tauri/src/reminder_store.rs"
 HISTORY_SOURCE = ROOT / "apps/desktop/src-tauri/src/history.rs"
 CACHE_SOURCE = ROOT / "apps/desktop/src-tauri/src/search_cache.rs"
 SECURITY_STORE_SOURCE = ROOT / "apps/desktop/src-tauri/src/security_store.rs"
+SECURITY_PROVIDERS_SOURCE = ROOT / "apps/desktop/src-tauri/src/security_providers.rs"
 CORE_FILE_PROCESSOR = ROOT / "crates/ujani-core/src/file_processor.rs"
 CORE_IMAGE_PROCESSOR = ROOT / "crates/ujani-core/src/image_processor.rs"
 TASK_ENGINE = ROOT / "apps/desktop/src-tauri/src/task_engine.rs"
@@ -258,6 +259,33 @@ def missing_document_ipc_preflight_guards(source: str) -> list[str]:
         positions = [body.find(token) for token in ordered_tokens]
         if any(position < 0 for position in positions) or positions != sorted(positions):
             missing.append(command)
+    return missing
+
+
+def missing_defender_status_guards(source: str, adapter_source: str) -> list[str]:
+    """Require one-time native consent and bounded read-only Defender collection."""
+    missing = []
+    try:
+        body = rust_function_body(source, "get_defender_status")
+    except ValueError:
+        return ["get_defender_status"]
+    ordered = (
+        "native_consent::confirm_native",
+        "Duration::from_secs(120)",
+        "security_providers::read_defender_status().await",
+    )
+    positions = [body.find(token) for token in ordered]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        missing.append("get_defender_status consent/order")
+    for token in (
+        "MAX_OUTPUT_BYTES: usize = 16 * 1024",
+        "QUERY_TIMEOUT: Duration = Duration::from_secs(8)",
+        ".kill_on_drop(true)",
+        "Get-CimInstance -Namespace 'root/Microsoft/Windows/Defender'",
+        "Get-ItemPropertyValue",
+    ):
+        if token not in adapter_source:
+            missing.append("Defender adapter " + token)
     return missing
 
 
@@ -621,6 +649,14 @@ def main() -> int:
         errors,
         "shared document IPC preflight validators",
     )
+
+    defender_adapter_source = SECURITY_PROVIDERS_SOURCE.read_text(encoding="utf-8")
+    missing_defender_guards = missing_defender_status_guards(source, defender_adapter_source)
+    if missing_defender_guards:
+        errors.append(
+            "Defender status: native confirmation and bounded read-only WMI query required in "
+            + ", ".join(missing_defender_guards)
+        )
 
     missing_cloud_guards = missing_cloud_transfer_preflight_guards(source)
     if missing_cloud_guards:
