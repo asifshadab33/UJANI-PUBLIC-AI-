@@ -425,11 +425,11 @@ mod defender_tests {
     #[test]
     fn rejects_invalid_effective_signature_due_threshold() {
         let invalid = VALID
-            .windows(b"\\"signature_due_days\\": 7".len())
-            .position(|window| window == b"\\"signature_due_days\\": 7")
+            .windows(b"\"signature_due_days\": 7".len())
+            .position(|window| window == b"\"signature_due_days\": 7")
             .map(|index| {
                 let mut bytes = VALID.to_vec();
-                bytes.splice(index..index + b"\\"signature_due_days\\": 7".len(), b"\\"signature_due_days\\": 0".to_vec());
+                bytes.splice(index..index + b"\"signature_due_days\": 7".len(), b"\"signature_due_days\": 0".to_vec());
                 bytes
             })
             .unwrap();
