@@ -261,6 +261,28 @@ def missing_document_ipc_preflight_guards(source: str) -> list[str]:
     return missing
 
 
+def missing_chat_ipc_preflight_guards(source: str) -> list[str]:
+    """Reject invalid chat input before task ownership, runtime probes or reservations."""
+    try:
+        body = rust_function_body(source, "execute_local_ai_task")
+    except ValueError:
+        return ["execute_local_ai_task"]
+
+    ordered = (
+        "ollama::validate_chat_input",
+        "register_active_task",
+        "get_capability_snapshot_for_task",
+        "ollama::list_models",
+        "MemoryReservation::acquire_queued",
+        "reserve_execution_receipt_slot",
+    )
+    executable_body = strip_rust_noncode(body)
+    positions = [executable_body.find(token) for token in ordered]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        return ["execute_local_ai_task"]
+    return []
+
+
 def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
     """Require classification, transfer policy and native approval before cloud side effects."""
     try:
@@ -641,6 +663,13 @@ def main() -> int:
         errors.append(
             "selected-folder import: task and live capability preflight must precede the native picker "
             "and bounded traversal in " + ", ".join(missing_folder_guards)
+        )
+
+    missing_chat_preflight = missing_chat_ipc_preflight_guards(source)
+    if missing_chat_preflight:
+        errors.append(
+            "local chat IPC: input validation must precede task registration, runtime discovery "
+            "and resource/receipt reservations in " + ", ".join(missing_chat_preflight)
         )
 
     # History IPC must reject oversized caller content before reserving a receipt.

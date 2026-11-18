@@ -10,6 +10,7 @@ from check_native_command_security_map import (
     missing_history_listing_receipt_guards,
     missing_history_key_recovery_guards,
     registered_commands,
+    missing_chat_ipc_preflight_guards,
     missing_cloud_transfer_preflight_guards,
     missing_folder_import_preflight_guards,
     missing_local_state_mutation_receipt_guards,
@@ -66,6 +67,39 @@ class NativeCommandSideEffectOrderingTests(unittest.TestCase):
         """
         self.assertEqual(missing_folder_import_preflight_guards(source), ["process_selected_folder"])
 
+
+
+class LocalChatPreflightOrderingTests(unittest.TestCase):
+    def test_chat_input_is_rejected_before_task_registration_and_local_side_effects(self):
+        source = """
+        async fn execute_local_ai_task() {
+            ollama::validate_chat_input(&model, &prompt)?;
+            register_active_task();
+            get_capability_snapshot_for_task().await;
+            ollama::list_models();
+            MemoryReservation::acquire_queued().await;
+            reserve_execution_receipt_slot();
+        }
+        """
+        self.assertEqual(missing_chat_ipc_preflight_guards(source), [])
+        late_validation = source.replace(
+            "ollama::validate_chat_input(&model, &prompt)?;\n            register_active_task();",
+            "register_active_task();\n            ollama::validate_chat_input(&model, &prompt)?;",
+        )
+        self.assertEqual(missing_chat_ipc_preflight_guards(late_validation), ["execute_local_ai_task"])
+
+    def test_chat_validator_in_comment_cannot_satisfy_executable_order(self):
+        source = """
+        async fn execute_local_ai_task() {
+            // ollama::validate_chat_input(&model, &prompt)?;
+            register_active_task();
+            get_capability_snapshot_for_task().await;
+            ollama::list_models();
+            MemoryReservation::acquire_queued().await;
+            reserve_execution_receipt_slot();
+        }
+        """
+        self.assertEqual(missing_chat_ipc_preflight_guards(source), ["execute_local_ai_task"])
 
 
 class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
