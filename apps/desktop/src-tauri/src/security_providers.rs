@@ -633,6 +633,322 @@ pub async fn read_defender_status() -> Result<DefenderStatus, String> {
     Err("Detailed Microsoft Defender status is supported only on Windows.".into())
 }
 
+const MAX_SECURITY_PRODUCTS_PER_CATEGORY: i32 = 32;
+
+fn product_state_label(value: i32) -> &'static str {
+    match value {
+        0 => "on",
+        1 => "off",
+        2 => "snoozed",
+        3 => "expired",
+        _ => "unknown",
+    }
+}
+
+fn signature_status_label(value: i32) -> &'static str {
+    match value {
+        0 => "out_of_date",
+        1 => "provider_reports_up_to_date",
+        _ => "unknown",
+    }
+}
+
+fn product_substatus_label(value: i32) -> &'static str {
+    match value {
+        0 => "not_set",
+        1 => "no_action",
+        2 => "action_recommended",
+        3 => "action_needed",
+        _ => "unknown",
+    }
+}
+
+fn assess_wsc_product(
+    provider_type: &str,
+    product_state: &str,
+    signature_status: &str,
+    antivirus_update_substatus: Option<&str>,
+    firewall_profiles: [Option<&str>; 3],
+) -> (String, String) {
+    let state_alert = matches!(product_state, "off" | "expired");
+    let state_attention = product_state == "snoozed";
+    let av_alert = provider_type == "antivirus"
+        && (signature_status == "out_of_date"
+            || antivirus_update_substatus == Some("action_needed"));
+    let av_attention = provider_type == "antivirus"
+        && antivirus_update_substatus == Some("action_recommended");
+    let firewall_alert = provider_type == "firewall"
+        && firewall_profiles.contains(&Some("action_needed"));
+    let firewall_attention = provider_type == "firewall"
+        && firewall_profiles.contains(&Some("action_recommended"));
+
+    if state_alert || av_alert || firewall_alert {
+        return (
+            "alert".into(),
+            if state_alert {
+                "Windows Security Center reports that this product is off or expired. Review the existing security product or operating-system console immediately.".into()
+            } else if av_alert {
+                "The antivirus provider reports outdated signatures or that a protection update is needed. Update through the existing vendor or Windows Security workflow; UJANI will not change the product.".into()
+            } else {
+                "Windows Security Center reports that a firewall profile needs attention. Review the existing firewall product and profile settings; UJANI will not change them.".into()
+            },
+        );
+    }
+    if state_attention || av_attention || firewall_attention {
+        return (
+            "attention".into(),
+            if state_attention {
+                "The product reports that protection is temporarily snoozed. Review the existing security console and restore protection if appropriate.".into()
+            } else if av_attention {
+                "The antivirus provider recommends an update check. Open the existing vendor or Windows Security console.".into()
+            } else {
+                "Windows Security Center recommends reviewing a firewall profile. Check the existing firewall console.".into()
+            },
+        );
+    }
+    if product_state == "on"
+        && ((provider_type == "antivirus" && signature_status == "provider_reports_up_to_date")
+            || provider_type == "firewall")
+    {
+        return (
+            "reported_healthy".into(),
+            if provider_type == "antivirus" {
+                "Windows Security Center reports the provider active and its signature status up to date. This does not independently verify the latest engine/platform release.".into()
+            } else {
+                "Windows Security Center reports the firewall product active. Firewall software/rule-feed update freshness is not provided by this API; check the existing vendor or Windows Update workflow.".into()
+            },
+        );
+    }
+    (
+        "unknown".into(),
+        if provider_type == "antivirus" {
+            "Windows Security Center did not provide enough information to verify this product's signature freshness. Check the existing vendor security console.".into()
+        } else {
+            "Windows Security Center did not provide enough information to verify this firewall product. Check its existing vendor or operating-system security console.".into()
+        },
+    )
+}
+
+fn sanitize_wsc_text(value: &str, max_chars: usize) -> Option<String> {
+    let sanitized = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(max_chars)
+        .collect::<String>();
+    let sanitized = sanitized.trim().to_string();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_security_products(provider_ids: &[String]) -> ProductInventoryResult {
+    use windows::core::{BSTR, IUnknown};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::System::SecurityCenter::{
+        IWSCProductList, IWscProduct2, WSCProductList, WSC_SECURITY_PRODUCT_OUT_OF_DATE,
+        WSC_SECURITY_PRODUCT_STATE_EXPIRED, WSC_SECURITY_PRODUCT_STATE_OFF,
+        WSC_SECURITY_PRODUCT_STATE_ON, WSC_SECURITY_PRODUCT_STATE_SNOOZED,
+        WSC_SECURITY_PRODUCT_SUBSTATUS_ACTION_NEEDED,
+        WSC_SECURITY_PRODUCT_SUBSTATUS_ACTION_RECOMMENDED,
+        WSC_SECURITY_PRODUCT_SUBSTATUS_NO_ACTION, WSC_SECURITY_PRODUCT_SUBSTATUS_NOT_SET,
+        WSC_SECURITY_PRODUCT_UP_TO_DATE, WSC_SECURITY_PROVIDER_ANTIVIRUS,
+        WSC_SECURITY_PROVIDER_FIREWALL,
+    };
+
+    struct ComApartment;
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    let init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if init.is_err() {
+        return ProductInventoryResult::unavailable(
+            "Windows Security Center COM initialization failed; individual products cannot be verified.",
+        );
+    }
+    let _apartment = ComApartment;
+
+    let mut products = Vec::new();
+    let mut successful_categories = 0usize;
+    let mut failed_categories = 0usize;
+    let mut truncated = false;
+    let mut item_failures = 0usize;
+
+    for provider_id in provider_ids {
+        let (provider_type, provider_kind) = match provider_id.as_str() {
+            "windows.antivirus" => ("antivirus", WSC_SECURITY_PROVIDER_ANTIVIRUS),
+            "windows.firewall" => ("firewall", WSC_SECURITY_PROVIDER_FIREWALL),
+            _ => continue,
+        };
+
+        let list: IWSCProductList = match unsafe {
+            CoCreateInstance(
+                &WSCProductList,
+                None::<&IUnknown>,
+                CLSCTX_INPROC_SERVER,
+            )
+        } {
+            Ok(list) => list,
+            Err(_) => {
+                failed_categories += 1;
+                continue;
+            }
+        };
+        if unsafe { list.Initialize(provider_kind) }.is_err() {
+            failed_categories += 1;
+            continue;
+        }
+        let count = match unsafe { list.Count() } {
+            Ok(count) if count >= 0 => count,
+            _ => {
+                failed_categories += 1;
+                continue;
+            }
+        };
+        successful_categories += 1;
+        if count > MAX_SECURITY_PRODUCTS_PER_CATEGORY {
+            truncated = true;
+        }
+
+        for index in 0..count.min(MAX_SECURITY_PRODUCTS_PER_CATEGORY) {
+            let product = match unsafe { list.get_Item(index as u32) } {
+                Ok(product) => product,
+                Err(_) => {
+                    item_failures += 1;
+                    continue;
+                }
+            };
+
+            let display_name = unsafe { product.ProductName() }
+                .ok()
+                .and_then(|value: BSTR| sanitize_wsc_text(&value.to_string(), 128));
+            let product_state = unsafe { product.ProductState() }
+                .map(|value| match value.0 {
+                    value if value == WSC_SECURITY_PRODUCT_STATE_ON.0 => "on",
+                    value if value == WSC_SECURITY_PRODUCT_STATE_OFF.0 => "off",
+                    value if value == WSC_SECURITY_PRODUCT_STATE_SNOOZED.0 => "snoozed",
+                    value if value == WSC_SECURITY_PRODUCT_STATE_EXPIRED.0 => "expired",
+                    _ => "unknown",
+                })
+                .unwrap_or("unknown")
+                .to_string();
+
+            let signature_status = if provider_type == "antivirus" {
+                unsafe { product.SignatureStatus() }
+                    .map(|value| {
+                        if value.0 == WSC_SECURITY_PRODUCT_OUT_OF_DATE.0 {
+                            "out_of_date"
+                        } else if value.0 == WSC_SECURITY_PRODUCT_UP_TO_DATE.0 {
+                            "provider_reports_up_to_date"
+                        } else {
+                            signature_status_label(value.0)
+                        }
+                    })
+                    .unwrap_or("unknown")
+                    .to_string()
+            } else {
+                // Windows Security Center documents firewall signature status as
+                // up-to-date because firewall products do not have signature data.
+                "not_applicable".into()
+            };
+
+            let product_state_timestamp = unsafe { product.ProductStateTimestamp() }
+                .ok()
+                .and_then(|value| sanitize_wsc_text(&value.to_string(), 64));
+
+            let product2 = product.cast::<IWscProduct2>().ok();
+            let antivirus_update_substatus = if provider_type == "antivirus" {
+                product2.as_ref().and_then(|value| unsafe {
+                    value.AntivirusProtectionUpdateSubstatus()
+                }.ok()).map(|value| match value.0 {
+                    value if value == WSC_SECURITY_PRODUCT_SUBSTATUS_NOT_SET.0 => "not_set",
+                    value if value == WSC_SECURITY_PRODUCT_SUBSTATUS_NO_ACTION.0 => "no_action",
+                    value if value == WSC_SECURITY_PRODUCT_SUBSTATUS_ACTION_RECOMMENDED.0 => "action_recommended",
+                    value if value == WSC_SECURITY_PRODUCT_SUBSTATUS_ACTION_NEEDED.0 => "action_needed",
+                    _ => product_substatus_label(value.0),
+                }.to_string())
+            } else {
+                None
+            };
+            let firewall_domain_profile_substatus = if provider_type == "firewall" {
+                product2.as_ref().and_then(|value| unsafe {
+                    value.FirewallDomainProfileSubstatus()
+                }.ok()).map(|value| product_substatus_label(value.0).to_string())
+            } else {
+                None
+            };
+            let firewall_private_profile_substatus = if provider_type == "firewall" {
+                product2.as_ref().and_then(|value| unsafe {
+                    value.FirewallPrivateProfileSubstatus()
+                }.ok()).map(|value| product_substatus_label(value.0).to_string())
+            } else {
+                None
+            };
+            let firewall_public_profile_substatus = if provider_type == "firewall" {
+                product2.as_ref().and_then(|value| unsafe {
+                    value.FirewallPublicProfileSubstatus()
+                }.ok()).map(|value| product_substatus_label(value.0).to_string())
+            } else {
+                None
+            };
+
+            let (assessment, recommendation) = assess_wsc_product(
+                provider_type,
+                &product_state,
+                &signature_status,
+                antivirus_update_substatus.as_deref(),
+                [
+                    firewall_domain_profile_substatus.as_deref(),
+                    firewall_private_profile_substatus.as_deref(),
+                    firewall_public_profile_substatus.as_deref(),
+                ],
+            );
+            products.push(SecurityProductStatus {
+                provider_id: provider_id.clone(),
+                provider_type: provider_type.into(),
+                display_name,
+                product_state,
+                signature_status,
+                antivirus_update_substatus,
+                firewall_domain_profile_substatus,
+                firewall_private_profile_substatus,
+                firewall_public_profile_substatus,
+                product_state_timestamp,
+                assessment,
+                recommendation,
+            });
+        }
+    }
+
+    let status = if failed_categories == 0 && item_failures == 0 && !truncated {
+        "available"
+    } else if successful_categories > 0 {
+        "partial"
+    } else {
+        "unavailable"
+    };
+    let detail = if products.is_empty() && status == "available" {
+        "Windows Security Center reported no registered products for the selected categories. This does not prove that no security product is installed.".into()
+    } else if status == "available" {
+        "Product names and states are reported by Windows Security Center and are not independently identity-verified.".into()
+    } else if status == "partial" {
+        "Windows Security Center returned partial product evidence; one or more categories or records could not be read, or the result was capped.".into()
+    } else {
+        "Windows Security Center product enumeration is unavailable on this device; individual product identity and update state cannot be verified.".into()
+    };
+
+    ProductInventoryResult {
+        products,
+        status: status.into(),
+        detail,
+        checked_at_unix_ms: observed_at_unix_ms(),
+    }
+}
+
 #[cfg(test)]
 mod defender_tests {
     use super::parse_defender_status_result;
