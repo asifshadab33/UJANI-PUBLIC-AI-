@@ -15,6 +15,57 @@ pub struct SecurityProviderStatus {
     pub source: String,
     pub detail: String,
     pub observed_at_unix_ms: u64,
+    pub assessment: String,
+    pub recommendation: String,
+    pub product_identity_known: bool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn assess_provider_status(
+    provider_id: &str,
+    status: &str,
+    source: &str,
+    observed_at: u64,
+) -> (String, String, bool) {
+    use ujani_core::{
+        assess_category, EvidenceStatus, ProviderObservation, SecurityCategory,
+    };
+    let category = match provider_id {
+        "windows.antivirus" => SecurityCategory::MalwareProtection,
+        "windows.firewall" => SecurityCategory::Firewall,
+        _ => return (
+            "cannot_verify".into(),
+            "The provider category is unsupported; check the operating-system security console.".into(),
+            false,
+        ),
+    };
+    let evidence_status = match status {
+        "healthy" => EvidenceStatus::Healthy,
+        "attention" => EvidenceStatus::Attention,
+        "alert" => EvidenceStatus::Alert,
+        "not_monitored" => EvidenceStatus::NotMonitored,
+        "unavailable" => EvidenceStatus::Unavailable,
+        "unsupported" => EvidenceStatus::Unsupported,
+        _ => EvidenceStatus::Unknown,
+    };
+    let observation = ProviderObservation {
+        provider_id: provider_id.into(),
+        display_name: None,
+        category,
+        status: evidence_status,
+        evidence_source: source.into(),
+        observed_at_unix_ms: observed_at,
+        product_identity_known: false,
+    };
+    let result = assess_category(category, &[observation], observed_at, 0);
+    let assessment = match result.assessment {
+        ujani_core::PostureAssessment::ProtectionReportedHealthy => "protection_reported_healthy",
+        ujani_core::PostureAssessment::ProtectionNeedsAttention => "protection_needs_attention",
+        ujani_core::PostureAssessment::ThreatOrProtectionAlert => "threat_or_protection_alert",
+        ujani_core::PostureAssessment::NoProviderReported => "no_provider_reported",
+        ujani_core::PostureAssessment::CannotVerify => "cannot_verify",
+    };
+    (assessment.into(), result.recommendation.into(), result.product_identity_known)
 }
 
 fn observed_at_unix_ms() -> u64 {
@@ -114,13 +165,20 @@ fn windows_category(
         result
     };
 
+    let observed_at = observed_at_unix_ms();
+    let source = "Windows Security Center aggregate health API";
+    let (assessment, recommendation, product_identity_known) =
+        assess_provider_status(provider_id, status, source, observed_at);
     SecurityProviderStatus {
         provider_id: provider_id.into(),
         label: label.into(),
         status: status.into(),
-        source: "Windows Security Center aggregate health API".into(),
+        source: source.into(),
         detail: detail.into(),
-        observed_at_unix_ms: observed_at_unix_ms(),
+        observed_at_unix_ms: observed_at,
+        assessment,
+        recommendation,
+        product_identity_known,
     }
 }
 
@@ -180,6 +238,19 @@ pub fn read_only_status(
                 source: "Windows Security Center API (Windows only)".into(),
                 detail: "This provider adapter is available only on Windows.".into(),
                 observed_at_unix_ms: observed_at_unix_ms(),
+                assessment: assess_provider_status(
+                    provider_id,
+                    "unsupported",
+                    "Windows Security Center API (Windows only)",
+                    observed_at_unix_ms(),
+                ).0,
+                recommendation: assess_provider_status(
+                    provider_id,
+                    "unsupported",
+                    "Windows Security Center API (Windows only)",
+                    observed_at_unix_ms(),
+                ).1,
+                product_identity_known: false,
             })
             .collect())
     }
