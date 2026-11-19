@@ -6,6 +6,7 @@ import {
   booleanCapabilityLabel,
   formatOptionalNumber,
   formatOptionalBytes,
+  formatObservedTimestamp,
 } from "./modelInventoryV2Presentation.js";
 
 test("missing and unknown evidence is shown as unknown instead of inferred", () => {
@@ -43,4 +44,14 @@ test("byte estimates are bounded to readable units and unknown stays explicit", 
   assert.equal(formatOptionalBytes(1024), "1 KiB");
   assert.match(formatOptionalBytes(1024 * 1024), /1 MiB/);
   assert.match(formatOptionalBytes(1024 * 1024 * 1024), /1 GiB/);
+});
+
+test("observed timestamp presentation is compact and safely omits invalid values", () => {
+  const rendered = formatObservedTimestamp(Date.UTC(2026, 0, 2, 3, 4));
+  assert.match(rendered, /^ · observed /);
+  assert.doesNotMatch(rendered, /Invalid Date/);
+  assert.equal(formatObservedTimestamp(null), "");
+  assert.equal(formatObservedTimestamp(Number.NaN), "");
+  assert.equal(formatObservedTimestamp(-1), "");
+  assert.equal(formatObservedTimestamp(9e15), "");
 });
