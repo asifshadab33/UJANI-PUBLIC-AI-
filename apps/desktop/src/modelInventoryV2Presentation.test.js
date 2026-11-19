@@ -47,8 +47,10 @@ test("byte estimates are bounded to readable units and unknown stays explicit", 
 });
 
 test("observed timestamp presentation is compact and safely omits invalid values", () => {
-  const rendered = formatObservedTimestamp(Date.UTC(2026, 0, 2, 3, 4));
-  assert.match(rendered, /^ · observed /);
+  const observedAt = Date.UTC(2026, 0, 2, 3, 4);
+  const expected = new Date(observedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const rendered = formatObservedTimestamp(observedAt);
+  assert.equal(rendered, ` · observed ${expected}`);
   assert.doesNotMatch(rendered, /Invalid Date/);
   assert.equal(formatObservedTimestamp(null), "");
   assert.equal(formatObservedTimestamp(Number.NaN), "");
