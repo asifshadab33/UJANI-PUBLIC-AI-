@@ -67,3 +67,9 @@ Complete only when code is on main, exact merged SHA CI is green and evidence sc
 | #358 | Master ledger + catalogue parity CI | New audit batch; exact-head CI pending |
 
 PR merge order is not approval: do not merge without explicit user approval. Candidate ordering after CI: #357, #354, #356/#352 (reconcile docs), #355, #358; #353 is a duplicate candidate.
+
+
+## Follow-on verification batch — 2026-11-19
+
+- PR #361 (`test/cloud-gateway-boundary-regressions-20261119`) adds regression tests for HTTPS endpoint rejection cases, host-only provenance, non-global/special-purpose IPv4 and IPv6 addresses, and explicit cloud-transfer approval. Tests only; no runtime behavior changed. Exact head: `6dd0bb37a93761a29c1fba9f4db704da9f015742`. Hosted workflow runs had not appeared at the time of this ledger update.
+- PR #360 latest observed head: `5eb0b07ad1eaa1a0d065f28e5647622622c9f9b0`; CI, CodeQL and installer-size audit were still in progress. Do not count as complete until exact-head checks finish.
