@@ -282,3 +282,41 @@ mod cloud_gateway_boundary_regression_tests {
         assert!(result.unwrap_err().contains("not approved"));
     }
 }
+
+
+#[cfg(test)]
+mod cloud_gateway_mode_and_input_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn only_smart_mode_is_eligible_for_the_byok_gateway() {
+        assert!(validate_mode("smart").is_ok());
+        for mode in ["fortress", "worker", "partner", "unknown"] {
+            assert!(validate_mode(mode).is_err(), "accepted mode {mode}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_token_parameter_and_control_character_api_keys() {
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key", "prompt",
+            "smart", true, "invalid"
+        ).is_err());
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key\nInjected: true", "prompt",
+            "smart", true, "auto"
+        ).is_err());
+    }
+
+    #[test]
+    fn cloud_request_requires_nonempty_prompt_and_explicit_approval() {
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key", " ",
+            "smart", true, "auto"
+        ).is_err());
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key", "prompt",
+            "smart", false, "auto"
+        ).is_err());
+    }
+}
