@@ -52,8 +52,6 @@ pub struct OllamaModelMetadata {
     pub capabilities: Vec<String>,
 }
 
-/// Metadata may be joined to an installed model only when both observations carry
-/// the same immutable digest. A matching mutable tag name is not sufficient.
 /// Normalise an Ollama SHA-256 digest for identity comparison and inventory output.
 /// Accepts the runtime's optional `sha256:` prefix but rejects malformed/empty values.
 pub(crate) fn normalized_model_digest(digest: Option<&str>) -> Option<String> {
