@@ -46,7 +46,7 @@
 - #328 closed as superseded by current-main PR #344; original branch retained.
 - #333/#337/#334/#341/#343 closed as superseded by consolidated current-main PR #348; #339/#342 closed as superseded by #345. Original branches retained.
 - #344 `60e309ff49cacbdb2a3ea1c94ab4d9c2919ad295`: current-main non-streaming Ollama cancellation regression; CI, Android, CodeQL, installer and security watch queued; unsigned preview skipped.
-- #347 `6b151d6f9381a68830a58db4cc59b6c017a10270`: current-main clock-jump diagnostic and native timestamp range checks; CI, Android, CodeQL, installer audit and security-watch queued; unsigned preview skipped.
+- #347 `ed7f1104d6dbe8ebd6d789c0c16f81dc9bcc9d46`: current-main clock-jump diagnostic and native timestamp range checks. First Android compile failed due a misplaced test; corrected on this head, all CI/security/platform reruns queued; unsigned preview skipped.
 - #348 `c5a236658435128684683fed215fbb77e13ae3b1`: hash-bound file-scan evidence plus handbook and delivery-gate documentation, current main; CI/CodeQL/Android/installer/security-watch pending; unsigned preview skipped.
 - #345: this current-main backlog PR; exact-head CI, CodeQL, installer and security-watch checks queued; unsigned preview skipped.
 - #342 closed as superseded by #345; branch retained.
