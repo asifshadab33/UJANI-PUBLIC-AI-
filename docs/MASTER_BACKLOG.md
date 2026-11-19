@@ -43,7 +43,7 @@
 - #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed.
 - #324/#328: stale clock/Ollama cancellation work; update/revalidate before merge.
 - #333/#337 closed as superseded by #341; #334 closed as superseded by #343; #339 closed as superseded by #342. Original branches retained.
-- #342 `8181136650b28faefe63e794923d2d9ffcb27b1f`: current-main master-backlog documentation; CI, CodeQL, installer and security-sensitive checks queued; unsigned preview skipped.
+- #342: current-main master-backlog documentation PR; CI, CodeQL, installer and security-sensitive checks queued; unsigned preview skipped. Draft.
 
 ## Evidence rules
 Exact head SHA required. No green claim from partial/stale checks. Public main CI is still running; physical devices, production signing, updater rollback and independent security tests are not verified.
