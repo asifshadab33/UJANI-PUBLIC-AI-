@@ -12,6 +12,7 @@ mod history;
 mod reminder_store;
 mod model_runtime;
 mod model_inventory;
+mod model_inventory_v2;
 mod ollama;
 mod resource_runtime;
 mod security_providers;
@@ -434,6 +435,8 @@ struct OllamaStatus {
     available: bool,
     models: Vec<ollama::OllamaModel>,
     inventory: model_inventory::ModelRuntimeInventory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inventory_v2: Option<model_inventory_v2::ModelRuntimeInventoryV2>,
     recommendation: ModelRecommendation,
 }
 
@@ -447,13 +450,16 @@ fn chat_capable_model_sizes(
     models
         .iter()
         .filter(|model| {
-            metadata.get(&model.name).is_some_and(|item| {
-                item.context_length_tokens
-                    .is_some_and(|context| context >= ollama::NUM_CTX as u64)
-                    && item.capabilities
-                        .iter()
-                        .any(|capability| capability == "chat")
-            })
+            metadata
+                .get(&model.name)
+                .filter(|item| ollama::metadata_matches_model_identity(model, item))
+                .is_some_and(|item| {
+                    item.context_length_tokens
+                        .is_some_and(|context| context >= ollama::NUM_CTX as u64)
+                        && item.capabilities
+                            .iter()
+                            .any(|capability| capability == "chat")
+                })
         })
         .map(|model| InstalledModelSize {
             name: model.name.clone(),
@@ -475,6 +481,8 @@ struct OllamaStatusInput {
     cpu_logical_cores: Option<u32>,
     memory_total_mb: Option<u64>,
     memory_available_mb: Option<u64>,
+    runtime_observed_at_unix_ms: Option<u64>,
+    os_observed_at_unix_ms: Option<u64>,
 }
 
 /// Build the displayed inventory and recommendation from the same normalized hardware snapshot.
@@ -491,6 +499,8 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
+        runtime_observed_at_unix_ms,
+        os_observed_at_unix_ms,
     } = input;
     let (memory_total_mb, memory_available_mb) =
         model_inventory::normalize_memory_readings(memory_total_mb, memory_available_mb);
@@ -498,6 +508,21 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         &chat_capable_model_sizes(&models, &metadata),
         memory_available_mb.unwrap_or(0),
     );
+    // Build v2 from the same bounded OS and loopback runtime observations; do not
+    // trigger a second discovery pass or send this personal inventory to Enterprise.
+    let inventory_v2 = model_inventory_v2::build_inventory_v2_with_observation(model_inventory::ModelInventoryInput {
+        models: &models,
+        metadata: &metadata,
+        runtime_available: available,
+        runtime_version: runtime_version.clone(),
+        os_name: os_name.clone(),
+        os_version: os_version.clone(),
+        architecture: architecture.clone(),
+        cpu_logical_cores,
+        memory_total_mb,
+        memory_available_mb,
+        accelerator: accelerator.as_ref(),
+    }, runtime_observed_at_unix_ms, os_observed_at_unix_ms);
     let inventory = model_inventory::build_inventory(model_inventory::ModelInventoryInput {
         models: &models,
         metadata: &metadata,
@@ -516,6 +541,7 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
         available,
         models,
         inventory,
+        inventory_v2,
         recommendation,
     }
 }
@@ -900,6 +926,12 @@ async fn pull_ollama_model(
 /// Read-only model and device discovery. All runtime requests are fixed to loopback Ollama.
 #[tauri::command]
 async fn get_ollama_status() -> Result<OllamaStatus, String> {
+    // Conservative lower bound for all subsequent loopback/runtime observations.
+    let runtime_observed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .filter(|value| *value > 0);
     let available = ollama::is_available().await;
     let models = if available { ollama::list_models().await? } else { Vec::new() };
     let metadata = if available {
@@ -930,6 +962,15 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     let total_memory_bytes = system.total_memory();
     let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
     let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
+    let os_name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+    let os_version = System::os_version();
+    let architecture = std::env::consts::ARCH.to_string();
+    // Capture OS evidence after the OS/hardware observations have been collected.
+    let os_observed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .filter(|value| *value > 0);
 
     Ok(build_ollama_status(OllamaStatusInput {
         available,
@@ -937,12 +978,14 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         metadata,
         runtime_version,
         accelerator,
-        os_name: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
-        os_version: System::os_version(),
-        architecture: std::env::consts::ARCH.to_string(),
+        os_name,
+        os_version,
+        architecture,
         cpu_logical_cores,
         memory_total_mb,
         memory_available_mb,
+        runtime_observed_at_unix_ms,
+        os_observed_at_unix_ms,
     }))
 }
 
@@ -1721,6 +1764,37 @@ mod local_operation_policy_tests {
 #[cfg(test)]
 mod model_inventory_recommendation_tests {
     use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn chat_recommendation_requires_digest_bound_metadata() {
+        let model = ollama::OllamaModel {
+            name: "small-chat".into(),
+            size: 512 * 1024 * 1024,
+            digest: Some(format!("sha256:{}", "a".repeat(64))),
+            details: None,
+        };
+        let models = [model.clone()];
+        let unbound = HashMap::from([(
+            model.name.clone(),
+            ollama::OllamaModelMetadata {
+                model_digest: None,
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["chat".into()],
+            },
+        )]);
+        assert!(chat_capable_model_sizes(&models, &unbound).is_empty());
+
+        let bound = HashMap::from([(
+            model.name.clone(),
+            ollama::OllamaModelMetadata {
+                model_digest: model.digest.clone(),
+                context_length_tokens: Some(4_096),
+                capabilities: vec!["chat".into()],
+            },
+        )]);
+        assert_eq!(chat_capable_model_sizes(&models, &bound).len(), 1);
+    }
 
     #[test]
     fn displayed_recommendation_uses_the_same_normalized_ram_as_inventory() {
@@ -1733,6 +1807,7 @@ mod model_inventory_recommendation_tests {
         let metadata = HashMap::from([(
             "small-chat".to_string(),
             ollama::OllamaModelMetadata {
+                model_digest: None,
                 context_length_tokens: Some(4_096),
                 capabilities: vec!["chat".into()],
             },
@@ -1750,6 +1825,8 @@ mod model_inventory_recommendation_tests {
             cpu_logical_cores: Some(8),
             memory_total_mb: Some(8_192),
             memory_available_mb: Some(16_384),
+            runtime_observed_at_unix_ms: None,
+            os_observed_at_unix_ms: None,
         });
         let inventory = serde_json::to_value(&status.inventory).expect("inventory serializes");
 
@@ -2742,26 +2819,30 @@ mod model_capability_selection_tests {
     #[test]
     fn automatic_chat_recommendation_excludes_unknown_and_non_chat_models() {
         let models = vec![
-            OllamaModel { name: "chat-model".into(), size: 1_000, digest: None, details: None },
-            OllamaModel { name: "vision-model".into(), size: 2_000, digest: None, details: None },
+            OllamaModel { name: "chat-model".into(), size: 1_000, digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()), details: None },
+            OllamaModel { name: "vision-model".into(), size: 2_000, digest: Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()), details: None },
             OllamaModel { name: "unknown-model".into(), size: 3_000, digest: None, details: None },
-            OllamaModel { name: "short-context-chat".into(), size: 4_000, digest: None, details: None },
-            OllamaModel { name: "unknown-context-chat".into(), size: 5_000, digest: None, details: None },
+            OllamaModel { name: "short-context-chat".into(), size: 4_000, digest: Some("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into()), details: None },
+            OllamaModel { name: "unknown-context-chat".into(), size: 5_000, digest: Some("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into()), details: None },
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
+                model_digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
                 context_length_tokens: Some(crate::ollama::NUM_CTX as u64),
                 capabilities: vec!["chat".into()],
             }),
             ("vision-model".into(), OllamaModelMetadata {
+                model_digest: Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
                 context_length_tokens: Some(4_096),
                 capabilities: vec!["vision".into()],
             }),
             ("short-context-chat".into(), OllamaModelMetadata {
+                model_digest: Some("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into()),
                 context_length_tokens: Some(2_048),
                 capabilities: vec!["chat".into()],
             }),
             ("unknown-context-chat".into(), OllamaModelMetadata {
+                model_digest: Some("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into()),
                 context_length_tokens: None,
                 capabilities: vec!["chat".into()],
             }),

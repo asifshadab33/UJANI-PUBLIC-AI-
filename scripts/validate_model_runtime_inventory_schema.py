@@ -364,6 +364,18 @@ def validate_model_runtime_inventory_v2() -> None:
     assert _v2_references_valid(fixture)
     assert _v2_enterprise_inventory_authorized(fixture)
 
+    # Public emits a distinct personal-local-only descriptor without Enterprise identity.
+    public_fixture_path = V2_SCHEMA_PATH.parent / "test-vectors/model-runtime-inventory-v2-public-local.json"
+    public_fixture = json.loads(public_fixture_path.read_text(encoding="utf-8"))
+    validator.validate(public_fixture)
+    assert public_fixture["collection_context"]["scope"] == "personal_local_only"
+    assert public_fixture["collection_context"]["owner_consent"] == "not_required_local_only"
+    assert public_fixture["collection_context"]["organisation_authorisation"] == "not_applicable"
+    assert "device_ref" not in public_fixture
+    assert all(value is False for value in public_fixture["privacy"].values())
+    assert public_fixture["models"][0]["compatibility"]["status"] == "unknown"
+    assert public_fixture["models"][0]["capabilities"] == []
+
     anonymous_inventory = copy.deepcopy(fixture)
     anonymous_inventory.pop("device_ref")
     assert list(validator.iter_errors(anonymous_inventory))

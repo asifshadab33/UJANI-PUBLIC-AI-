@@ -1,0 +1,127 @@
+{
+  "schema_version": 2,
+  "generated_at_unix_ms": 1000000,
+  "collection_context": {
+    "scope": "personal_local_only",
+    "owner_consent": "not_required_local_only",
+    "organisation_authorisation": "not_applicable",
+    "policy_version": "public-local-v2"
+  },
+  "platform": {
+    "os": "linux",
+    "os_version": "6.8",
+    "architecture": "x86_64",
+    "evidence": {
+      "source": "os_api",
+      "confidence": "verified",
+      "observed_at_unix_ms": 1000000
+    }
+  },
+  "hardware": {
+    "cpu_logical_cores": 8,
+    "memory_total_mb": 16384,
+    "memory_available_mb": 8192,
+    "storage_free_mb": null,
+    "accelerators": [],
+    "evidence": {
+      "source": "os_api",
+      "confidence": "verified",
+      "observed_at_unix_ms": 1000000
+    }
+  },
+  "runtimes": [
+    {
+      "runtime_id": "ollama.local",
+      "provider": "Ollama",
+      "version": "0.5.0",
+      "availability": "available",
+      "network_scope": "loopback_only",
+      "evidence": {
+        "source": "runtime_api",
+        "confidence": "reported",
+        "observed_at_unix_ms": 1000000
+      }
+    }
+  ],
+  "models": [
+    {
+      "model_ref": "llama3.2:latest",
+      "runtime_id": "ollama.local",
+      "display_name": "llama3.2:latest",
+      "family": "llama",
+      "version": null,
+      "availability": "installed",
+      "size_bytes": 1000000000,
+      "capabilities": [],
+      "context": {
+        "max_tokens": null,
+        "evidence": {
+          "source": "unknown",
+          "confidence": "unknown",
+          "observed_at_unix_ms": null
+        }
+      },
+      "tool_use": {
+        "supported": null,
+        "evidence": {
+          "source": "unknown",
+          "confidence": "unknown",
+          "observed_at_unix_ms": null
+        }
+      },
+      "vision": {
+        "supported": null,
+        "max_image_bytes": null,
+        "supported_mime_types": [],
+        "evidence": {
+          "source": "unknown",
+          "confidence": "unknown",
+          "observed_at_unix_ms": null
+        }
+      },
+      "embeddings": {
+        "supported": null,
+        "dimensions": null,
+        "evidence": {
+          "source": "unknown",
+          "confidence": "unknown",
+          "observed_at_unix_ms": null
+        }
+      },
+      "resource_estimates": {
+        "minimum_memory_mb": 2420,
+        "minimum_accelerator_memory_mb": null,
+        "minimum_storage_bytes": null,
+        "recommended_cpu_threads": null,
+        "evidence": {
+          "source": "estimate",
+          "confidence": "estimated",
+          "observed_at_unix_ms": 1000000
+        }
+      },
+      "compatibility": {
+        "status": "unknown",
+        "supported_os": [],
+        "supported_architectures": [],
+        "required_accelerator_kinds": [],
+        "required_accelerator_apis": [],
+        "evidence": {
+          "source": "unknown",
+          "confidence": "unknown",
+          "observed_at_unix_ms": null
+        }
+      },
+      "evidence": {
+        "source": "runtime_api",
+        "confidence": "reported",
+        "observed_at_unix_ms": 1000000
+      }
+    }
+  ],
+  "privacy": {
+    "contains_prompts": false,
+    "contains_user_files": false,
+    "contains_local_paths": false,
+    "contains_credentials": false
+  }
+}

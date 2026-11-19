@@ -45,8 +45,37 @@ pub struct OllamaModelDetails {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OllamaModelMetadata {
+    /// Digest of the exact model version associated with this metadata observation.
+    /// The current adapter leaves this unset unless /api/show provides a digest.
+    pub model_digest: Option<String>,
     pub context_length_tokens: Option<u64>,
     pub capabilities: Vec<String>,
+}
+
+/// Normalise an Ollama SHA-256 digest for identity comparison and inventory output.
+/// Accepts the runtime's optional `sha256:` prefix but rejects malformed/empty values.
+pub(crate) fn normalized_model_digest(digest: Option<&str>) -> Option<String> {
+    let digest = digest?;
+    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(hex.to_ascii_lowercase())
+}
+
+/// Metadata may be joined to an installed model only when both observations carry
+/// the same valid immutable digest. A matching mutable tag name is not sufficient.
+pub(crate) fn metadata_matches_model_identity(
+    model: &OllamaModel,
+    metadata: &OllamaModelMetadata,
+) -> bool {
+    matches!(
+        (
+            normalized_model_digest(model.digest.as_deref()),
+            normalized_model_digest(metadata.model_digest.as_deref()),
+        ),
+        (Some(model_digest), Some(metadata_digest)) if model_digest == metadata_digest
+    )
 }
 
 #[derive(Deserialize)]
@@ -67,6 +96,8 @@ struct ShowModelRequest<'a> {
 
 #[derive(Deserialize, Default)]
 struct ShowModelResponse {
+    #[serde(default)]
+    digest: Option<String>,
     #[serde(default)]
     capabilities: Vec<String>,
     #[serde(default)]
@@ -266,6 +297,7 @@ pub async fn inspect_model_metadata(model: &str) -> Result<OllamaModelMetadata, 
         .map_err(|error| format!("Could not inspect local Ollama model metadata: {error}"))?;
     let details: ShowModelResponse = parse_limited(response).await?;
     Ok(OllamaModelMetadata {
+        model_digest: details.digest,
         context_length_tokens: context_length_tokens(&details.model_info),
         capabilities: canonical_model_capabilities(&details.capabilities),
     })
@@ -701,6 +733,45 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn model_metadata_identity_requires_valid_matching_sha256_digests() {
+        let valid = format!("sha256:{}", "a".repeat(64));
+        let model = crate::ollama::OllamaModel {
+            name: "model:latest".into(),
+            size: 1,
+            digest: Some(valid.clone()),
+            details: None,
+        };
+        let metadata = crate::ollama::OllamaModelMetadata {
+            model_digest: Some(format!("sha256:{}", "A".repeat(64))),
+            context_length_tokens: Some(4096),
+            capabilities: vec!["chat".into()],
+        };
+        assert!(crate::ollama::metadata_matches_model_identity(&model, &metadata));
+
+        let invalid_digests = vec![
+            String::new(),
+            "sha256:short".to_string(),
+            "not-a-digest".to_string(),
+            format!("sha256:{}", "g".repeat(64)),
+        ];
+        for invalid in invalid_digests {
+            let mut invalid_model = model.clone();
+            invalid_model.digest = Some(invalid.clone());
+            let mut invalid_metadata = metadata.clone();
+            invalid_metadata.model_digest = Some(invalid);
+            assert!(!crate::ollama::metadata_matches_model_identity(&invalid_model, &metadata));
+            assert!(!crate::ollama::metadata_matches_model_identity(&model, &invalid_metadata));
+        }
+
+        let mut missing = model.clone();
+        missing.digest = None;
+        assert!(!crate::ollama::metadata_matches_model_identity(&missing, &metadata));
+
+        let mut mismatched = metadata.clone();
+        mismatched.model_digest = Some(format!("sha256:{}", "b".repeat(64)));
+        assert!(!crate::ollama::metadata_matches_model_identity(&model, &mismatched));
+    }
     use super::*;
 
     #[test]
