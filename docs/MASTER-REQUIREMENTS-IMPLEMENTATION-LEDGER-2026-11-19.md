@@ -40,7 +40,8 @@ Reconciles retrieved project discussions and repository evidence. Historical cha
 | PUB-025 | Release readiness | Not achieved | Security, cross-platform, signing and review |
 
 ## Deduplication findings
-1. Catalogue copies are identical. Public app mirror and catalogue must stay byte-identical; Enterprise mirror likewise. Cross-repo parity is a separate gate.
+1. The catalogue source is `catalogs/local-model-catalog-v1.json`; regenerate the UI mirror with `python3 scripts/sync_model_catalogue.py`, and CI checks byte parity. The catalogue is still copied between repos; cross-repo synchronization is a later step.
+2. Catalogue copies are identical. Public app mirror and catalogue must stay byte-identical; Enterprise mirror likewise. Cross-repo parity is a separate gate.
 2. Inventory v1/v2 should share normalized internal evidence and separate version serializers.
 3. Operation/tool/capability registries, router, task graph, policy gate and native command map need one canonical operation definition. Policy and adapter boundaries remain separate.
 4. Filesystem features reuse `safe_fs`, traversal, cancellation, resource limits and metadata types.
