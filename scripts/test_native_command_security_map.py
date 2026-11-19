@@ -27,7 +27,11 @@ class NativeCommandManifestContractTests(unittest.TestCase):
     )
 
     def complete_entry(self):
-        return {field: "documented" for field in self.REQUIRED_FIELDS}
+        entry = {field: "documented" for field in self.REQUIRED_FIELDS}
+        entry["classification"] = "read_only_local"
+        entry["receipt"] = "none-read-only"
+        entry["status"] = "source-mapped; review pending"
+        return entry
 
     def test_manifest_exactly_covers_registered_commands(self):
         groups = {
@@ -35,7 +39,7 @@ class NativeCommandManifestContractTests(unittest.TestCase):
                 "read_a": self.complete_entry(),
                 "mutate_b": self.complete_entry(),
             }),
-            "peer_preview_commands": (["peer_x"], {"peer_x": self.complete_entry()}),
+            "peer_preview_commands": (["peer_x"], {"peer_x": {**self.complete_entry(), "status": "peer-preview only; review pending"}}),
         }
         self.assertEqual(manifest_mapping_errors(groups, self.REQUIRED_FIELDS), [])
 
