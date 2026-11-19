@@ -35,7 +35,7 @@
 5. Schema compatibility, unknown fields, stale evidence, unsupported runtimes, empty inventories, resource mismatch, consent revocation and owner selection tests.
 
 ## Live PR status
-- Main: `010b24a927a75411e8f7c6d2ec46cb4fb` (PR #336 security-update freshness merged). Post-merge CI #44451529292 is still running (Linux/Windows native pending); CodeQL #44451529244 passed.
+- Main: `010b24a927a75411e8f7c6d2ec46cb4c3ca6e9fb` (PR #336 security-update freshness merged). Post-merge CI #44451529292 is still running (Linux/Windows native pending); CodeQL #44451529244 passed.
 - #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint and security-sensitive check passed; Linux/macOS/Windows native tests in progress, Android/installer/CodeQL in progress, Rust core/lint/TypeScript/audits queued; unsigned preview skipped.
 - #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: digest integrity/model inventory v2; Rust core, Linux native, workflow lint, TypeScript, frontend/Rust audits and security watch passed; macOS/Windows native and installer audit in progress; Android and CodeQL passed. Keep draft; branch is 3 commits behind main.
 - #334 closed as superseded by current-main PR #343; branch retained.
