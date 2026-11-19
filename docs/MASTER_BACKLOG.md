@@ -39,11 +39,13 @@
 - #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint and security-sensitive check passed; Linux/macOS/Windows native tests in progress, Android/installer/CodeQL in progress, Rust core/lint/TypeScript/audits queued; now 1 commit behind main. Do not merge until clock-reliability overlap in #324 is reconciled.
 - #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: merged as `69f7794bd045dc50e9421b214e1dedd20f6b4d11`. Exact-head Rust core, Linux/Windows/macOS native, Rust lint/audit, frontend/TypeScript, Android, CodeQL, installer-size and security-watch checks passed; unsigned preview skipped. Post-merge CI is pending.
 - #334 closed as superseded by current-main PR #343; branch retained.
-- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped; now 1 commit behind main.
+- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped; now behind main.
 - #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed; now 1 commit behind main.
-- #324/#328: stale clock/Ollama cancellation work; update/revalidate before merge.
+- #324: stale clock-reliability branch, behind main and overlaps #340 history/cache consent; consolidate/rebase before merge.
+- #328 closed as superseded by current-main PR #344; original branch retained.
 - #333/#337 closed as superseded by #341; #334 closed as superseded by #343; #339 closed as superseded by #342. Original branches retained.
-- #342: current-main master-backlog documentation PR; CI, CodeQL, installer and security-sensitive checks queued; unsigned preview skipped; base is 1 commit behind main after PR #332 merge. Draft.
+- #344 `60e309ff49cacbdb2a3ea1c94ab4d9c2919ad295`: current-main non-streaming Ollama cancellation regression; CI, Android, CodeQL, installer and security watch queued; unsigned preview skipped.
+- #342: current-main master-backlog documentation PR; CI/CodeQL/installer/security checks were cancelled, rerun initiated; unsigned preview skipped. Base is behind main after PR #332 merge. Draft.
 
 ## Evidence rules
 Exact head SHA required. No green claim from partial/stale checks. Public post-merge CI is pending; physical devices, production signing, updater rollback and independent security tests are not verified.
