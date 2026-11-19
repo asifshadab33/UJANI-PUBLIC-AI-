@@ -11,11 +11,59 @@ from check_native_command_security_map import (
     missing_history_key_recovery_guards,
     missing_chat_ipc_preflight_guards,
     registered_commands,
+    manifest_mapping_errors,
     missing_cloud_transfer_preflight_guards,
     missing_folder_import_preflight_guards,
     missing_local_state_mutation_receipt_guards,
     manifest_entry_errors,
 )
+
+
+class NativeCommandManifestContractTests(unittest.TestCase):
+    REQUIRED_FIELDS = (
+        "classification", "capability", "scope", "effects", "boundary",
+        "receipt", "tests", "status", "caller", "data_classification",
+        "consent", "cancellation", "resource_limits", "failure_mode",
+    )
+
+    def complete_entry(self):
+        return {field: "documented" for field in self.REQUIRED_FIELDS}
+
+    def test_manifest_exactly_covers_registered_commands(self):
+        groups = {
+            "default_commands": (["read_a", "mutate_b"], {
+                "read_a": self.complete_entry(),
+                "mutate_b": self.complete_entry(),
+            }),
+            "peer_preview_commands": (["peer_x"], {"peer_x": self.complete_entry()}),
+        }
+        self.assertEqual(manifest_mapping_errors(groups, self.REQUIRED_FIELDS), [])
+
+    def test_missing_and_stale_entries_are_both_reported(self):
+        groups = {"default_commands": (["registered"], {"stale": self.complete_entry()})}
+        errors = manifest_mapping_errors(groups, self.REQUIRED_FIELDS)
+        self.assertEqual(len(errors), 2)
+        self.assertIn("commands missing audit mapping: registered", errors[0])
+        self.assertIn("mappings no longer registered: stale", errors[1])
+
+    def test_duplicate_registration_and_non_object_mapping_fail_closed(self):
+        groups = {
+            "default_commands": (["dup", "dup"], {"dup": self.complete_entry()}),
+            "peer_preview_commands": (["peer"], None),
+        }
+        errors = manifest_mapping_errors(groups, self.REQUIRED_FIELDS)
+        self.assertIn("default_commands: duplicate command in native handler", errors)
+        self.assertIn("peer_preview_commands: manifest entries must be an object", errors)
+
+    def test_missing_fields_and_disabled_mutation_status_are_reported(self):
+        entry = self.complete_entry()
+        entry["consent"] = " "
+        entry["receipt"] = "required-but-disabled"
+        entry["status"] = "preflight"
+        groups = {"default_commands": (["command"], {"command": entry})}
+        errors = manifest_mapping_errors(groups, self.REQUIRED_FIELDS)
+        self.assertIn("default_commands:command: missing non-empty consent", errors)
+        self.assertIn("default_commands:command: disabled mutation must say so in status", errors)
 
 
 class NativeCommandSideEffectOrderingTests(unittest.TestCase):
