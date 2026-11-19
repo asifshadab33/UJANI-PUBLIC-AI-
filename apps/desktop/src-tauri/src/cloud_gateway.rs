@@ -223,3 +223,100 @@ pub async fn execute(endpoint:String,model:String,api_key:String,prompt:String,m
  assert!(token_limits("provider-model","invalid").is_err());
 }
 #[test]fn input_limits_are_enforced(){assert!(validate("https://api.example.com/a"," ","k","hi",true).is_err());assert!(validate("https://api.example.com/a","m","","hi",true).is_err());assert!(validate("https://api.example.com/a","m","k",&"x".repeat(MAX_PROMPT+1),true).is_err());}}
+
+
+#[cfg(test)]
+mod cloud_gateway_boundary_regression_tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_rejects_credentials_query_fragment_and_local_names() {
+        for endpoint in [
+            "https://user:secret@example.com/v1",
+            "https://api.example.com/v1?token=secret",
+            "https://api.example.com/v1#fragment",
+            "https://localhost/v1",
+            "https://service.localhost/v1",
+        ] {
+            assert!(validate_endpoint(endpoint).is_err(), "accepted {endpoint}");
+        }
+    }
+
+    #[test]
+    fn endpoint_provenance_contains_only_the_validated_host() {
+        assert_eq!(
+            endpoint_host("https://api.example.com/v1/chat/completions"),
+            Some("api.example.com".to_string())
+        );
+        assert_eq!(endpoint_host("http://api.example.com/v1"), None);
+    }
+
+    #[test]
+    fn cloud_destination_filter_rejects_special_and_non_global_addresses() {
+        for address in [
+            "0.0.0.0", "100.64.0.1", "169.254.1.1", "192.0.2.1",
+            "198.18.0.1", "203.0.113.1", "224.0.0.1", "255.255.255.255",
+            "::", "::1", "fc00::1", "fe80::1", "2001:db8::1",
+            "::ffff:10.0.0.1",
+        ] {
+            let ip: IpAddr = address.parse().unwrap();
+            assert!(!is_public_ip(ip), "accepted non-global address {address}");
+        }
+        for address in ["8.8.8.8", "2606:4700:4700::1111"] {
+            let ip: IpAddr = address.parse().unwrap();
+            assert!(is_public_ip(ip), "rejected public address {address}");
+        }
+    }
+
+    #[test]
+    fn cloud_transfer_requires_explicit_approval_before_dispatch_eligibility() {
+        let result = validate_request(
+            "https://api.example.com/v1/chat/completions",
+            "provider-model",
+            "test-key",
+            "test prompt",
+            "smart",
+            false,
+            "auto",
+        );
+        assert!(result.unwrap_err().contains("not approved"));
+    }
+}
+
+
+#[cfg(test)]
+mod cloud_gateway_mode_and_input_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn only_smart_mode_is_eligible_for_the_byok_gateway() {
+        assert!(validate_mode("smart").is_ok());
+        for mode in ["fortress", "worker", "partner", "unknown"] {
+            assert!(validate_mode(mode).is_err(), "accepted mode {mode}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_token_parameter_and_control_character_api_keys() {
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key", "prompt",
+            "smart", true, "invalid"
+        ).is_err());
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key\nInjected: true", "prompt",
+            "smart", true, "auto"
+        ).is_err());
+    }
+
+    #[test]
+    fn cloud_request_requires_nonempty_prompt_and_explicit_approval() {
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key", " ",
+            "smart", true, "auto"
+        ).is_err());
+        assert!(validate_request(
+            "https://api.example.com/v1", "provider-model", "key", "prompt",
+            "smart", false, "auto"
+        ).is_err());
+    }
+}
