@@ -6,6 +6,10 @@ UJANI Public AI is an open-source, device-first AI runtime concept. It aims to h
 
 > **Project status: pre-alpha / controlled preview.** The repository now contains a working Tauri 2 + Rust + React desktop prototype with real loopback-only Ollama inference, bounded local document/search workflows, explicit per-task BYOK cloud approval, local privacy/provenance controls, and a four-mode policy foundation. An Android ARM64 debug APK has been built in CI; Windows, macOS and Linux unsigned preview installers have also been produced. These are build artifacts, not a signed or production release. Installation and launch on physical devices, minimum-OS compatibility, independent security review, OS-enforced sandboxing and several planned integrations remain outstanding. See [the implementation status](docs/IMPLEMENTATION_STATUS.md) and [the release gates](docs/PROJECT_STATUS_AND_RELEASE_GATES.md).
 
+## Project handbook
+
+For the complete navigable guide to setup, build-from-zero instructions, architecture, native command inventory, repository folders, testing, troubleshooting, security and release procedures, see the [UJANI Public AI Project Handbook](docs/PROJECT-HANDBOOK.md).
+
 ## Goals
 
 - **Primary objective:** use computing resources already available on the user's device, and later explicitly trusted/authorised idle resources, to reduce avoidable dependence on central AI data centres and their electricity use.
