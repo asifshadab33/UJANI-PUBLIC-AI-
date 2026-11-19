@@ -131,6 +131,13 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
  let resolved = tokio::net::lookup_host((raw_host, port)).await
   .map_err(|_| "Could not resolve the cloud provider hostname.".to_string())?
   .collect::<Vec<_>>();
+ validate_resolved_addresses(resolved)
+}
+
+/// Reject empty DNS results and any mixed public/private answer set. Do not
+/// silently discard unsafe answers because that can mask DNS rebinding or split
+/// resolver behaviour.
+fn validate_resolved_addresses(resolved: Vec<SocketAddr>) -> Result<Vec<SocketAddr>, String> {
  if resolved.is_empty() || resolved.iter().any(|address| !is_public_ip(address.ip())) {
   return Err("Cloud hostname resolved to a private, local, or reserved address; request blocked.".into());
  }
@@ -265,6 +272,27 @@ mod cloud_gateway_boundary_regression_tests {
         for address in ["8.8.8.8", "2606:4700:4700::1111"] {
             let ip: IpAddr = address.parse().unwrap();
             assert!(is_public_ip(ip), "rejected public address {address}");
+        }
+    }
+
+    #[test]
+    fn dns_resolution_rejects_empty_and_mixed_public_private_answer_sets() {
+        assert!(validate_resolved_addresses(Vec::new()).is_err());
+        let safe = vec![
+            "8.8.8.8:443".parse().unwrap(),
+            "[2606:4700:4700::1111]:443".parse().unwrap(),
+        ];
+        assert_eq!(validate_resolved_addresses(safe.clone()).unwrap(), safe);
+
+        let mixed = vec![
+            "8.8.8.8:443".parse().unwrap(),
+            "127.0.0.1:443".parse().unwrap(),
+        ];
+        assert!(validate_resolved_addresses(mixed).is_err());
+
+        for blocked in ["10.0.0.2:443", "169.254.1.1:443", "[::1]:443", "[fc00::1]:443"] {
+            let answer = vec![blocked.parse().unwrap()];
+            assert!(validate_resolved_addresses(answer).is_err(), "accepted {blocked}");
         }
     }
 
