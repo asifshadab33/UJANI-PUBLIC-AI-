@@ -54,7 +54,11 @@
 - **#332** `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: added valid SHA-256 identity matching and regressions for malformed digests plus valid capability-selection fixtures. Exact-head CI: core tests, TypeScript, workflow lint and frontend audit passed; Linux/Windows/macOS native tests, Rust lint/audit, Android, CodeQL and installer builds are still running. Branch is 3 commits behind main; draft.
 - **#324** `1469cdecdc650c740d2496ee6148000b4a54dfb4`: earlier exact-head checks passed; branch is 4 commits behind main. Revalidate after update; draft.
 - **#328** `27116be457a564fd9f69db9e2479d8d1ea436558`: earlier exact-head checks passed; branch is 4 commits behind main. Revalidate after update; draft.
-- **#326, #327, #333, #334, #337:** open; exact-head checks/review status not established in this pass. Do not merge on the basis of this snapshot.
+- **#326 and #327:** closed as superseded by consolidated PR #340; original branches retained. Their old exact-head checks had passed, but they were stale and not mergeable.
+- **#333** `ec86e481153721edecdcd76387ea6db28cffdcdf`: all CI, CodeQL, installer-size and security-sensitive checks passed; unsigned preview skipped. Branch is 3 commits behind main; draft.
+- **#334** `e194d3e1f63a0ebfd095b31eee0645a47acb401f`: CodeQL, installer-size, Android and security-sensitive checks passed; CI was cancelled. Branch is 3 commits behind main; draft.
+- **#337** `e5bccff2223cc3ccb1c0ad6ac0ff166c455f32f1`: CI, CodeQL, installer-size and security-sensitive checks passed; unsigned preview skipped. Branch is 3 commits behind main; draft.
+- **#340** `22f23e9168ee62866f6889875ce51038100499f4`: consolidated history/cache native-consent work on current main. Exact-head CI, Android, CodeQL, installer-size and security-sensitive workflows queued; unsigned preview skipped. Draft.
 - **#339** `cccd1afe9cc982f8e6e3c6a737a6711a7a85508d`: backlog snapshot documentation PR; security-sensitive check passed, CI queued, installer audit in progress, CodeQL queued. Draft.
 
 ### Enterprise AI
