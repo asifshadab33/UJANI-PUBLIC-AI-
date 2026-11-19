@@ -48,13 +48,22 @@ struct Candidate {
     size_bytes: u64,
 }
 
+fn unix_epoch_millis_from_duration(duration: std::time::Duration) -> Result<u64, String> {
+    u64::try_from(duration.as_millis())
+        .map_err(|_| "System clock exceeds the supported local-clock timestamp range.".to_string())
+}
+
+fn unix_epoch_millis_at(time: SystemTime) -> Result<u64, String> {
+    let duration = time
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))?;
+    unix_epoch_millis_from_duration(duration)
+}
+
 #[tauri::command]
 /// Returns the current local device clock as milliseconds since the Unix epoch.
 pub fn get_local_clock() -> Result<u64, String> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+    unix_epoch_millis_at(SystemTime::now())
 }
 
 /// Opens a native folder picker and previews duplicate files; it never deletes or changes files.
@@ -403,6 +412,19 @@ mod tests {
             fs::remove_file(_link).unwrap();
         }
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn local_clock_uses_unix_epoch_milliseconds_and_rejects_pre_epoch_time() {
+        assert_eq!(unix_epoch_millis_at(UNIX_EPOCH).unwrap(), 0);
+        assert_eq!(
+            unix_epoch_millis_at(UNIX_EPOCH + std::time::Duration::from_millis(1_234)).unwrap(),
+            1_234
+        );
+        assert!(unix_epoch_millis_at(UNIX_EPOCH - std::time::Duration::from_millis(1)).is_err());
+        let out_of_range = std::time::Duration::from_millis(u64::MAX)
+            .checked_add(std::time::Duration::from_millis(1))
+            .unwrap();
+        assert!(unix_epoch_millis_from_duration(out_of_range).is_err());
     }
 }
 

@@ -1,0 +1,41 @@
+# UJANI Public AI — time and clock reliability
+
+## Responsibility boundary
+
+UJANI reads the device clock; it does not set, repair, or silently synchronise the operating-system clock. Windows Time, systemd-timesyncd/chrony, or macOS time synchronisation remains the OS administrator's responsibility. A timezone setting changes calendar display, not the underlying UTC instant. To correct an inaccurate clock, use Windows Settings → Time & language → Date & time (automatic time/Sync now), macOS System Settings → General → Date & Time, or the Linux desktop Date & Time settings / organisation-approved time service. UJANI should direct users to those OS controls, not change the clock itself.
+
+The native local-clock command returns Unix-epoch milliseconds. The current Everyday Tools display reads the same operating-system clock through the webview's `Date` API and formats it using the device's local timezone. Both represent an OS-supplied instant; neither independently verifies that the clock is correct.
+
+## Time-source rules
+
+- Use the OS wall clock / UTC epoch for calendar timestamps and user-visible dates.
+- Use a monotonic clock (Rust `Instant`, browser monotonic performance clock, or equivalent) for elapsed durations, deadlines, cancellation budgets, retry delays and in-process TTLs.
+- Never calculate task duration by subtracting two wall-clock timestamps.
+- Store history timestamps in the supported signed SQLite integer range. Reject an out-of-range value; never cast and wrap it.
+- If the wall clock is unavailable or before the Unix epoch, preserve local work where safe, but do not invent timestamps. Encrypted history, model-inventory generation and time-bound security actions must return an explicit clock error when they cannot create a valid timestamp; read-only security-provider status may still be shown with its observation time marked unavailable.
+- A timezone/DST change must alter display only; it must not change stored UTC instants or monotonic task durations.
+- Persistent search-cache and recent-search rows dated later than the current wall clock are discarded; a backward clock step must not extend their retention period.
+
+## Clock-jump behaviour
+
+While the Everyday Tools clock is open, compare wall-clock deltas with monotonic deltas and warn when the difference exceeds five seconds. This detects large forward/backward adjustments or a resume-time offset; it is diagnostic evidence, not proof that NTP is synchronised. Smaller changes may not trigger a warning. After reboot or application restart, a fresh baseline is required.
+
+A clock jump must not extend a running task timeout, cancellation budget or local TTL. Calendar displays may move with the OS clock. UJANI must not attempt to correct the OS clock itself. Local reminder due dates are absolute wall-clock instants and therefore follow the current OS clock; the existing reminder MVP does not run a background scheduler or issue OS notifications. An inaccurate device clock can make a reminder appear early or late until the OS time is corrected.
+
+## Application updates
+
+Updater authenticity is established by the signed update metadata/artifact and version binding, not by trusting a local timestamp. Update installation remains user-controlled. A failed check, bad signature, unavailable network or interrupted download must leave the installed application usable. A rollback/recovery test is still required before release.
+
+## Required verification matrix
+
+- Unix epoch, pre-epoch and out-of-range timestamp conversion.
+- Manual forward and backward clock adjustment during a running task.
+- Timezone and daylight-saving transition while the app remains open.
+- Sleep/resume and process restart.
+- Local clock unavailable or implausible: local work remains available where safe; timestamp confidence is explicit.
+- Signed update with valid/invalid signature, unavailable endpoint and interrupted download.
+- Windows, Linux and macOS native builds plus physical-device upgrade/recovery tests.
+
+## Current implementation boundary
+
+The Public Rust local-clock command returns Unix-epoch milliseconds and the UI is responsible for local-time formatting. The encrypted-history timestamp path now uses checked conversion to SQLite's signed integer range. These checks do not prove OS clock synchronisation, continuous clock-jump detection, update rollback, or physical-device behaviour; those remain release gates.

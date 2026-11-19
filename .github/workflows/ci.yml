@@ -187,6 +187,9 @@ jobs:
       - name: Test hardware-aware model recommendation boundaries
         working-directory: apps/desktop
         run: npm run test:model-recommendation
+      - name: Test operating-system clock jump detection
+        working-directory: apps/desktop
+        run: npm run test:clock-monitor
       - name: Test explicit local model-selection preference
         working-directory: apps/desktop
         run: npm run test:model-selection
