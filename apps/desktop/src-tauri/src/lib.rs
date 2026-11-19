@@ -2795,30 +2795,30 @@ mod model_capability_selection_tests {
     #[test]
     fn automatic_chat_recommendation_excludes_unknown_and_non_chat_models() {
         let models = vec![
-            OllamaModel { name: "chat-model".into(), size: 1_000, digest: Some("chat-digest".into()), details: None },
-            OllamaModel { name: "vision-model".into(), size: 2_000, digest: Some("vision-digest".into()), details: None },
+            OllamaModel { name: "chat-model".into(), size: 1_000, digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()), details: None },
+            OllamaModel { name: "vision-model".into(), size: 2_000, digest: Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()), details: None },
             OllamaModel { name: "unknown-model".into(), size: 3_000, digest: None, details: None },
-            OllamaModel { name: "short-context-chat".into(), size: 4_000, digest: Some("short-context-digest".into()), details: None },
-            OllamaModel { name: "unknown-context-chat".into(), size: 5_000, digest: Some("unknown-context-digest".into()), details: None },
+            OllamaModel { name: "short-context-chat".into(), size: 4_000, digest: Some("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into()), details: None },
+            OllamaModel { name: "unknown-context-chat".into(), size: 5_000, digest: Some("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into()), details: None },
         ];
         let metadata = HashMap::from([
             ("chat-model".into(), OllamaModelMetadata {
-                model_digest: Some("chat-digest".into()),
+                model_digest: Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
                 context_length_tokens: Some(crate::ollama::NUM_CTX as u64),
                 capabilities: vec!["chat".into()],
             }),
             ("vision-model".into(), OllamaModelMetadata {
-                model_digest: Some("vision-digest".into()),
+                model_digest: Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
                 context_length_tokens: Some(4_096),
                 capabilities: vec!["vision".into()],
             }),
             ("short-context-chat".into(), OllamaModelMetadata {
-                model_digest: Some("short-context-digest".into()),
+                model_digest: Some("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into()),
                 context_length_tokens: Some(2_048),
                 capabilities: vec!["chat".into()],
             }),
             ("unknown-context-chat".into(), OllamaModelMetadata {
-                model_digest: Some("unknown-context-digest".into()),
+                model_digest: Some("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into()),
                 context_length_tokens: None,
                 capabilities: vec!["chat".into()],
             }),
