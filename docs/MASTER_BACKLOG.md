@@ -35,16 +35,17 @@
 5. Schema compatibility, unknown fields, stale evidence, unsupported runtimes, empty inventories, resource mismatch, consent revocation and owner selection tests.
 
 ## Live PR status
-- Main: `010b24a927a75411e8f7c6d2ec46cb4c3ca6e9fb` (PR #336 security-update freshness merged).
-- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; CI native tests, Rust tests, lint, TS, audits, Android, CodeQL and installer jobs running; workflow lint and JS CodeQL passed; unsigned preview skipped.
-- #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: digest integrity/model inventory v2; Rust core, Linux/macOS native, workflow lint, TS and frontend/Rust audits passed; Windows native, installer audit in progress; Android and CodeQL passed. Keep draft; branch stale relative to main.
+- Main: `010b24a927a75411e8f7c6d2ec46cb4fb` (PR #336 security-update freshness merged). Post-merge CI #44451529292 is still running (Linux/Windows native pending); CodeQL #44451529244 passed.
+- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint and security-sensitive check passed; Linux/macOS/Windows native tests in progress, Android/installer/CodeQL in progress, Rust core/lint/TypeScript/audits queued; unsigned preview skipped.
+- #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: digest integrity/model inventory v2; Rust core, Linux native, workflow lint, TypeScript, frontend/Rust audits and security watch passed; macOS/Windows native and installer audit in progress; Android and CodeQL passed. Keep draft; branch is 3 commits behind main.
 - #334 closed as superseded by current-main PR #343; branch retained.
 - #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped.
 - #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed.
 - #324/#328: stale clock/Ollama cancellation work; update/revalidate before merge.
-- #333/#337 closed as superseded; #339 backlog PR is stale and superseded by this current-main PR. Branches are retained.
+- #333/#337 closed as superseded by #341; #334 closed as superseded by #343; #339 closed as superseded by #342. Original branches retained.
+- #342 `8181136650b28faefe63e794923d2d9ffcb27b1f`: current-main master-backlog documentation; CI, CodeQL, installer and security-sensitive checks queued; unsigned preview skipped.
 
 ## Evidence rules
-Exact head SHA required. No green claim from partial/stale checks. Main-branch post-merge CI, physical devices, production signing, updater rollback and independent security tests are not verified in this run.
+Exact head SHA required. No green claim from partial/stale checks. Public main CI is still running; physical devices, production signing, updater rollback and independent security tests are not verified.
 
 **Verified shared-schema evidence (2026-11-19):** Both main branches have byte-identical `schemas/shared-contract-manifest-v1.json` (Git blob SHA `5c41a57411453145f0d80a470f9985375b6e3ca4`). The manifest pins the same model/runtime inventory v1 and v2 schema, v1 task-contract schema, consent-binding vector, and v1/v2 inventory vectors. This verifies artifact parity—not production transport compatibility, authenticated inventory admission, or remote execution.
