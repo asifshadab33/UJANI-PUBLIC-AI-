@@ -8,6 +8,7 @@ from check_native_command_security_map import (
     missing_document_ipc_preflight_guards,
     missing_history_receipt_guards,
     missing_history_listing_receipt_guards,
+    missing_history_delete_input_guards,
     missing_history_key_recovery_guards,
     missing_chat_ipc_preflight_guards,
     registered_commands,
@@ -519,4 +520,32 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main()class HistoryDeleteInputValidationTests(unittest.TestCase):
+    def test_invalid_entry_id_is_rejected_before_receipt(self):
+        source = """
+        fn delete_task_history(entry_id) {
+            if entry_id <= 0 {
+                return Err("Invalid history entry identifier.".into());
+            }
+            with_local_state_receipt();
+            DELETE FROM task_history;
+        }
+        """
+        self.assertEqual(missing_history_delete_input_guards(source), [])
+
+    def test_validation_after_receipt_or_missing_rejection_fails(self):
+        source = """
+        fn delete_task_history(entry_id) {
+            with_local_state_receipt();
+            if entry_id <= 0 {
+                return Err("Invalid history entry identifier.".into());
+            }
+            DELETE FROM task_history;
+        }
+        """
+        self.assertEqual(missing_history_delete_input_guards(source), ["delete_task_history"])
+        no_message = source.replace("Invalid history entry identifier.", "bad input")
+        self.assertEqual(missing_history_delete_input_guards(no_message), ["delete_task_history"])
+
+
+
