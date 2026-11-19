@@ -499,6 +499,22 @@ class NativeCommandManifestEnumTests(unittest.TestCase):
         errors = manifest_entry_errors("default_commands", "clear_state", entry)
         self.assertTrue(any("mutating command cannot" in error for error in errors))
 
+
+    def test_external_transfer_and_execution_commands_cannot_claim_no_receipt(self):
+        for classification in (
+            "external_data_transfer",
+            "task_control",
+            "selected_folder_read_and_local_execution",
+        ):
+            with self.subTest(classification=classification):
+                entry = {
+                    "classification": classification,
+                    "receipt": "none-read-only",
+                    "status": "source-mapped; full review pending",
+                }
+                errors = manifest_entry_errors("default_commands", "unsafe", entry)
+                self.assertTrue(any("cannot be classified as read-only/no-receipt" in error for error in errors))
+
     def test_peer_preview_commands_must_keep_their_feature_gate_label(self):
         entry = {
             "classification": "peer_trust_mutation",
