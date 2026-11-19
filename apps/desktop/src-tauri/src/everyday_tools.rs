@@ -413,17 +413,6 @@ mod tests {
         }
         fs::remove_dir_all(root).unwrap();
     }
-}
-
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-pub async fn find_duplicate_files(
-    _app: AppHandle,
-    _control: State<'_, super::TaskControlState>,
-    _task_id: String,
-) -> Result<DuplicateScanResult, String> {
-    Err("Folder-based duplicate scanning is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
     #[test]
     fn local_clock_uses_unix_epoch_milliseconds_and_rejects_pre_epoch_time() {
         assert_eq!(unix_epoch_millis_at(UNIX_EPOCH).unwrap(), 0);
@@ -438,3 +427,13 @@ pub async fn find_duplicate_files(
         assert!(unix_epoch_millis_from_duration(out_of_range).is_err());
     }
 }
+
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn find_duplicate_files(
+    _app: AppHandle,
+    _control: State<'_, super::TaskControlState>,
+    _task_id: String,
+) -> Result<DuplicateScanResult, String> {
+    Err("Folder-based duplicate scanning is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
