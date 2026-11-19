@@ -82,7 +82,7 @@ function composeConversationPrompt(messages: ChatMessage[], current: string): st
   return clippedContext ? `Conversation context (recent messages):\n${clippedContext}\n\nUser: ${currentText}\nAssistant:` : currentText;
 }
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
-type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number; skipped_file_count: number };
+type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number; skipped_file_count: number; skipped_file_names: string[] };
 const CLOUD_PROVIDER_PRESETS = [
   { id: "openai", label: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" },
   { id: "openrouter", label: "OpenRouter (check for free models)", endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "" },
@@ -751,7 +751,10 @@ export default function App() {
       setFolderResults(result.files);
       if (result.skipped_file_count > 0) {
         const count = result.skipped_file_count;
-        setFolderNotice(`Skipped ${count} file${count === 1 ? "" : "s"} with non-portable display names. Rename them using portable file names and retry.`);
+        const names = result.skipped_file_names.join(", ");
+        const additional = count - result.skipped_file_names.length;
+        const omitted = additional > 0 ? `, and ${additional} more` : "";
+        setFolderNotice(`Skipped non-portable file name${count === 1 ? "" : "s"}: ${names}${omitted}. Rename them using portable file names and retry.`);
       }
       for (const item of result.files) {
         if (item.summary) {
