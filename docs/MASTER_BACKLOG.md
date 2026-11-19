@@ -13,10 +13,11 @@
 1. **Native consent and persistence:** complete PR #340 exact-head tests for history/cache opt-in; review all persistence/IPC routes, denial/cancel/timeout, migration, receipt ordering, recovery/rotation.
 2. **Model identity/inventory:** PR #332 validate digest integrity before capability/context joins; complete Windows/macOS/Linux native tests, Rust lint/audit, Android, CodeQL, installer size/build checks. Then refresh base and revalidate.
 3. **Filesystem/PDF:** no-follow path handling, file limits, PDF parser memory/time limits, cancellation and malformed/oversized tests; threat-scan evidence must fail closed and never imply full OS sandboxing.
-4. **Ollama:** local-only network policy, no redirects/proxy leakage, response/body limits, explicit context, timeouts/cancellation, model errors and UI hang regressions.
-5. **IPC and policy:** registered command audit, direct IPC denial, policy preflight before side effects, consent decline/timeout, signed/metadata receipts and history integrity.
-6. **Dependency and release supply chain:** resolve known audit advisories without suppressions/unreviewed downgrades; signed update metadata, verified download, rollback, reproducible build and installers.
-7. **Cross-platform packaging:** current-head native builds/tests for Linux/Windows/macOS, Android compile where applicable, unsigned preview artifacts distinct from signed production packages.
+4. **Clock integrity:** wall/monotonic divergence warnings; reject pre-epoch/out-of-range timestamps; use monotonic elapsed-time and TTL logic; ensure wall-clock rollback cannot extend cache/history retention.
+5. **Ollama:** local-only network policy, no redirects/proxy leakage, response/body limits, explicit context, timeouts/cancellation, model errors and UI hang regressions.
+6. **IPC and policy:** registered command audit, direct IPC denial, policy preflight before side effects, consent decline/timeout, signed/metadata receipts and history integrity.
+7. **Dependency and release supply chain:** resolve known audit advisories without suppressions/unreviewed downgrades; signed update metadata, verified download, rollback, reproducible build and installers.
+8. **Cross-platform packaging:** current-head native builds/tests for Linux/Windows/macOS, Android compile where applicable, unsigned preview artifacts distinct from signed production packages.
 
 ### P0 — Enterprise execution safety (disabled)
 1. Authenticated control plane, tenant isolation, enrollment, identity binding, key rotation/revocation.
@@ -36,16 +37,18 @@
 
 ## Live PR status
 - Main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11` (PR #336 security-update freshness and PR #332 local model-inventory v2 producer merged). Post-merge CI #44453580274 pending; CodeQL #44453580233 queued.
-- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint and security-sensitive check passed; Linux/macOS/Windows native tests in progress, Android/installer/CodeQL in progress, Rust core/lint/TypeScript/audits queued; now 1 commit behind main. Do not merge until clock-reliability overlap in #324 is reconciled.
+- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint, Rust core, Rust lint, TypeScript, frontend/Rust audits, Linux/macOS native, Android, CodeQL and security-sensitive check passed. Windows native tests and Windows/Linux installers remain in progress; macOS installer passed. Branch is 1 commit behind main; compare indicates only its six files differ, but rerun/refresh against current main before merge.
 - #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: merged as `69f7794bd045dc50e9421b214e1dedd20f6b4d11`. Exact-head Rust core, Linux/Windows/macOS native, Rust lint/audit, frontend/TypeScript, Android, CodeQL, installer-size and security-watch checks passed; unsigned preview skipped. Post-merge CI is pending.
 - #334 closed as superseded by current-main PR #343; branch retained.
-- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped; now behind main.
-- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed; now 1 commit behind main.
+- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped; base is stale by 1 commit and currently mergeable=false.
+- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed; base stale by 1 commit, mergeable=false.
 - #324: stale clock-reliability branch, behind main and overlaps #340 history/cache consent; consolidate/rebase before merge.
 - #328 closed as superseded by current-main PR #344; original branch retained.
 - #333/#337 closed as superseded by #341; #334 closed as superseded by #343; #339 closed as superseded by #342. Original branches retained.
 - #344 `60e309ff49cacbdb2a3ea1c94ab4d9c2919ad295`: current-main non-streaming Ollama cancellation regression; CI, Android, CodeQL, installer and security watch queued; unsigned preview skipped.
-- #342: current-main master-backlog documentation PR; CI/CodeQL/installer/security checks were cancelled, rerun initiated; unsigned preview skipped. Base is behind main after PR #332 merge. Draft.
+- #347 `6b151d6f9381a68830a58db4cc59b6c017a10270`: current-main clock-jump diagnostic and native timestamp range checks; PR mergeable, installer audit and CodeQL queued; main CI status not yet surfaced.
+- #345: this current-main backlog PR; exact-head CI, CodeQL, installer and security-watch checks queued; unsigned preview skipped.
+- #342 closed as superseded by #345; branch retained.
 
 ## Evidence rules
 Exact head SHA required. No green claim from partial/stale checks. Public post-merge CI is pending; physical devices, production signing, updater rollback and independent security tests are not verified.
