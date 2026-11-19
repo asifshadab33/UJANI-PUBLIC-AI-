@@ -18,6 +18,10 @@ test("reported and estimated provenance stays explicit", () => {
   assert.match(evidenceSummary({ source: "estimate", confidence: "estimated", observed_at_unix_ms: null }), /estimate · estimated/);
 });
 
+test("out-of-range timestamps do not render an invalid date", () => {
+  assert.doesNotMatch(evidenceSummary({ source: "runtime_api", confidence: "reported", observed_at_unix_ms: 9e15 }), /Invalid Date/);
+});
+
 test("capability and nullable booleans preserve unknown", () => {
   assert.equal(capabilityStatusLabel("supported"), "Supported");
   assert.equal(capabilityStatusLabel("unsupported"), "Unsupported");
