@@ -20,7 +20,7 @@ pub(crate) fn valid_display_file_name(file_name: &str) -> bool {
         && file_name != "."
         && file_name != ".."
         && !file_name.chars().any(|character| {
-            character.is_control() || character == '/' || (cfg!(windows) && (character == char::from(92) || character == ':'))
+            character.is_control() || character == '/' || (character == char::from(92) || (cfg!(windows) && character == ':'))
         })
 }
 
@@ -95,10 +95,11 @@ mod tests {
         assert!(analyze_text("  ", "content").is_err());
         assert!(analyze_text(&"n".repeat(256), "content").is_err());
         assert!(analyze_text("../notes.txt", "content").is_err());
+        // Backslash is rejected on every platform so a display name cannot
+        // become a path-like value when metadata crosses operating systems.
+        assert!(analyze_text(r"team\notes.txt", "content").is_err());
         #[cfg(windows)]
         assert!(analyze_text(r"C:\Users\person\notes.txt", "content").is_err());
-        #[cfg(not(windows))]
-        assert!(analyze_text(r"team\notes.txt", "content").is_ok());
         assert!(analyze_text("notes\n.txt", "content").is_err());
         assert!(analyze_text(".", "content").is_err());
         assert!(analyze_text("..", "content").is_err());
