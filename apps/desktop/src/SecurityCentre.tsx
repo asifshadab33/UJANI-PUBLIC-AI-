@@ -9,6 +9,25 @@ type ProviderStatus = {
   source: string;
   detail: string;
   observed_at_unix_ms: number;
+  assessment: string;
+  recommendation: string;
+  product_identity_known: boolean;
+};
+
+type DefenderStatus = {
+  status: string;
+  source: string;
+  detail: string;
+  antivirus_enabled: boolean | null;
+  real_time_protection_enabled: boolean | null;
+  signature_age_days: number | null;
+  signature_update_status: string;
+  signature_last_updated: string | null;
+  signature_version: string | null;
+  engine_version: string | null;
+  product_version: string | null;
+  service_version: string | null;
+  checked_at_unix_ms: number;
 };
 
 const providers = [
@@ -17,7 +36,6 @@ const providers = [
 ];
 
 const plannedProviders = [
-  { name: "Microsoft Defender details", os: "Windows", detail: "A separate documented Defender status adapter is not implemented yet." },
   { name: "ClamAV / Linux firewall", os: "Linux", detail: "Optional local provider adapters are planned; no Linux service is queried in this build." },
   { name: "macOS / vendor security APIs", os: "macOS", detail: "Supported documented APIs must be implemented and tested before status can be reported." }
 ];
@@ -47,6 +65,9 @@ export default function SecurityCentre() {
   const [localChecksEnabled, setLocalChecksEnabled] = useState(false);
   const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
   const [checking, setChecking] = useState(false);
+  const [defenderStatus, setDefenderStatus] = useState<DefenderStatus | null>(null);
+  const [defenderChecking, setDefenderChecking] = useState(false);
+  const [defenderError, setDefenderError] = useState("");
   const [error, setError] = useState("");
   const chosen = providers.filter((p) => selected.includes(p.id));
   const antivirus = statuses.find((p) => p.provider_id === "windows.antivirus");
@@ -79,14 +100,29 @@ export default function SecurityCentre() {
     setStep(4);
   };
 
+  const checkDefenderStatus = async () => {
+    setDefenderChecking(true);
+    setDefenderStatus(null);
+    setDefenderError("");
+    try {
+      const result = await invoke<DefenderStatus>("get_defender_status");
+      setDefenderStatus(result);
+    } catch (cause) {
+      setDefenderError(cause instanceof Error ? cause.message : "Defender status could not be verified.");
+    } finally {
+      setDefenderChecking(false);
+    }
+  };
+
   return <section className="security-centre" id="security-centre" tabIndex={-1} aria-labelledby="security-title">
     <div className="section-heading"><div><h2 id="security-title"><Shield size={19}/> Security Centre</h2><p>Review supported security-provider status already available on this device.</p></div><span className="security-prototype-label">READ-ONLY PREVIEW</span></div>
-    <div className="security-disclaimer" role="note"><LockKeyhole size={17}/><span><b>UJANI coordinates; it is not an antivirus or firewall.</b> The first native adapter reads Windows Security Center's aggregate antivirus and firewall health only. It does not identify individual products, inspect files, collect threat events, change settings, block traffic, quarantine files or remediate threats. Linux and macOS adapters are not implemented yet.</span></div>
+    <div className="security-disclaimer" role="note"><LockKeyhole size={17}/><span><b>UJANI coordinates; it is not an antivirus or firewall.</b> The Windows Security Center adapter reads aggregate antivirus and firewall health only. A separate, one-time Defender detail query can report local protection flags, signature age and versions. Neither query scans files, collects threat events, changes settings, blocks traffic, quarantines files or remediates threats. Linux and macOS provider adapters are not implemented yet.</span></div>
+    <div className="security-disclaimer" role="alert"><AlertTriangle size={17}/><span><b>Important: latest protection updates must be installed.</b> This build reports Microsoft Defender's local signature age and Defender's own out-of-date flag under the effective Windows policy, but it does not compare Defender engine/platform versions with the latest Microsoft release. Windows Security Center's aggregate antivirus category does not identify third-party products or prove that their virus definitions, engines or platform versions are current; check the installed antivirus vendor console directly. For built-in Windows Firewall, keep Windows Update current; third-party firewalls may expose their own software and rule-feed update status. An installed but outdated product is a security risk. Open the existing product or operating-system security console and check for updates; if it reports out of date, update it promptly or contact your administrator. UJANI will not silently install, update, replace or reconfigure security software.</span></div>
     <div className="security-metrics">
       <article className="security-metric"><ShieldCheck/><small>ANTIVIRUS CATEGORY</small><b>{statusLabel(antivirus?.status)}</b><span>{statusDetail(antivirus)}</span></article>
       <article className="security-metric"><Shield/><small>FIREWALL CATEGORY</small><b>{statusLabel(firewall?.status)}</b><span>{statusDetail(firewall)}</span></article>
       <article className="security-metric"><ShieldAlert/><small>THREAT ALERTS</small><b>Not collected</b><span>No threat-event feed is connected</span></article>
-      <article className="security-metric"><AlertTriangle/><small>UPDATES & SCANS</small><b>Unknown</b><span>Update and scan freshness are not provided by this aggregate API</span></article>
+      <article className="security-metric"><AlertTriangle/><small>LATEST RELEASE CHECK</small><b>Not verified</b><span>Defender signature age is checked against the effective Windows due threshold, but latest Defender engine/platform release status and firewall update currency are not independently verified. Check the installed product directly.</span></article>
     </div>
     <div className="security-workspace">
       <div className="security-panel"><h3>Local provider status</h3><p>Nothing is queried until you explicitly enable a local status check.</p>
@@ -94,9 +130,33 @@ export default function SecurityCentre() {
         {localChecksEnabled && <div className="security-empty"><b>Local status check enabled for this session</b><small>Results remain on this device. Each query requires a fresh native confirmation; no standing permission is stored.</small></div>}
         {localChecksEnabled && <button type="button" className="model-run" onClick={() => refreshStatus()} disabled={checking}><RefreshCw size={15}/> {checking ? "Checking…" : "Refresh local status"}</button>}
         {!localChecksEnabled && <button type="button" className="model-run" onClick={() => setStep(1)}><Plug size={15}/> Review local status checks <ChevronRight size={15}/></button>}
+        <div className="security-provider">
+          <b>Microsoft Defender detailed status (Windows)</b>
+          <small>Read-only Defender cmdlet · {defenderStatus ? "Reported" : "Not checked"}</small>
+          <p>Reads Defender's local protection flags, signature age and timestamp, and engine/product/service versions. It does not compare versions with Microsoft's latest release feed.</p>
+          <button type="button" className="model-run" onClick={checkDefenderStatus} disabled={defenderChecking}>
+            <RefreshCw size={15}/> {defenderChecking ? "Checking Defender…" : "Check Defender status"}
+          </button>
+          {defenderError && <p className="security-error" role="alert">{defenderError}</p>}
+          {defenderStatus && <div className="security-provider">
+            <b>{defenderStatus.antivirus_enabled === true ? "Antivirus enabled" : defenderStatus.antivirus_enabled === false ? "Antivirus not enabled" : "Antivirus status unknown"} · {defenderStatus.real_time_protection_enabled === true ? "Real-time protection enabled" : defenderStatus.real_time_protection_enabled === false ? "Real-time protection not enabled" : "Real-time protection status unknown"}</b>
+            {(defenderStatus.antivirus_enabled === false || defenderStatus.real_time_protection_enabled === false) && <p className="security-error" role="alert"><b>Defender protection needs attention.</b> Microsoft Defender reports antivirus or real-time protection disabled. This is Defender-specific evidence only; check Windows Security Center to confirm whether another approved antivirus provider is active. If no other protection is active, the device may be at risk.</p>}
+            <p>Security intelligence age: {defenderStatus.signature_age_days ?? "Not reported"} day(s)</p>
+            <p>Defender-reported signature freshness: {defenderStatus.signature_update_status === "out_of_date" ? "OUT OF DATE" : defenderStatus.signature_update_status === "within_policy_age_limit" ? "Not reported out of date by Defender" : "Unknown"}</p>
+            {defenderStatus.signature_update_status === "out_of_date" && <p className="security-error" role="alert"><b>Security intelligence is OUT OF DATE.</b> Microsoft Defender reports that its effective signature-freshness policy has been breached. Open Windows Security and update protection immediately, or contact your administrator.</p>}
+            {defenderStatus.signature_update_status === "within_policy_age_limit" && <p className="security-muted">Microsoft Defender does not report its signatures as out of date under the effective Windows policy. This does not independently confirm the latest Microsoft release.</p>}
+            {defenderStatus.signature_update_status === "unknown" && <p className="security-error" role="alert">Defender did not provide a verifiable signature-freshness state. Check Windows Security and update protection if required.</p>}
+            <p>Last signature update: {defenderStatus.signature_last_updated ?? "Not reported"}</p>
+            <p>Signature version: {defenderStatus.signature_version ?? "Not reported"}</p>
+            <p>Engine: {defenderStatus.engine_version ?? "Not reported"} · Platform/product: {defenderStatus.product_version ?? "Not reported"} · Service: {defenderStatus.service_version ?? "Not reported"}</p>
+            <small>Checked: {new Date(defenderStatus.checked_at_unix_ms).toLocaleString()} · Source: {defenderStatus.source}</small>
+            <p className="security-muted">{defenderStatus.detail}</p>
+            <p className="security-muted">If Defender reports an out-of-date signature or disabled protection, open Windows Security and update protection or contact your administrator. A signature age below the configured due threshold does not prove that the installed version is the latest release.</p>
+          </div>}
+        </div>
         {providers.map((p) => {
           const result = statuses.find((item) => item.provider_id === p.id);
-          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <small>Source: {result.source}</small>}</div>;
+          return <div className="security-provider" key={p.id}><b>{p.name}</b><small>{p.os} · {statusLabel(result?.status)}</small><p>{result?.detail ?? p.detail}</p>{result && <><small>Assessment: {result.assessment.replace(/_/g, " ")} · Product identity {result.product_identity_known ? "known" : "not exposed by aggregate API"}</small><p>{result.recommendation}</p><small>Source: {result.source}</small></>}</div>;
         })}
         {plannedProviders.map((p) => <div className="security-provider" key={p.name}><b>{p.name}</b><small>{p.os} · Planned, not connected</small><p>{p.detail}</p></div>)}
         {statuses.length > 0 && <p className="security-muted">Last checked: {new Date(Math.max(...statuses.map((s) => s.observed_at_unix_ms))).toLocaleString()}</p>}
@@ -106,6 +166,7 @@ export default function SecurityCentre() {
         <p><b>Local-only by default</b><br/>The Windows API result is returned to this application and is not uploaded or shared.</p>
         <p><b>Read-only first</b><br/>No firewall changes, quarantine, process termination or automatic remediation.</p>
         <p><b>Honest status</b><br/>Missing, stale, unsupported or conflicting information is never shown as protected.</p>
+        <p><b>Update freshness is a separate security check</b><br/>A healthy category does not prove that virus definitions, antivirus engine/platform or firewall software and signature/rule feeds are current. This adapter cannot compare installed versions with the latest vendor releases; users must verify updates in the existing product or OS console.</p>
         <p><b>Aggregate status only</b><br/>Windows Security Center reports category health, not the name or full capabilities of each installed security product.</p>
       </div>
     </div>
