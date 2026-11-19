@@ -4,23 +4,21 @@
 
 ## Current main
 
-- Main SHA: `ebd909a04a16659c314927ee3c192efbcbec8034`.
-- This main includes today's merged PRs #365 (native-command manifest mapping regression tests; merge `9b74ec8dc4f3c2ae2e024b4939f1f114f7289c37`) and #366 (cloud-gateway DNS answer-set filtering tests; merge `ebd909a04a16659c314927ee3c192efbcbec8034`).
-- Current-head CI [44579400789](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44579400789) and CodeQL [44579408265](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44579408265) are queued. Do not describe this post-merge SHA as green yet.
-- The immediately preceding main SHA `95cd331ca870a3ca4de534997ee07f508a00669a` passed CI [44549577584](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577584) and CodeQL [44549577477](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577477), including Rust lint/core tests, frontend and Rust dependency audits, TypeScript build, workflow lint, and native tests on Linux, Windows and macOS.
+- Main SHA: `6b4ab2ec5ccae5528b5de3e4b1ee16e63100d32f`.
+- This main includes today's merged PRs #365 (native-command manifest mapping regressions; merge `9b74ec8dc4f3c2ae2e024b4939f1f114f7289c37`), #366 (cloud-gateway DNS answer-set filtering tests; merge `ebd909a04a16659c314927ee3c192efbcbec8034`) and #369 (catalogue-aligned model RAM recommendations; merge `6b4ab2ec5ccae5528b5de3e4b1ee16e63100d32f`).
+- Current-head CI [44582163967](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44582163967) is in progress; CodeQL [44582164172](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44582164172) has passed. Do not describe this post-merge SHA as fully green until native Linux/Windows/macOS jobs finish.
+- The immediately preceding main SHA `ebd909a04a16659c314927ee3c192efbcbec8034` had CI [44579400789](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44579400789) and CodeQL [44579408265](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44579408265) cancelled when PR #369 advanced main. The earlier baseline `95cd331ca870a3ca4de534997ee07f508a00669a` passed CI [44549577584](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577584) and CodeQL [44549577477](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577477), including Linux/Windows/macOS native tests.
 - Today's earlier merged work also includes #351 (non-streaming Ollama cancellation regression), #354 (evidence-qualified model inventory v2 UI), and #363 (history deletion input validation before receipt). Earlier same-day changes include clock reliability, history/cache consent ordering and hash-bound file-scan evidence.
 
 ## Current open PRs
 
 | PR | Exact head | Latest evidence at this snapshot |
 |---|---|---|
-| [#364](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/364) | `e88d8691745f31a4d35fb385efc0cc38ed3c44d3` | Removed a Clippy clone-on-copy warning. CI queued, installer-size audit running; Android, CodeQL and security-watch checks passed. |
-| [#367](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/367) | `c5b3ac14d9e769ace576676201fa270643681d3b` | Timestamp test now asserts the complete formatted value. CI and installer audit queued; CodeQL/security watch passed. |
-| [#368](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/368) | `095807597b5d69e569b38f02181196ef49bd4470` | Added a named capability region and assertions for both ARIA label targets; both review threads resolved. CI/installer audit queued; CodeQL/security watch passed. |
-| [#369](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/369) | `b9274dff110e4df89cc7b82e01e2a03575e54fe3` | Installer-size audit, CodeQL and security watch passed. A prior macOS native job was cancelled; its rerun was requested and the CI run remains queued. |
-| [#370](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/370) | `152f32ccb28602ca8570a1ab65e0753602932cf6` | Fixed the static security-map check to require the shared display-name validator's public cross-crate export. The prior failure was a stale `pub(crate)` expectation; new CI, CodeQL, Android and installer checks are pending. |
-| [#371](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/371) | `4f17f612347996a3a0287269ec8403bf3da4e415` | Cross-repository contract/status documentation; exact-head CI and CodeQL queued. |
-
+| [#364](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/364) | `b6ddd05f89f8a265eb0403b39757e7537e9f1dff` | Removed a redundant nonce binding after Clippy failed on the prior head; exact-head CI rerun is in progress/queued. Do not merge until every required check passes. |
+| [#367](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/367) | `c5b3ac14d9e769ace576676201fa270643681d3b` | Rust tests/lint/audits, TypeScript build, CodeQL, Linux/Windows native tests and Linux/Windows installers passed; macOS native and installer jobs remain in progress. |
+| [#368](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/368) | `095807597b5d69e569b38f02181196ef49bd4470` | All functional, native and security checks passed; macOS installer was cancelled and needs a successful rerun. |
+| [#370](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/370) | `152f32ccb28602ca8570a1ab65e0753602932cf6` | Cross-platform filename validation now skips and reports unsafe folder entries without discarding valid files. Rust/frontend tests, audits, CodeQL and Linux/Windows installers passed; Linux native and Android ARM64 reruns are in progress, with macOS native/installer pending. |
+| [#371](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/371) | `cb988d329a4999b09258d4d76dd59f6b89e04c99` | Updated audit wording and named CodeQL in the merge prerequisite. Exact-head CI is in progress; CodeQL analysis is still running. |
 Open PR heads and base branches must be rechecked before merging; none of the above is counted as merged.
 
 ## Model/runtime intelligence
