@@ -116,7 +116,6 @@ test("storage access failures do not create an implicit model selection", () => 
 
 test("feature permissions cards expose stable accessible names, summaries and live status", async () => {
   const { readFile } = await import("node:fs/promises");
-  const { fileURLToPath } = await import("node:url");
   const source = await readFile(new URL("./FeaturePermissionsCentre.tsx", import.meta.url), "utf8");
   assert.match(source, /aria-label="Feature capability entries"/);
   assert.match(source, /aria-labelledby=\{"feature-title-" \+ feature\.id\}/);
