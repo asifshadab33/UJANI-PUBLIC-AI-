@@ -35,17 +35,17 @@
 5. Schema compatibility, unknown fields, stale evidence, unsupported runtimes, empty inventories, resource mismatch, consent revocation and owner selection tests.
 
 ## Live PR status
-- Main: `010b24a927a75411e8f7c6d2ec46cb4c3ca6e9fb` (PR #336 security-update freshness merged). Post-merge CI #44451529292 is still running (Linux/Windows native pending); CodeQL #44451529244 passed.
-- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint and security-sensitive check passed; Linux/macOS/Windows native tests in progress, Android/installer/CodeQL in progress, Rust core/lint/TypeScript/audits queued; unsigned preview skipped.
-- #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: digest integrity/model inventory v2; Rust core, Linux native, workflow lint, TypeScript, frontend/Rust audits and security watch passed; macOS/Windows native and installer audit in progress; Android and CodeQL passed. Keep draft; branch is 3 commits behind main.
+- Main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11` (PR #336 security-update freshness and PR #332 local model-inventory v2 producer merged). Post-merge CI #44453580274 pending; CodeQL #44453580233 queued.
+- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint and security-sensitive check passed; Linux/macOS/Windows native tests in progress, Android/installer/CodeQL in progress, Rust core/lint/TypeScript/audits queued; now 1 commit behind main. Do not merge until clock-reliability overlap in #324 is reconciled.
+- #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: merged as `69f7794bd045dc50e9421b214e1dedd20f6b4d11`. Exact-head Rust core, Linux/Windows/macOS native, Rust lint/audit, frontend/TypeScript, Android, CodeQL, installer-size and security-watch checks passed; unsigned preview skipped. Post-merge CI is pending.
 - #334 closed as superseded by current-main PR #343; branch retained.
-- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped.
-- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed.
+- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped; now 1 commit behind main.
+- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed; now 1 commit behind main.
 - #324/#328: stale clock/Ollama cancellation work; update/revalidate before merge.
 - #333/#337 closed as superseded by #341; #334 closed as superseded by #343; #339 closed as superseded by #342. Original branches retained.
-- #342: current-main master-backlog documentation PR; CI, CodeQL, installer and security-sensitive checks queued; unsigned preview skipped. Draft.
+- #342: current-main master-backlog documentation PR; CI, CodeQL, installer and security-sensitive checks queued; unsigned preview skipped; base is 1 commit behind main after PR #332 merge. Draft.
 
 ## Evidence rules
-Exact head SHA required. No green claim from partial/stale checks. Public main CI is still running; physical devices, production signing, updater rollback and independent security tests are not verified.
+Exact head SHA required. No green claim from partial/stale checks. Public post-merge CI is pending; physical devices, production signing, updater rollback and independent security tests are not verified.
 
 **Verified shared-schema evidence (2026-11-19):** Both main branches have byte-identical `schemas/shared-contract-manifest-v1.json` (Git blob SHA `5c41a57411453145f0d80a470f9985375b6e3ca4`). The manifest pins the same model/runtime inventory v1 and v2 schema, v1 task-contract schema, consent-binding vector, and v1/v2 inventory vectors. This verifies artifact parity—not production transport compatibility, authenticated inventory admission, or remote execution.
