@@ -30,7 +30,9 @@ export function formatOptionalBytes(value) {
   if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return "Unknown";
   if (value === 0) return "0 bytes";
   if (value < 1024) return `${value} bytes`;
-  const mib = value / (1024 * 1024);
+  const kib = value / 1024;
+  if (kib < 1024) return `${kib.toLocaleString(undefined, { maximumFractionDigits: 1 })} KiB`;
+  const mib = kib / 1024;
   if (mib < 1024) return `${mib.toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB`;
   const gib = mib / 1024;
   return `${gib.toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`;
