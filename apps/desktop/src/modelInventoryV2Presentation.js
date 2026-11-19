@@ -3,8 +3,9 @@ export function evidenceSummary(evidence) {
   if (!evidence || evidence.source === "unknown" || evidence.confidence === "unknown") {
     return "Unknown (no evidence)";
   }
-  const observed = Number.isFinite(evidence.observed_at_unix_ms) && evidence.observed_at_unix_ms > 0
-    ? ` · observed ${new Date(evidence.observed_at_unix_ms).toLocaleString()}`
+  const timestamp = evidence.observed_at_unix_ms;
+  const observed = Number.isFinite(timestamp) && timestamp > 0 && timestamp <= 8.64e15
+    ? ` · observed ${new Date(timestamp).toLocaleString()}`
     : "";
   return `${evidence.source} · ${evidence.confidence}${observed}`;
 }
