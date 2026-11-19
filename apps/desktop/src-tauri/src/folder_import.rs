@@ -18,6 +18,7 @@ const MAX_DIRECTORY_ENTRIES: usize = 5_000;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
 const MAX_FOLDER_SCAN_DURATION: Duration = Duration::from_secs(15);
+const MAX_REPORTED_SKIPPED_FILE_NAMES: usize = 10;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
@@ -40,6 +41,7 @@ struct SelectedTextFile {
 struct CollectedFolder {
     files: Vec<SelectedTextFile>,
     skipped_file_count: usize,
+    skipped_file_names: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -59,6 +61,7 @@ pub struct FolderImportResult {
     files: Vec<FolderFileResult>,
     total_bytes: usize,
     skipped_file_count: usize,
+    skipped_file_names: Vec<String>,
 }
 
 /// Opens a native OS folder picker and processes only its immediate text-file children.
@@ -135,10 +138,12 @@ pub async fn process_selected_folder(
             files: Vec::new(),
             total_bytes: 0,
             skipped_file_count: 0,
+            skipped_file_names: Vec::new(),
         });
     };
     let files = collected.files;
     let skipped_file_count = collected.skipped_file_count;
+    let skipped_file_names = collected.skipped_file_names;
 
     // Bind the receipt to the exact selected filenames and contents, without
     // copying document data into the receipt ledger.
@@ -218,6 +223,7 @@ pub async fn process_selected_folder(
                 files: results,
                 total_bytes,
                 skipped_file_count,
+                skipped_file_names,
             })
         },
         registration,
@@ -259,6 +265,7 @@ fn collect_selected_folder_with_budget(
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
     let mut skipped_file_count = 0usize;
+    let mut skipped_file_names = Vec::new();
     for entry in walked.files {
         crate::ensure_task_not_cancelled(token)?;
         // The walker returns canonical paths. Require a direct child and reopen it
@@ -272,6 +279,9 @@ fn collect_selected_folder_with_budget(
         let display_name = entry.name.to_string_lossy();
         if !ujani_core::valid_display_file_name(&display_name) {
             skipped_file_count += 1;
+            if skipped_file_names.len() < MAX_REPORTED_SKIPPED_FILE_NAMES {
+                skipped_file_names.push(display_name.into_owned());
+            }
             continue;
         }
 
@@ -312,6 +322,7 @@ fn collect_selected_folder_with_budget(
     Ok(CollectedFolder {
         files,
         skipped_file_count,
+        skipped_file_names,
     })
 }
 
@@ -398,6 +409,8 @@ mod tests {
 
         let collected = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
         assert_eq!(collected.skipped_file_count, 2);
+        assert!(collected.skipped_file_names.contains(&r"team\notes.txt".to_string()));
+        assert!(collected.skipped_file_names.contains(&"notes:stream.txt".to_string()));
         assert_eq!(collected.files.len(), 1);
         assert_eq!(collected.files[0].name, "safe.txt");
     }
