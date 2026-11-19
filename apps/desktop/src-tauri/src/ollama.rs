@@ -739,11 +739,17 @@ mod tests {
         };
         assert!(crate::ollama::metadata_matches_model_identity(&model, &metadata));
 
-        for invalid in ["", "sha256:short", "not-a-digest", &format!("sha256:{}", "g".repeat(64))] {
+        let invalid_digests = vec![
+            String::new(),
+            "sha256:short".to_string(),
+            "not-a-digest".to_string(),
+            format!("sha256:{}", "g".repeat(64)),
+        ];
+        for invalid in invalid_digests {
             let mut invalid_model = model.clone();
-            invalid_model.digest = Some(invalid.to_string());
+            invalid_model.digest = Some(invalid.clone());
             let mut invalid_metadata = metadata.clone();
-            invalid_metadata.model_digest = Some(invalid.to_string());
+            invalid_metadata.model_digest = Some(invalid);
             assert!(!crate::ollama::metadata_matches_model_identity(&invalid_model, &metadata));
             assert!(!crate::ollama::metadata_matches_model_identity(&model, &invalid_metadata));
         }
