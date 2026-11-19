@@ -45,3 +45,5 @@
 
 ## Evidence rules
 Exact head SHA required. No green claim from partial/stale checks. Main-branch post-merge CI, physical devices, production signing, updater rollback and independent security tests are not verified in this run.
+
+**Verified shared-schema evidence (2026-11-19):** Both main branches have byte-identical `schemas/shared-contract-manifest-v1.json` (Git blob SHA `5c41a57411453145f0d80a470f9985375b6e3ca4`). The manifest pins the same model/runtime inventory v1 and v2 schema, v1 task-contract schema, consent-binding vector, and v1/v2 inventory vectors. This verifies artifact parity—not production transport compatibility, authenticated inventory admission, or remote execution.
