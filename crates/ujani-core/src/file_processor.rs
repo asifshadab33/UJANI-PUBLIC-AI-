@@ -20,7 +20,7 @@ pub(crate) fn valid_display_file_name(file_name: &str) -> bool {
         && file_name != "."
         && file_name != ".."
         && !file_name.chars().any(|character| {
-            character.is_control() || character == '/' || (character == char::from(92) || (cfg!(windows) && character == ':'))
+            character.is_control() || character == '/' || (character == char::from(92) || character == ':')
         })
 }
 
@@ -98,6 +98,9 @@ mod tests {
         // Backslash is rejected on every platform so a display name cannot
         // become a path-like value when metadata crosses operating systems.
         assert!(analyze_text(r"team\notes.txt", "content").is_err());
+        // A colon is a Windows drive/alternate-stream separator and is
+        // rejected on every platform for portable display-name metadata.
+        assert!(analyze_text("notes:stream.txt", "content").is_err());
         #[cfg(windows)]
         assert!(analyze_text(r"C:\Users\person\notes.txt", "content").is_err());
         assert!(analyze_text("notes\n.txt", "content").is_err());
