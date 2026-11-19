@@ -53,32 +53,32 @@ export function recommendDefaultModel(totalMemoryMb, availableMemoryMb, os, samp
       reason: "On a 4 GB computer, keep memory available for the operating system and UJANI. Native OS-powered features remain available without downloading a model.",
     };
   }
-  if (totalMemoryMb >= 24576 && availableMemoryMb >= 10240) {
+  if (totalMemoryMb >= 24576 && availableMemoryMb >= 16384) {
     return {
       model: "qwen3:8b",
       title: "Recommended candidate: Qwen3 8B",
-      reason: "This device reports at least 24 GiB total RAM and 10 GiB available RAM. Start with a 4K context and one inference at a time.",
+      reason: "This device reports at least 24 GiB total RAM and 16 GiB available RAM, matching the catalogue minimum planning guide for this candidate. Start with a 4K context and one inference at a time.",
     };
   }
-  if (totalMemoryMb >= 16384 && availableMemoryMb >= 6144) {
+  if (totalMemoryMb >= 16384 && availableMemoryMb >= 8192) {
     return {
       model: "qwen3:4b",
       title: "Recommended candidate: Qwen3 4B",
-      reason: "This device reports at least 16 GiB total RAM and 6 GiB available RAM. Start with a 4K context and one inference at a time.",
+      reason: "This device reports at least 16 GiB total RAM and 8 GiB available RAM, matching the catalogue minimum planning guide for this candidate. Start with a 4K context and one inference at a time.",
     };
   }
-  if (totalMemoryMb >= 8192 && availableMemoryMb >= 3584) {
+  if (totalMemoryMb >= 8192 && availableMemoryMb >= 4096) {
     return {
       model: "qwen3:1.7b",
       title: "Recommended candidate: Qwen3 1.7B",
-      reason: "This device reports at least 8 GiB total RAM and 3.5 GiB available RAM. Start with a 4K context and one inference at a time.",
+      reason: "This device reports at least 8 GiB total RAM and 4 GiB available RAM, matching the catalogue minimum planning guide for this candidate. Start with a 4K context and one inference at a time.",
     };
   }
-  if (totalMemoryMb >= 6144 && availableMemoryMb >= 2560) {
+  if (totalMemoryMb >= 6144 && availableMemoryMb >= 2048) {
     return {
       model: "qwen3:0.6b",
       title: "Recommended candidate: Qwen3 0.6B",
-      reason: "This device reports at least 6 GiB total RAM and 2.5 GiB available RAM. This is the lightest general-purpose chat candidate; start with a 4K context.",
+      reason: "This device reports at least 6 GiB total RAM and 2 GiB available RAM, matching the catalogue minimum planning guide for this candidate. This is the lightest general-purpose chat candidate; start with a 4K context.",
     };
   }
 
