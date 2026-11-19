@@ -519,8 +519,7 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         self.assertEqual(missing_history_key_recovery_guards(unsafe), ["history_key"])
 
 
-if __name__ == "__main__":
-    unittest.main()class HistoryDeleteInputValidationTests(unittest.TestCase):
+class HistoryDeleteInputValidationTests(unittest.TestCase):
     def test_invalid_entry_id_is_rejected_before_receipt(self):
         source = """
         fn delete_task_history(entry_id) {
@@ -548,4 +547,5 @@ if __name__ == "__main__":
         self.assertEqual(missing_history_delete_input_guards(no_message), ["delete_task_history"])
 
 
-
+if __name__ == "__main__":
+    unittest.main()
