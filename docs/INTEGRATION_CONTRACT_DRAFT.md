@@ -119,3 +119,22 @@ The v2 schema is metadata only. Enterprise scope requires a non-null pseudonymou
 ### 2026-11-16 model inventory v2 parity and evidence gate
 
 The v2 schema and reference vector are byte-identical between Public PR #321 and Enterprise main (merged through Enterprise PR #244). Enterprise main now carries v2; Public main remains on v1 until PR #321 passes and merges. V2 remains metadata-only and does not imply live authenticated inventory ingestion or remote execution. For `organisation_enrolled`, v2 requires a non-empty pseudonymous `device_ref`; a missing or null device identity is invalid. Host platform and aggregate CPU/memory/storage facts are usable for model-fit decisions only when their evidence is fresh, `source=os_api`, and `confidence=verified`. Runtime API/metadata and catalogue claims remain distinct evidence classes and cannot substitute for OS-observed host facts. Unknown provider names remain schema-valid for forward compatibility but are not selectable until a consumer has a registered adapter; the current reference selector registers Ollama only. Enterprise's v2 descriptor remains planning metadata, not authenticated ingestion or task authorization.
+
+
+## Latest cross-repository integration evidence — 2026-11-19
+
+This status section supersedes earlier dated snapshots. The shared schemas are specifications and fixtures; they do not establish authenticated transport, execution authorization or production deployment.
+
+### Verified main-branch status
+- Public main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11`. The local model/runtime inventory v2 producer is merged; the desktop UI presents installed models and evidence and retains explicit owner model choice. Post-merge CI is pending.
+- Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`. PR #249's authenticated inventory v2 admission/persistence boundary and PR #266 advisory model/task matching are merged. Enterprise main CI, RustSec and CodeQL passed.
+- Enterprise inventory admission is a database/policy boundary, not a deployed HTTP service. The static operator console reads same-origin `GET /api/v1/operator/overview`; without the authenticated service it remains unavailable, with synthetic demo data only after an explicit demo action. No live inventory/operator view is established.
+
+### Shared artifact parity
+The main branches' `schemas/shared-contract-manifest-v1.json` is byte-identical (Git blob SHA `5c41a57411453145f0d80a470f9985375b6e3ca4`). All seven pinned artifacts were fetched from both main branches and matched the manifest hashes: local-model catalogue v1, model/runtime inventory v1 and v2 schemas, personal-to-enterprise task-contract v1 schema, consent-binding vector, and inventory v1/v2 vectors. This proves schema/fixture parity only.
+
+### Remaining protocol incompatibility
+Public peer envelope v2 and Enterprise WorkloadManifest v1 still differ in sender/device/tenant/audience identity, consent binding, privacy classification, capability/access-scope vocabulary, resource units and bounds, expiry units, nonce encoding and durable replay semantics, state sequencing and receipt/signature semantics. No production authenticated adapter maps these protocols end-to-end. The adapter must not invent missing identity/consent/trust and must atomically bind task digest, replay claim, policy admission and lease before any future execution.
+
+### Model/runtime inventory boundary
+The descriptor remains metadata-only: observed/runtime-reported/catalogue/estimate/unknown evidence, freshness, platform/accelerator compatibility and explicit capability evidence. Public scope is personal-local-only; Enterprise scope is enrolled/authorised, owner-consented and administrator-approved. No prompts, files, paths, credentials or history are shared. A descriptor is not trust or execution authority. Remote worker execution and automated containment remain disabled.
