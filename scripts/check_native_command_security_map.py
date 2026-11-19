@@ -384,6 +384,22 @@ def missing_history_receipt_guards(source: str) -> list[str]:
     return sorted(set(missing))
 
 
+def missing_history_delete_input_guards(source: str) -> list[str]:
+    """Require invalid entry IDs to be rejected before receipt reservation or deletion."""
+    try:
+        command = rust_function_body(source, "delete_task_history")
+    except ValueError:
+        return ["delete_task_history"]
+    validation_at = command.find("if entry_id <= 0")
+    rejection_at = command.find("return Err", validation_at)
+    receipt_at = command.find("with_local_state_receipt")
+    if not (0 <= validation_at < rejection_at < receipt_at):
+        return ["delete_task_history"]
+    if "Invalid history entry identifier" not in command[rejection_at:receipt_at]:
+        return ["delete_task_history"]
+    return []
+
+
 def missing_history_listing_receipt_guards(source: str) -> list[str]:
     """Require a metadata-only receipt around history listing's migration/retention writes."""
     try:
@@ -777,6 +793,13 @@ def main() -> int:
         errors.append(
             "history persistence: missing early validation or content-free receipt metadata in "
             + ", ".join(missing_history_guards)
+        )
+
+    missing_history_delete_guards = missing_history_delete_input_guards(history_source)
+    if missing_history_delete_guards:
+        errors.append(
+            "history deletion: invalid entry IDs must fail before receipt reservation in "
+            + ", ".join(missing_history_delete_guards)
         )
 
     missing_history_list_guards = missing_history_listing_receipt_guards(history_source)
