@@ -571,8 +571,10 @@ def manifest_entry_errors(group_name: str, name: str, entry: dict) -> list[str]:
         "persistent_local_mutation", "persistent_security_mutation",
         "device_identity_mutation", "peer_authenticated_state_mutation",
         "peer_cryptographic_action", "peer_trust_mutation",
+        "external_data_transfer", "task_control",
+        "selected_folder_read_and_local_execution",
     } and receipt == "none-read-only":
-        errors.append(f"{group_name}:{name}: mutating command cannot be classified as read-only/no-receipt")
+        errors.append(f"{group_name}:{name}: stateful, external-transfer, or execution command cannot be classified as read-only/no-receipt")
     return errors
 
 
