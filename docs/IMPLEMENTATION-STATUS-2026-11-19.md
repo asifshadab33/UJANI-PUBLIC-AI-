@@ -32,14 +32,14 @@ Open PR heads and base branches must be rechecked before merging; none of the ab
 ## Release blockers and verification limits
 
 - Native IPC inventory and manifest checks are audit aids, **not runtime authorization proof**. Issue #120 remains open for command-by-command policy, consent, receipt, denial-before-side-effect and alternate invocation coverage.
-- The latest completed main Rust dependency audit reported **7 allowed warnings**: unmaintained `chrono` (RUSTSEC-2026-0543), `proc-macro-error` (RUSTSEC-2024-0370), `ttf-parser` (RUSTSEC-2026-0192), `zbus_names` (RUSTSEC-2026-0371), `zvariant` (RUSTSEC-2026-0370), `zvariant_derive` (RUSTSEC-2026-0372), and unsound `glib::VariantStrIter` (RUSTSEC-2024-0429). A green allowlisted audit is not a clean dependency set.
+- The latest completed main Rust dependency audit reported **7 non-failing advisory warnings** (the audit job does not fail on these findings; this is not an explicit advisory allowlist): unmaintained `chrono` (RUSTSEC-2026-0543), `proc-macro-error` (RUSTSEC-2024-0370), `ttf-parser` (RUSTSEC-2026-0192), `zbus_names` (RUSTSEC-2026-0371), `zvariant` (RUSTSEC-2026-0370), `zvariant_derive` (RUSTSEC-2026-0372), and unsound `glib::VariantStrIter` (RUSTSEC-2024-0429). A successful audit job with these warnings is not a clean dependency set.
 - Complete application-level OS sandboxing and PDF-worker confinement are not independently verified across platforms. Windows Job Objects alone do not deny filesystem/network access; macOS `sandbox-exec` is deprecated; Linux restrictions still require device validation.
 - History key rotation/recovery, filesystem symlink/reparse-point and TOCTOU tests, PDF upload/cancel/freeze regressions, fuzz campaigns, crash recovery, production signing, SBOM/provenance, updater rollback and physical install/upgrade/uninstall tests remain separate gates.
 - Worker/Partner, peer execution and remote task dispatch remain disabled. No production release is authorised by this status update.
 
 ## Next work
 
-1. Complete current-head CI for #364, #367–#371; resolve failures, stale bases and review blockers before merging.
+1. Complete current-head CI and CodeQL for #364, #367–#371; resolve failures, stale bases and review blockers before merging.
 2. Finish native IPC authorization/negative tests and filesystem/PDF boundary review.
 3. Remediate or precisely bound the seven Rust advisories with cross-platform evidence.
 4. Complete OS-enforced PDF/application isolation, key recovery and crash/cancel regressions.
