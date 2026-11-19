@@ -395,7 +395,7 @@ def missing_history_delete_input_guards(source: str) -> list[str]:
     receipt_at = command.find("with_local_state_receipt")
     if not (0 <= validation_at < rejection_at < receipt_at):
         return ["delete_task_history"]
-    if "Invalid history entry identifier" not in command[validation_at:rejection_at]:
+    if "Invalid history entry identifier" not in command[rejection_at:receipt_at]:
         return ["delete_task_history"]
     return []
 
