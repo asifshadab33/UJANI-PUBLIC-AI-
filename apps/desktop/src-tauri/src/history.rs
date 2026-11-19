@@ -395,7 +395,27 @@ fn list(db:&Connection)->Result<Vec<HistoryEntry>,String>{
 
 #[tauri::command] pub fn get_task_history_settings(app:AppHandle)->Result<HistorySettings,String>{settings(&open(&app)?)}
 #[tauri::command]
-pub fn set_task_history_enabled(app: AppHandle, enabled_value: bool) -> Result<HistorySettings, String> {
+pub async fn set_task_history_enabled(
+    app: AppHandle,
+    enabled_value: bool,
+) -> Result<HistorySettings, String> {
+    // Enabling persistent prompt/result recording is a privacy-sensitive opt-in.
+    // The native confirmation must precede receipt reservation, vault access,
+    // legacy-row migration and the settings write. Disabling remains immediate.
+    if enabled_value {
+        let approved = crate::native_consent::confirm_native(
+            &app,
+            "Enable encrypted task history",
+            "Save future task prompts and results on this device using AES-256-GCM encryption. The encryption key is held in the operating-system credential vault. UJANI keeps at most 100 entries for 30 days and does not send history to a cloud service. Any legacy plaintext history found will be migrated before recording is enabled. No history setting will change unless you approve.".to_string(),
+            tokio_util::sync::CancellationToken::new(),
+            std::time::Duration::from_secs(120),
+        )
+        .await;
+        if !approved {
+            return Err("Encrypted task history was not enabled because native confirmation was declined, cancelled, or timed out. No history settings were changed.".into());
+        }
+    }
+
     let input = serde_json::to_vec(&enabled_value)
         .map_err(|error| format!("Could not encode history setting audit metadata: {error}"))?;
     crate::with_local_state_receipt(&app, "history.settings.update", &input, || {
