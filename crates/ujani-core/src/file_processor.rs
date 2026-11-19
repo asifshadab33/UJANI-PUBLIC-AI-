@@ -101,6 +101,7 @@ mod tests {
         // A colon is a Windows drive/alternate-stream separator and is
         // rejected on every platform for portable display-name metadata.
         assert!(analyze_text("notes:stream.txt", "content").is_err());
+        assert!(analyze_text("C:notes.txt", "content").is_err());
         #[cfg(windows)]
         assert!(analyze_text(r"C:\Users\person\notes.txt", "content").is_err());
         assert!(analyze_text("notes\n.txt", "content").is_err());
