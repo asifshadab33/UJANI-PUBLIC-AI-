@@ -36,7 +36,7 @@ test("unknown resource values are not rendered as zero", () => {
 test("byte estimates are bounded to readable units and unknown stays explicit", () => {
   assert.equal(formatOptionalBytes(null), "Unknown");
   assert.equal(formatOptionalBytes(0), "0 bytes");
-  assert.equal(formatOptionalBytes(1024), "0 MiB");
+  assert.equal(formatOptionalBytes(1024), "1 KiB");
   assert.match(formatOptionalBytes(1024 * 1024), /1 MiB/);
   assert.match(formatOptionalBytes(1024 * 1024 * 1024), /1 GiB/);
 });
