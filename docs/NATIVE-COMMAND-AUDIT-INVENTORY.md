@@ -120,3 +120,10 @@ For every registered command, complete a row with:
 ## Release rule
 
 This inventory is a starting point, **not completion of issue #120**. Do not close the native-command audit or declare Public AI release-ready until all registered and conditional commands have complete mappings, sensitive commands enforce shared native authorization, required receipts are covered, negative tests pass, and CI rejects unreviewed command additions.
+
+
+## 2026-11-19 consolidated consent hardening — saved-history and cache opt-in
+
+- Saved history enabling requires native Yes/No confirmation before receipt reservation, vault-key access, legacy plaintext migration or settings write; disabling remains immediate.
+- Persistent search-cache enabling reads existing state without creating/migrating SQLite, requires native consent on off-to-on transition, rechecks current state inside the write transaction, and denies a concurrent re-enable without consent. The confirmation explains AES-GCM encryption, OS credential-vault custody, retention/storage limits and local-only scope.
+- Static command-security checks and regressions verify consent-before-receipt/write order, read-only state inspection, the off-to-on transition and transactional recheck. This is a targeted boundary improvement, not closure of the full native-command authorization audit.
