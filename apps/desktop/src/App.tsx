@@ -11,6 +11,7 @@ import SecurityCentre from "./SecurityCentre";
 import FeaturePermissionsCentre from "./FeaturePermissionsCentre";
 import ReminderCentre from "./ReminderCentre";
 import ModelCatalogue from "./ModelCatalogue";
+import { evidenceSummary, capabilityStatusLabel, booleanCapabilityLabel, formatOptionalNumber, formatOptionalBytes } from "./modelInventoryV2Presentation.js";
 import { MODEL_SELECTION_STORAGE_KEY, readModelSelectionPreference } from "./modelSelectionPreference.js";
 import { Activity, Cpu, HardDrive, ShieldCheck, Sparkles, Zap, LockKeyhole, Send, Monitor, CheckCircle2, CircleHelp, BrainCircuit, ExternalLink, ListChecks } from "lucide-react";
 
@@ -31,6 +32,19 @@ type ModelInfo = { id: string; name: string; provider: string; available: boolea
 type InferenceResult = { model_id: string; model_name: string; output: string; execution: string; is_mock: boolean };
 type RouteDecision = { mode: string; action: string; allowed: boolean; external_data_transfer_permitted: boolean; collaboration_rounds: number; reason: string; enforcement_boundary_required: boolean };
 type InventoryEvidence = { source: string; confidence: string; observed_at_unix_ms: number | null };
+type InventoryV2Capability = { name: string; status: "supported" | "unsupported" | "unknown"; evidence: InventoryEvidence };
+type InventoryV2Model = {
+  model_ref: string; runtime_id: string; display_name: string; family: string | null; version: string | null;
+  availability: string; size_bytes: number | null; capabilities: InventoryV2Capability[];
+  context: { max_tokens: number | null; evidence: InventoryEvidence };
+  tool_use: { supported: boolean | null; evidence: InventoryEvidence };
+  vision: { supported: boolean | null; max_image_bytes: number | null; supported_mime_types: string[]; evidence: InventoryEvidence };
+  embeddings: { supported: boolean | null; dimensions: number | null; evidence: InventoryEvidence };
+  resource_estimates: { minimum_memory_mb: number | null; minimum_accelerator_memory_mb: number | null; minimum_storage_bytes: number | null; recommended_cpu_threads: number | null; evidence: InventoryEvidence };
+  compatibility: { status: "compatible" | "incompatible" | "unknown"; supported_os: string[]; supported_architectures: string[]; required_accelerator_kinds: string[]; required_accelerator_apis: string[]; evidence: InventoryEvidence };
+  evidence: InventoryEvidence;
+};
+type ModelRuntimeInventoryV2 = { schema_version: number; generated_at_unix_ms: number; models: InventoryV2Model[] };
 type InventoryModel = { model_ref: string; display_name: string; family: string | null; version: string | null; context_length_tokens: number | null; capabilities: string[]; evidence: InventoryEvidence };
 type ModelRuntimeInventory = {
   schema_version: number;
@@ -47,7 +61,7 @@ type ModelRuntimeInventory = {
   models: InventoryModel[];
   privacy: { contains_prompts: boolean; contains_user_files: boolean; contains_local_paths: boolean; contains_credentials: boolean };
 };
-type OllamaStatus = { available: boolean; models: { name: string; size: number }[]; inventory: ModelRuntimeInventory; recommendation: ModelRecommendation };
+type OllamaStatus = { available: boolean; models: { name: string; size: number }[]; inventory: ModelRuntimeInventory; inventory_v2?: ModelRuntimeInventoryV2 | null; recommendation: ModelRecommendation };
 type AiTaskResult = { mode_used: string; execution_location: string; model: string; output: string };
 type DocumentPipelineResult = { analysis: FileAnalysis; summary: string; translated_summary: string | null; translation_language: string | null; source_text_bytes: number; chunks_processed: number; total_chunks: number; execution_location: string; model: string };
 type FileAnalysis = { file_name: string; file_type: string; size_bytes: number; content_preview: string; word_count: number; line_count: number; top_keywords: string[] };
@@ -212,6 +226,7 @@ export default function App() {
   const cloudConversationPrompt = composeConversationPrompt(cloudChatMessages, request);
   const cloudApprovalSnapshot = JSON.stringify([cloudEndpoint.trim(), cloudModel.trim(), cloudTokenParameter, cloudConversationPrompt, executionMode, cloudDataClassification]);
   const selectedInventoryModel = ollamaStatus?.inventory.models.find((model) => model.model_ref === ollamaModel);
+  const selectedInventoryModelV2 = ollamaStatus?.inventory_v2?.models.find((model) => model.model_ref === ollamaModel);
   const inventoryAvailableMemoryMb = ollamaStatus?.inventory.hardware.memory_available_mb;
   const inventoryRuntime = ollamaStatus?.inventory.runtimes.find((runtime) => runtime.runtime_id === "ollama.local");
   const fitModelCandidates = modelRecommendation?.candidates.filter((candidate) => candidate.estimated_to_fit) ?? [];
@@ -1307,6 +1322,18 @@ export default function App() {
               <p>Storage free: {ollamaStatus.inventory.hardware.storage_free_mb === null ? "Unknown (not measured)" : `${ollamaStatus.inventory.hardware.storage_free_mb.toLocaleString()} MiB`}</p>
               {ollamaStatus.inventory.hardware.accelerators.map((accelerator) => <p key={accelerator.kind}>{accelerator.kind.toUpperCase()}: {accelerator.evidence.confidence === "reported" ? "Ollama reported active GPU model use; total device VRAM is not known" : "Unknown — no supported evidence confirms availability"}</p>)}
               {selectedInventoryModel ? <p>Selected model: {selectedInventoryModel.display_name} · Family {selectedInventoryModel.family || "unknown"} · Context {selectedInventoryModel.context_length_tokens?.toLocaleString() || "unknown"} tokens · Reported capabilities: {selectedInventoryModel.capabilities.join(", ")} · Evidence: {selectedInventoryModel.evidence.source}/{selectedInventoryModel.evidence.confidence}</p> : <p>Selected model metadata: unknown or not inspected within the bounded discovery window.</p>}
+              {selectedInventoryModelV2 ? <details className="model-catalogue-card">
+                <summary>Additional evidence-qualified model details (inventory v2)</summary>
+                <p>Model identity: {selectedInventoryModelV2.display_name} · Version/digest {selectedInventoryModelV2.version || "Unknown"} · Availability {selectedInventoryModelV2.availability} · Evidence {evidenceSummary(selectedInventoryModelV2.evidence)}</p>
+                <p>Reported capabilities: {selectedInventoryModelV2.capabilities.length ? selectedInventoryModelV2.capabilities.map((capability) => `${capability.name}: ${capabilityStatusLabel(capability.status)} (${evidenceSummary(capability.evidence)})`).join("; ") : "Unknown — no capability metadata reported"}</p>
+                <p>Context length: {formatOptionalNumber(selectedInventoryModelV2.context.max_tokens, "tokens")} · Evidence {evidenceSummary(selectedInventoryModelV2.context.evidence)}</p>
+                <p>Tool use: {booleanCapabilityLabel(selectedInventoryModelV2.tool_use.supported)} · Evidence {evidenceSummary(selectedInventoryModelV2.tool_use.evidence)}</p>
+                <p>Vision: {booleanCapabilityLabel(selectedInventoryModelV2.vision.supported)} · Maximum image size {formatOptionalBytes(selectedInventoryModelV2.vision.max_image_bytes)} · MIME types {selectedInventoryModelV2.vision.supported_mime_types.length ? selectedInventoryModelV2.vision.supported_mime_types.join(", ") : "Unknown"} · Evidence {evidenceSummary(selectedInventoryModelV2.vision.evidence)}</p>
+                <p>Embeddings: {booleanCapabilityLabel(selectedInventoryModelV2.embeddings.supported)} · Dimensions {formatOptionalNumber(selectedInventoryModelV2.embeddings.dimensions, "dimensions")} · Evidence {evidenceSummary(selectedInventoryModelV2.embeddings.evidence)}</p>
+                <p>Resource estimates: RAM {formatOptionalNumber(selectedInventoryModelV2.resource_estimates.minimum_memory_mb, "MiB")} · Accelerator RAM {formatOptionalNumber(selectedInventoryModelV2.resource_estimates.minimum_accelerator_memory_mb, "MiB")} · Storage {formatOptionalBytes(selectedInventoryModelV2.resource_estimates.minimum_storage_bytes)} · CPU threads {formatOptionalNumber(selectedInventoryModelV2.resource_estimates.recommended_cpu_threads, "threads")} · Evidence {evidenceSummary(selectedInventoryModelV2.resource_estimates.evidence)}</p>
+                <p>Compatibility: {selectedInventoryModelV2.compatibility.status} · OS {selectedInventoryModelV2.compatibility.supported_os.length ? selectedInventoryModelV2.compatibility.supported_os.join(", ") : "Unknown"} · Architecture {selectedInventoryModelV2.compatibility.supported_architectures.length ? selectedInventoryModelV2.compatibility.supported_architectures.join(", ") : "Unknown"} · Required accelerators {selectedInventoryModelV2.compatibility.required_accelerator_kinds.length ? selectedInventoryModelV2.compatibility.required_accelerator_kinds.join(", ") : "Unknown"} · APIs {selectedInventoryModelV2.compatibility.required_accelerator_apis.length ? selectedInventoryModelV2.compatibility.required_accelerator_apis.join(", ") : "Unknown"} · Evidence {evidenceSummary(selectedInventoryModelV2.compatibility.evidence)}</p>
+                <small className="muted">This metadata is read-only and evidence-qualified. Unknown values are not inferred. Memory/storage values are estimates, not benchmarks or guarantees; this panel does not change model selection or run inference.</small>
+              </details> : <p>Additional model metadata (inventory v2): Unknown — unavailable or not inspected.</p>}
               <p>Runtime metadata inspected for {ollamaStatus.inventory.models.filter((model) => model.evidence.source === "runtime_metadata").length} of {ollamaStatus.inventory.models.length} installed models. Reasoning, coding and language quality are not inferred from model names; unknown remains unknown. Inventory contains no prompts, user files, local paths or credentials.</p>
             </div>}
             <button className="model-run" onClick={runLocalAi} disabled={!request.trim() || aiBusy || !ollamaStatus?.available || !ollamaModel || (executionMode !== "fortress" && executionMode !== "smart")}>{aiBusy ? "Running local model…" : "Run real local AI with Ollama"} <Send size={15}/></button>
