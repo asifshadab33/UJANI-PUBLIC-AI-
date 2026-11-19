@@ -55,10 +55,10 @@
 - **#324** `1469cdecdc650c740d2496ee6148000b4a54dfb4`: earlier exact-head checks passed; branch is 4 commits behind main. Revalidate after update; draft.
 - **#328** `27116be457a564fd9f69db9e2479d8d1ea436558`: earlier exact-head checks passed; branch is 4 commits behind main. Revalidate after update; draft.
 - **#326 and #327:** closed as superseded by consolidated PR #340; original branches retained. Their old exact-head checks had passed, but they were stale and not mergeable.
-- **#333** `ec86e481153721edecdcd76387ea6db28cffdcdf`: all CI, CodeQL, installer-size and security-sensitive checks passed; unsigned preview skipped. Branch is 3 commits behind main; draft.
-- **#334** `e194d3e1f63a0ebfd095b31eee0645a47acb401f`: CodeQL, installer-size, Android and security-sensitive checks passed; CI was cancelled. Branch is 3 commits behind main; draft.
-- **#337** `e5bccff2223cc3ccb1c0ad6ac0ff166c455f32f1`: CI, CodeQL, installer-size and security-sensitive checks passed; unsigned preview skipped. Branch is 3 commits behind main; draft.
-- **#340** `22f23e9168ee62866f6889875ce51038100499f4`: consolidated history/cache native-consent work on current main. Exact-head CI, Android, CodeQL, installer-size and security-sensitive workflows queued; unsigned preview skipped. Draft.
+- **#333 and #337:** closed as superseded by consolidated documentation PR #341; original branches retained. Their old exact-head CI, CodeQL and installer checks had passed; unsigned preview jobs were skipped.
+- **#334** `e194d3e1f63a0ebfd095b31eee0645a47acb401f`: CodeQL, installer-size, Android and security-sensitive checks passed; CI was cancelled and the Windows job rerun is queued. Branch is 3 commits behind main; draft.
+- **#340** `22f23e9168ee62866f6889875ce51038100499f4`: consolidated history/cache native-consent work on current main. Exact-head CI, Android, CodeQL, installer-size and security-sensitive workflows are queued/in progress; unsigned preview skipped. Draft.
+- **#341** `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: consolidated file-threat delivery gates and project handbook on current main. Exact-head CI pending; draft.
 - **#339** `cccd1afe9cc982f8e6e3c6a737a6711a7a85508d`: backlog snapshot documentation PR; security-sensitive check passed, CI queued, installer audit in progress, CodeQL queued. Draft.
 
 ### Enterprise AI
