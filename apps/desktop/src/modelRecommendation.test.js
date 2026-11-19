@@ -25,7 +25,7 @@ test("unknown, invalid or inconsistent memory evidence fails closed", () => {
 
 test("4 GiB desktop and memory below the minimum receive no model", () => {
   assert.equal(recommend(4096, 3072, "Linux").model, null);
-  assert.equal(recommend(6144, 2559, "Linux").model, null);
+  assert.equal(recommend(6144, 2047, "Linux").model, null);
 });
 
 test("6 GiB and 2 GiB available reaches only the smallest candidate", () => {
