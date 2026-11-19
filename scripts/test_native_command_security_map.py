@@ -471,10 +471,6 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         self.assertEqual(missing_history_key_recovery_guards(unsafe), ["history_key"])
 
 
-
-if __name__ == "__main__":
-    unittest.main()
-
 class NativeCommandManifestEnumTests(unittest.TestCase):
     def test_known_read_only_mapping_is_accepted(self):
         entry = {
@@ -521,3 +517,6 @@ class NativeCommandManifestEnumTests(unittest.TestCase):
         errors = manifest_entry_errors("default_commands", "x", entry)
         self.assertTrue(any("cannot be labelled peer-preview only" in error for error in errors))
 
+
+if __name__ == "__main__":
+    unittest.main()
