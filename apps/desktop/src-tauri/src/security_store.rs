@@ -1701,7 +1701,6 @@ mod self_evolution_approval_nonce_tests {
         for _ in 0..2 {
             let path = path.clone();
             let barrier = Arc::clone(&barrier);
-            let nonce = nonce.clone();
             workers.push(thread::spawn(move || {
                 let db = Connection::open(path).unwrap();
                 db.busy_timeout(std::time::Duration::from_secs(3)).unwrap();
