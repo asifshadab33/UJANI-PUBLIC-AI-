@@ -471,6 +471,7 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
         self.assertEqual(missing_history_key_recovery_guards(unsafe), ["history_key"])
 
 
+
 if __name__ == "__main__":
     unittest.main()
 
