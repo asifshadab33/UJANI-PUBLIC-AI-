@@ -14,7 +14,7 @@ pub struct FileAnalysis {
     pub top_keywords: Vec<String>,
 }
 
-pub(crate) fn valid_display_file_name(file_name: &str) -> bool {
+pub fn valid_display_file_name(file_name: &str) -> bool {
     !file_name.trim().is_empty()
         && file_name.len() <= 255
         && file_name != "."
