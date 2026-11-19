@@ -25,6 +25,7 @@ CACHE_SOURCE = ROOT / "apps/desktop/src-tauri/src/search_cache.rs"
 SECURITY_STORE_SOURCE = ROOT / "apps/desktop/src-tauri/src/security_store.rs"
 SECURITY_PROVIDERS_SOURCE = ROOT / "apps/desktop/src-tauri/src/security_providers.rs"
 CORE_FILE_PROCESSOR = ROOT / "crates/ujani-core/src/file_processor.rs"
+CORE_LIB = ROOT / "crates/ujani-core/src/lib.rs"
 CORE_IMAGE_PROCESSOR = ROOT / "crates/ujani-core/src/image_processor.rs"
 TASK_ENGINE = ROOT / "apps/desktop/src-tauri/src/task_engine.rs"
 
@@ -687,7 +688,7 @@ def main() -> int:
     require_tokens(
         CORE_FILE_PROCESSOR,
         (
-            "pub(crate) fn valid_display_file_name(",
+            "pub fn valid_display_file_name(",
             "if !valid_display_file_name(file_name)",
             "character.is_control()",
             "character == '/'",
@@ -696,6 +697,12 @@ def main() -> int:
         ),
         errors,
         "shared pathless display-name validation",
+    )
+    require_tokens(
+        CORE_LIB,
+        ("pub use file_processor::{analyze_text, valid_display_file_name, FileAnalysis};",),
+        errors,
+        "cross-crate display-name validator export",
     )
     require_tokens(
         CORE_IMAGE_PROCESSOR,
