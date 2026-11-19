@@ -534,19 +534,9 @@ def require_tokens(path: Path, tokens: tuple[str, ...], errors: list[str], label
     return source
 
 
-def main() -> int:
-    source = SOURCE.read_text(encoding="utf-8")
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != 1:
-        raise ValueError("unsupported native command security map schema_version")
-
-    default, peer = registered_commands(source)
-    groups = {
-        "default_commands": (default, manifest.get("default_commands", {})),
-        "peer_preview_commands": (peer, manifest.get("peer_preview_commands", {})),
-    }
+def manifest_mapping_errors(groups: dict, required: tuple[str, ...]) -> list[str]:
+    """Validate registered IPC commands against their source-reviewed manifest entries."""
     errors: list[str] = []
-    required = ("classification", "capability", "scope", "effects", "boundary", "receipt", "tests", "status", "caller", "data_classification", "consent", "cancellation", "resource_limits", "failure_mode")
     for group_name, (registered, mapped) in groups.items():
         if len(registered) != len(set(registered)):
             errors.append(f"{group_name}: duplicate command in native handler")
@@ -569,6 +559,23 @@ def main() -> int:
                     errors.append(f"{group_name}:{name}: missing non-empty {field}")
             if entry.get("receipt") == "required-but-disabled" and "disabled" not in entry.get("status", ""):
                 errors.append(f"{group_name}:{name}: disabled mutation must say so in status")
+    return errors
+
+
+def main() -> int:
+    source = SOURCE.read_text(encoding="utf-8")
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 1:
+        raise ValueError("unsupported native command security map schema_version")
+
+    default, peer = registered_commands(source)
+    groups = {
+        "default_commands": (default, manifest.get("default_commands", {})),
+        "peer_preview_commands": (peer, manifest.get("peer_preview_commands", {})),
+    }
+    errors: list[str] = []
+    required = ("classification", "capability", "scope", "effects", "boundary", "receipt", "tests", "status", "caller", "data_classification", "consent", "cancellation", "resource_limits", "failure_mode")
+    errors.extend(manifest_mapping_errors(groups, required))
     # The shared local policy evaluator must remain on both ordinary local
     # operation planning and every node in a local task graph.
     require_tokens(
