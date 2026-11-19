@@ -513,7 +513,7 @@ class NativeCommandManifestEnumTests(unittest.TestCase):
                     "status": "source-mapped; full review pending",
                 }
                 errors = manifest_entry_errors("default_commands", "unsafe", entry)
-                self.assertTrue(any("cannot be classified as read-only/no-receipt" in error for error in errors))
+                self.assertTrue(any("mutating command cannot be classified as read-only/no-receipt" in error for error in errors))
 
     def test_peer_preview_commands_must_keep_their_feature_gate_label(self):
         entry = {
