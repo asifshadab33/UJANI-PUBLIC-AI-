@@ -119,3 +119,23 @@ The v2 schema is metadata only. Enterprise scope requires a non-null pseudonymou
 ### 2026-11-16 model inventory v2 parity and evidence gate
 
 The v2 schema and reference vector are byte-identical between Public PR #321 and Enterprise main (merged through Enterprise PR #244). Enterprise main now carries v2; Public main remains on v1 until PR #321 passes and merges. V2 remains metadata-only and does not imply live authenticated inventory ingestion or remote execution. For `organisation_enrolled`, v2 requires a non-empty pseudonymous `device_ref`; a missing or null device identity is invalid. Host platform and aggregate CPU/memory/storage facts are usable for model-fit decisions only when their evidence is fresh, `source=os_api`, and `confidence=verified`. Runtime API/metadata and catalogue claims remain distinct evidence classes and cannot substitute for OS-observed host facts. Unknown provider names remain schema-valid for forward compatibility but are not selectable until a consumer has a registered adapter; the current reference selector registers Ollama only. Enterprise's v2 descriptor remains planning metadata, not authenticated ingestion or task authorization.
+
+
+## Latest verified integration status — 2026-11-19
+
+This dated section supersedes older status snapshots in this draft. The RFC remains a future protocol specification; no cross-product task transport or remote worker execution is enabled.
+
+### Independent product status
+- Public main: `010b24a927a75411e8f7c6d2ec46cb4c3ca6e9fb`; PR #336 merged read-only Windows Security Center/Defender update-freshness reporting. It does not scan, remediate, update security software or claim to compare every product with the vendor's latest release.
+- Enterprise main: `197bf007411b3c4aab10e9ed620a9b6e0f3671be`; PR #266 merged advisory evidence-based model/task matching. It does not reserve, install, admit or dispatch work. The route contract is not connected to a production HTTP listener.
+- Enterprise PR #249 merged the authenticated inventory v2 admission/persistence boundary. It is not proof of a production deployment or complete device-agent lifecycle.
+- Public model-inventory v2 producer remains in draft PR #332 at head `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`; exact-head native/platform/installer/CodeQL checks are pending or running. It now validates both installed-model and metadata SHA-256 digests before joining capabilities/context and includes regressions for malformed digests.
+
+### Integration boundary
+The shared language-neutral task-contract v1 remains the specification; do not duplicate it. Legacy Public peer protocol v2 and Enterprise WorkloadManifest v1 remain incompatible in sender/tenant/audience identity, consent binding, data/privacy classification, capability versus access-scope vocabulary, resource units/bounds, expiry and nonce/replay semantics, state sequencing and receipt signing. A production authenticated adapter that binds all of these to the exact task digest, atomically claims replay state and admission/lease, and verifies signed output-byte receipts remains unimplemented.
+
+### Model/runtime inventory
+The v2 descriptor is metadata-only: it distinguishes OS-observed, runtime-reported, catalogue, estimate and unknown evidence; includes freshness, per-capability evidence and platform/accelerator compatibility; and requires a privacy-minimised enrolled-device scope for Enterprise. Public remains personal-local-only and owner-selected. Enterprise inventory requires enrollment, current owner consent and organisation authorisation; the descriptor itself does not authenticate those claims or authorise execution. No prompts, files, paths, credentials or conversation history are shared.
+
+### Evidence limitations
+The available GitHub Actions integration in this run exposed PR-triggered runs but not post-merge main-branch workflow runs; post-merge commit status endpoints returned no checks. Do not infer main CI success. Physical-device isolation, signed production installers, updater rollback, protected KMS/HSM/TPM custody, external anti-rollback, production deployment and independent penetration tests remain external gates.
