@@ -476,6 +476,37 @@ mod tests {
     }
 
     #[test]
+    fn inventory_ignores_metadata_with_malformed_matching_digest() {
+        let mut installed = model("qwen2.5:3b", 2_000_000);
+        installed.digest = Some("not-a-digest".into());
+        let models = [installed.clone()];
+        let metadata = HashMap::from([(
+            installed.name.clone(),
+            OllamaModelMetadata {
+                model_digest: Some("not-a-digest".into()),
+                context_length_tokens: Some(32_768),
+                capabilities: vec!["chat".into(), "vision".into()],
+            },
+        )]);
+        let inventory = build_inventory(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: true,
+            runtime_version: Some("0.5.12".into()),
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: None,
+            memory_total_mb: None,
+            memory_available_mb: None,
+            accelerator: None,
+        });
+        assert_eq!(inventory.models[0].version, None);
+        assert_eq!(inventory.models[0].context_length_tokens, None);
+        assert_eq!(inventory.models[0].capabilities, vec!["unknown".to_string()]);
+    }
+
+    #[test]
     fn inventory_preserves_only_runtime_reported_capabilities_and_context() {
         let mut model = model("qwen2.5:3b", 2_000_000);
         model.digest = Some(format!("sha256:{}", "A".repeat(64)));
