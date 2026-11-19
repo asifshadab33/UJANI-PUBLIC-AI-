@@ -437,3 +437,4 @@ pub async fn find_duplicate_files(
     _task_id: String,
 ) -> Result<DuplicateScanResult, String> {
     Err("Folder-based duplicate scanning is not available in the Android preview; Android Storage Access Framework support is not implemented yet.".into())
+}
