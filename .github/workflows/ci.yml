@@ -49,7 +49,7 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_media_capability_boundary.py' -v
       - name: Check sensitive command receipt wiring
         run: python3 scripts/check_sensitive_command_receipts.py
-      - name: Validate model/runtime inventory v1 schema
+      - name: Validate model/runtime inventory v1/v2 schemas and selection policy
         run: python3 scripts/validate_model_runtime_inventory_schema.py
       - name: Validate Personal-to-Enterprise task contract v1
         run: python3 scripts/validate_personal_enterprise_task_contract.py
