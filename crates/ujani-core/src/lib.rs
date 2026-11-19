@@ -252,6 +252,9 @@ pub mod router;
 pub mod reminders;
 pub use reminders::{upcoming_reminders, LocalReminder, ReminderState, ReminderValidationError};
 pub mod file_processor;
+/// Hash-bound, fail-closed file scan evidence classification; no scanner or file mutation.
+pub mod file_threat;
+pub use file_threat::{classify_scan_observation, FileIdentity, FileScanState, ProviderVerdict, ScanObservation};
 /// Evidence-based security-provider posture; no installation or remediation.
 pub mod security_posture;
 pub use security_posture::{assess_category, EvidenceStatus, PostureAssessment, PostureResult, ProviderObservation, SecurityCategory};
