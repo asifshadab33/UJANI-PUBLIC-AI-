@@ -125,6 +125,10 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         """
         history = """
         fn set_task_history_enabled() {
+            if enabled_value {
+                confirm_native().await;
+                if !approved { return; }
+            }
             with_local_state_receipt(|| {
                 migrate_plaintext_rows();
                 UPDATE history_settings;
@@ -160,7 +164,7 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         }
         """
         history = """
-        fn set_task_history_enabled() { with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
+        fn set_task_history_enabled() { if enabled_value { confirm_native().await; if !approved { return; } } with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
         fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         """
@@ -175,7 +179,7 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         fn clear_local_search_cache() { with_local_state_receipt(|| { transaction_with_behavior(); DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes; }); }
         """
         history = """
-        fn set_task_history_enabled() { with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
+        fn set_task_history_enabled() { if enabled_value { confirm_native().await; if !approved { return; } } with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
         fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         """
