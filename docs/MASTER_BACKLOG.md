@@ -38,8 +38,9 @@
 - Main: `010b24a927a75411e8f7c6d2ec46cb4c3ca6e9fb` (PR #336 security-update freshness merged).
 - #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; CI native tests, Rust tests, lint, TS, audits, Android, CodeQL and installer jobs running; workflow lint and JS CodeQL passed; unsigned preview skipped.
 - #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: digest integrity/model inventory v2; Rust core, Linux/macOS native, workflow lint, TS and frontend/Rust audits passed; Windows native, installer audit in progress; Android and CodeQL passed. Keep draft; branch stale relative to main.
-- #334 `e194d3e1f63a0ebfd095b31eee0645a47acb401f`: fail-closed scan evidence; exact-head CI cancelled/Windows pending; stale base, draft.
-- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: file-threat gates + handbook consolidation; checks pending.
+- #334 closed as superseded by current-main PR #343; branch retained.
+- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped.
+- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed.
 - #324/#328: stale clock/Ollama cancellation work; update/revalidate before merge.
 - #333/#337 closed as superseded; #339 backlog PR is stale and superseded by this current-main PR. Branches are retained.
 
