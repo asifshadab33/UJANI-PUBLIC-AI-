@@ -4,9 +4,7 @@ export function evidenceSummary(evidence) {
     return "Unknown (no evidence)";
   }
   const timestamp = evidence.observed_at_unix_ms;
-  const observed = Number.isFinite(timestamp) && timestamp > 0 && timestamp <= 8.64e15
-    ? ` · observed ${new Date(timestamp).toLocaleString()}`
-    : "";
+  const observed = formatObservedTimestamp(timestamp);
   return `${evidence.source} · ${evidence.confidence}${observed}`;
 }
 
@@ -37,4 +35,12 @@ export function formatOptionalBytes(value) {
   if (mib < 1024) return `${mib.toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB`;
   const gib = mib / 1024;
   return `${gib.toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`;
+}
+
+/** Compact, locale-aware display for valid observation timestamps. */
+export function formatObservedTimestamp(timestamp) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp > 8.64e15) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return ` · observed ${date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
 }
