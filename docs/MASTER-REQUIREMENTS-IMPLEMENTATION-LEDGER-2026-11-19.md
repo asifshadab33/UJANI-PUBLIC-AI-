@@ -53,3 +53,16 @@ Reconciles retrieved project discussions and repository evidence. Historical cha
 
 ## Completion rule
 Complete only when code is on main, exact merged SHA CI is green and evidence scope is stated. Static/schema tests do not prove runtime security or physical-device behaviour.
+
+## Open PR reconciliation (2026-11-19)
+| PR | Scope | Disposition |
+|---|---|---|
+| #352 | Release-status docs | Keep; reconcile claims with this ledger before merge |
+| #353 | Native command manifest validator tests | Likely superseded by #357; compare exact changes, then close only after #357 is green/merged |
+| #354 | Evidence-qualified model inventory UI | Keep; review against inventory v2 contract and verify CI before merge |
+| #355 | Adaptive capability architecture doc | Keep as architecture guidance; not implementation evidence |
+| #356 | Preservation-first verification baseline | Keep; use as audit/test acceptance criteria |
+| #357 | Native command audit tests + history-delete validation | Keep; verify exact-head CI and ensure #353's test scope is covered |
+| #358 | Master ledger + catalogue parity CI | New audit batch; exact-head CI pending |
+
+PR merge order is not approval: do not merge without explicit user approval. Candidate ordering after CI: #357, #354, #356/#352 (reconcile docs), #355, #358; #353 is a duplicate candidate.
