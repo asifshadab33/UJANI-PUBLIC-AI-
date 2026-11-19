@@ -1691,13 +1691,20 @@ mod self_evolution_approval_nonce_tests {
             .as_millis() as u64;
         let expires_at = now + 60_000;
 
+        // Initialize schema once before the race. Schema initialization itself is
+        // not the operation under test and may contend on Windows SQLite locks.
+        let setup = Connection::open(&path).unwrap();
+        setup.busy_timeout(std::time::Duration::from_secs(3)).unwrap();
+        initialize(&setup).unwrap();
+        drop(setup);
+
         for _ in 0..2 {
             let path = path.clone();
             let barrier = Arc::clone(&barrier);
+            let nonce = nonce.clone();
             workers.push(thread::spawn(move || {
                 let db = Connection::open(path).unwrap();
                 db.busy_timeout(std::time::Duration::from_secs(3)).unwrap();
-                initialize(&db).unwrap();
                 let mut store = SqliteSelfEvolutionApprovalNonceStore { db };
                 barrier.wait();
                 store.claim_nonce("admin-race", &nonce, expires_at)
