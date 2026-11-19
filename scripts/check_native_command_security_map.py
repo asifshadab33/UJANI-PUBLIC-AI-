@@ -534,6 +534,48 @@ def require_tokens(path: Path, tokens: tuple[str, ...], errors: list[str], label
     return source
 
 
+
+def manifest_entry_errors(group_name: str, name: str, entry: dict) -> list[str]:
+    """Reject unknown classifications/receipt states and unsafe cross-group labels."""
+    errors: list[str] = []
+    classifications = {
+        "read_only_local", "read_only_os_info", "read_only_persistent_state",
+        "read_only_security_state", "local_model_execution", "local_tool_execution",
+        "local_document_execution", "local_image_execution", "selected_folder_metadata_read",
+        "selected_folder_read", "selected_folder_read_and_local_execution",
+        "external_data_transfer", "disabled_external_mutation", "task_control",
+        "encrypted_local_state_mutation", "persistent_local_maintenance",
+        "persistent_local_mutation", "persistent_security_mutation",
+        "device_identity_mutation", "peer_authenticated_state_mutation",
+        "peer_cryptographic_action", "peer_trust_mutation",
+    }
+    receipts = {
+        "none-read-only", "none-debug-only", "none-control-event",
+        "none-or-managed-receipt", "required-local-state",
+        "metadata-outcome-receipt", "required-but-disabled",
+        "receipt-coverage-review-required",
+    }
+    classification = entry.get("classification")
+    receipt = entry.get("receipt")
+    status = entry.get("status", "")
+    if classification not in classifications:
+        errors.append(f"{group_name}:{name}: unknown classification {classification!r}")
+    if receipt not in receipts:
+        errors.append(f"{group_name}:{name}: unknown receipt state {receipt!r}")
+    if group_name == "default_commands" and "peer-preview only" in status:
+        errors.append(f"{group_name}:{name}: default command cannot be labelled peer-preview only")
+    if group_name == "peer_preview_commands" and "peer-preview only" not in status:
+        errors.append(f"{group_name}:{name}: peer command must retain peer-preview-only status")
+    if classification in {
+        "encrypted_local_state_mutation", "persistent_local_maintenance",
+        "persistent_local_mutation", "persistent_security_mutation",
+        "device_identity_mutation", "peer_authenticated_state_mutation",
+        "peer_cryptographic_action", "peer_trust_mutation",
+    } and receipt == "none-read-only":
+        errors.append(f"{group_name}:{name}: mutating command cannot be classified as read-only/no-receipt")
+    return errors
+
+
 def main() -> int:
     source = SOURCE.read_text(encoding="utf-8")
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -567,6 +609,7 @@ def main() -> int:
                 value = entry.get(field)
                 if not isinstance(value, str) or not value.strip():
                     errors.append(f"{group_name}:{name}: missing non-empty {field}")
+            errors.extend(manifest_entry_errors(group_name, name, entry))
             if entry.get("receipt") == "required-but-disabled" and "disabled" not in entry.get("status", ""):
                 errors.append(f"{group_name}:{name}: disabled mutation must say so in status")
     # The shared local policy evaluator must remain on both ordinary local
