@@ -139,12 +139,7 @@ fn bounded_text(value: Option<String>, max_chars: usize) -> Option<String> {
 /// Accept only an Ollama SHA-256 digest as a model version identifier.
 /// Unknown or malformed runtime metadata stays unknown rather than being guessed.
 fn normalized_model_digest(digest: Option<&str>) -> Option<String> {
-    let digest = digest?;
-    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
-    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some(hex.to_ascii_lowercase())
+    crate::ollama::normalized_model_digest(digest)
 }
 
 /// Normalizes OS memory readings once for both model-fit advice and inventory output.
