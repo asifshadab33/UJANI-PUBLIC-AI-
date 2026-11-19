@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn provider_version_control_characters_fail_closed() {
         let mut item = observation(ProviderVerdict::NoDetection);
-        item.provider_version = "1.2.3\\nmalformed".into();
+        item.provider_version = "1.2.3\nmalformed".into();
         assert_eq!(
             classify_scan_observation(&identity(), Some(&item), 100_000, 60_000),
             FileScanState::Suspicious
