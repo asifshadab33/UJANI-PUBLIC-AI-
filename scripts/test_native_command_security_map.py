@@ -14,6 +14,7 @@ from check_native_command_security_map import (
     missing_cloud_transfer_preflight_guards,
     missing_folder_import_preflight_guards,
     missing_local_state_mutation_receipt_guards,
+    manifest_entry_errors,
 )
 
 
@@ -472,3 +473,50 @@ class NativeCommandSecurityMapParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class NativeCommandManifestEnumTests(unittest.TestCase):
+    def test_known_read_only_mapping_is_accepted(self):
+        entry = {
+            "classification": "read_only_local",
+            "receipt": "none-read-only",
+            "status": "source-mapped; full review pending",
+        }
+        self.assertEqual(manifest_entry_errors("default_commands", "get_capability_snapshot", entry), [])
+
+    def test_unknown_classification_and_receipt_are_rejected(self):
+        entry = {
+            "classification": "admin_magic",
+            "receipt": "optional-maybe",
+            "status": "source-mapped; full review pending",
+        }
+        errors = manifest_entry_errors("default_commands", "x", entry)
+        self.assertTrue(any("unknown classification" in error for error in errors))
+        self.assertTrue(any("unknown receipt state" in error for error in errors))
+
+    def test_mutating_command_cannot_claim_no_receipt(self):
+        entry = {
+            "classification": "persistent_local_mutation",
+            "receipt": "none-read-only",
+            "status": "source-mapped; full review pending",
+        }
+        errors = manifest_entry_errors("default_commands", "clear_state", entry)
+        self.assertTrue(any("mutating command cannot" in error for error in errors))
+
+    def test_peer_preview_commands_must_keep_their_feature_gate_label(self):
+        entry = {
+            "classification": "peer_trust_mutation",
+            "receipt": "metadata-outcome-receipt",
+            "status": "full review pending",
+        }
+        errors = manifest_entry_errors("peer_preview_commands", "enroll", entry)
+        self.assertTrue(any("peer-preview-only status" in error for error in errors))
+
+    def test_default_command_cannot_be_mislabelled_peer_preview_only(self):
+        entry = {
+            "classification": "read_only_local",
+            "receipt": "none-read-only",
+            "status": "peer-preview only; full review pending",
+        }
+        errors = manifest_entry_errors("default_commands", "x", entry)
+        self.assertTrue(any("cannot be labelled peer-preview only" in error for error in errors))
+
