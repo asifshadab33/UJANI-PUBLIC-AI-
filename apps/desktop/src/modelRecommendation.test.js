@@ -77,7 +77,7 @@ test("missing, stale or implausibly future hardware samples fail closed", () => 
   );
   assert.equal(recommendDefaultModel(24576, 10240, "Linux", FRESH_NOW_MS + 30_001, FRESH_NOW_MS).model, null);
   assert.equal(
-    recommendDefaultModel(24576, 10240, "Linux", FRESH_SAMPLE_MS, FRESH_NOW_MS + MODEL_RECOMMENDATION_MAX_SAMPLE_AGE_MS).model,
+    recommendDefaultModel(24576, 16384, "Linux", FRESH_SAMPLE_MS, FRESH_NOW_MS + MODEL_RECOMMENDATION_MAX_SAMPLE_AGE_MS).model,
     "qwen3:8b",
   );
 });
