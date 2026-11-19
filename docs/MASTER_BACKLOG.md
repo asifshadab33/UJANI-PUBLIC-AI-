@@ -37,16 +37,17 @@
 
 ## Live PR status
 - Main: `69f7794bd045dc50e9421b214e1dedd20f6b4d11` (PR #336 security-update freshness and PR #332 local model-inventory v2 producer merged). Post-merge CI #44453580274 pending; CodeQL #44453580233 queued.
-- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint, Rust core, Rust lint, TypeScript, frontend/Rust audits, Linux/macOS native, Android, CodeQL and security-sensitive check passed. Windows native tests and Windows/Linux installers remain in progress; macOS installer passed. Branch is 1 commit behind main; compare indicates only its six files differ, but rerun/refresh against current main before merge.
+- #340 `22f23e9168ee62866f6889875ce51038100499f4`: history/cache consent consolidation; workflow lint, Rust core/lint, TypeScript, frontend/Rust audits, Linux/macOS/Windows native tests, Android, CodeQL and security-sensitive check passed. Windows/Linux installers remain in progress; macOS installer passed. Branch is 1 commit behind main; no changed-file overlap with the inventory-v2 merge was observed, but verify exact base and installer completion before merge.
 - #332 `1866b8f413efda4ca6f6fd9cc2990bd3a35fb1d0`: merged as `69f7794bd045dc50e9421b214e1dedd20f6b4d11`. Exact-head Rust core, Linux/Windows/macOS native, Rust lint/audit, frontend/TypeScript, Android, CodeQL, installer-size and security-watch checks passed; unsigned preview skipped. Post-merge CI is pending.
 - #334 closed as superseded by current-main PR #343; branch retained.
-- #343 `3995edf70eb9e1ca6ae4a9db0c7d0bbf2d8b7a3b`: fail-closed file-scan evidence plus control-character provider-version regression; exact-head CI, CodeQL, Android and installer audit queued; unsigned preview skipped; base is stale by 1 commit and currently mergeable=false.
-- #341 `d8a75b1c4723cf73a7d4407b1a9fe7c49a214e50`: handbook/file-threat delivery-gate documentation; CI, CodeQL and installer audit queued; security-sensitive watch passed; base stale by 1 commit, mergeable=false.
+- #343 closed as superseded by current-main PR #348; branch retained.
+- #341 closed as superseded by current-main PR #348; branch retained.
 - #324: stale clock-reliability branch, behind main and overlaps #340 history/cache consent; consolidate/rebase before merge.
 - #328 closed as superseded by current-main PR #344; original branch retained.
-- #333/#337 closed as superseded by #341; #334 closed as superseded by #343; #339 closed as superseded by #342. Original branches retained.
+- #333/#337/#334/#341/#343 closed as superseded by consolidated current-main PR #348; #339/#342 closed as superseded by #345. Original branches retained.
 - #344 `60e309ff49cacbdb2a3ea1c94ab4d9c2919ad295`: current-main non-streaming Ollama cancellation regression; CI, Android, CodeQL, installer and security watch queued; unsigned preview skipped.
-- #347 `6b151d6f9381a68830a58db4cc59b6c017a10270`: current-main clock-jump diagnostic and native timestamp range checks; PR mergeable, installer audit and CodeQL queued; main CI status not yet surfaced.
+- #347 `6b151d6f9381a68830a58db4cc59b6c017a10270`: current-main clock-jump diagnostic and native timestamp range checks; CI, Android, CodeQL, installer audit and security-watch queued; unsigned preview skipped.
+- #348 `c5a236658435128684683fed215fbb77e13ae3b1`: hash-bound file-scan evidence plus handbook and delivery-gate documentation, current main; CI/CodeQL/Android/installer/security-watch pending; unsigned preview skipped.
 - #345: this current-main backlog PR; exact-head CI, CodeQL, installer and security-watch checks queued; unsigned preview skipped.
 - #342 closed as superseded by #345; branch retained.
 
