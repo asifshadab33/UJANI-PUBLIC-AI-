@@ -125,6 +125,10 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         """
         history = """
         fn set_task_history_enabled() {
+            if enabled_value {
+                confirm_native().await;
+                if !approved { return; }
+            }
             with_local_state_receipt(|| {
                 migrate_plaintext_rows();
                 UPDATE history_settings;
@@ -160,7 +164,7 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         }
         """
         history = """
-        fn set_task_history_enabled() { with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
+        fn set_task_history_enabled() { if enabled_value { confirm_native().await; if !approved { return; } } with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
         fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         """
@@ -175,7 +179,7 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         fn clear_local_search_cache() { with_local_state_receipt(|| { transaction_with_behavior(); DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes; }); }
         """
         history = """
-        fn set_task_history_enabled() { with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
+        fn set_task_history_enabled() { if enabled_value { confirm_native().await; if !approved { return; } } with_local_state_receipt(|| { migrate_plaintext_rows(); UPDATE history_settings; }); }
         fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
         """
@@ -183,6 +187,47 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         fn set_cloud_budget_limit() { with_local_state_receipt(|| { confirm_native(); set_cloud_budget_limit_db(); }); }
         """
         self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), ["set_cloud_budget_limit"])
+
+    def test_history_enable_requires_native_consent_before_receipt_and_migration(self):
+        cache = """
+        fn set_local_search_cache_settings() { with_local_state_receipt(|| { transaction_with_behavior(); UPDATE cache_settings; DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes; }); }
+        fn clear_local_search_cache() { with_local_state_receipt(|| { transaction_with_behavior(); DELETE FROM search_cache; DELETE FROM recent_searches; DELETE FROM approved_scopes; }); }
+        """
+        history = """
+        fn set_task_history_enabled() {
+            if enabled_value {
+                confirm_native().await;
+                if !approved { return; }
+            }
+            with_local_state_receipt(|| {
+                migrate_plaintext_rows();
+                UPDATE history_settings;
+            });
+        }
+        fn delete_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
+        fn clear_task_history() { with_local_state_receipt(|| { DELETE FROM task_history; }); }
+        """
+        security = """
+        fn set_cloud_budget_limit() {
+            confirm_native().await;
+            if !approved { return; }
+            with_local_state_receipt(|| { set_cloud_budget_limit_db(); });
+        }
+        """
+        self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), [])
+        consent_after_receipt = history.replace(
+            "confirm_native().await;",
+            "with_local_state_receipt(); confirm_native().await;",
+        )
+        self.assertEqual(
+            missing_local_state_mutation_receipt_guards(cache, consent_after_receipt, security),
+            ["set_task_history_enabled"],
+        )
+        without_consent = history.replace("confirm_native().await;", "skip_confirmation();")
+        self.assertEqual(
+            missing_local_state_mutation_receipt_guards(cache, without_consent, security),
+            ["set_task_history_enabled"],
+        )
 
 class NativeCommandSecurityMapParserTests(unittest.TestCase):
     def test_square_bracket_in_line_comment_does_not_truncate_handler(self):

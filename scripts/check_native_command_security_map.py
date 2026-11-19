@@ -457,6 +457,10 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
         positions = [body.find(token) for token in ordered]
         if any(position < 0 for position in positions) or positions != sorted(positions):
             missing.append(name)
+        if name == "set_task_history_enabled":
+            enable_guard = body.find("if enabled_value")
+            if enable_guard < 0 or enable_guard > positions[0]:
+                missing.append(name)
         if name == "set_local_search_cache_settings":
             for table in ("search_cache", "recent_searches", "approved_scopes"):
                 if f"DELETE FROM {table}" not in body:
@@ -469,7 +473,7 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
                     break
 
     history_expectations = {
-        "set_task_history_enabled": ("with_local_state_receipt", "migrate_plaintext_rows", "UPDATE history_settings"),
+        "set_task_history_enabled": ("confirm_native", "if !approved", "with_local_state_receipt", "migrate_plaintext_rows", "UPDATE history_settings"),
         "delete_task_history": ("with_local_state_receipt", "DELETE FROM task_history"),
         "clear_task_history": ("with_local_state_receipt", "DELETE FROM task_history"),
     }

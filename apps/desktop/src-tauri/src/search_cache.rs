@@ -4,9 +4,9 @@
 use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
-use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager};
 use zeroize::Zeroizing;
 
@@ -181,6 +181,58 @@ fn settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
         max_entries: MAX_CACHE_ENTRIES,
         max_bytes: MAX_CACHE_BYTES,
     })
+}
+
+/// Read the current opt-in state without creating, migrating, repairing or writing the cache DB.
+fn cache_enabled_from_path(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect local search-cache settings: {error}"
+            ));
+        }
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(
+                "Local search-cache settings are not stored in a regular file.".into(),
+            );
+        }
+        Ok(_) => {}
+    }
+
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| {
+            format!(
+                "Could not inspect local search-cache settings without modifying them: {error}"
+            )
+        })?;
+    settings_from_db(&db).map(|settings| settings.enabled)
+}
+
+fn cache_enabled_without_mutation(app: &AppHandle) -> Result<bool, String> {
+    let mut path: PathBuf = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not locate UJANI app data directory: {error}"))?;
+    path.push("local-search-cache.sqlite3");
+    cache_enabled_from_path(&path)
+}
+
+fn cache_enable_confirmation_required(currently_enabled: bool, requested_enabled: bool) -> bool {
+    requested_enabled && !currently_enabled
+}
+
+fn cache_enable_confirmation_message(retention_days: i64) -> String {
+    let retention = match retention_days {
+        0 => "until cleared (still limited to 50 entries / 10 MiB)",
+        7 => "7 days",
+        30 => "30 days",
+        90 => "90 days",
+        _ => "the selected retention period",
+    };
+    format!(
+        "UJANI is asking to enable the encrypted local search cache. It remembers validated search-result metadata and recent search phrases for folders you explicitly select. Folder paths and search phrases are encrypted with AES-256-GCM using a key held in the operating-system credential vault. Document contents and match excerpts are not cached. Retention: {retention}. No-result searches expire after 24 hours regardless of the retention choice. Storage is limited to 50 entries / 10 MiB. If the credential vault is unavailable, UJANI skips caching and performs a fresh search. This data stays on this device and is not sent to a cloud service. You can turn caching off at any time; doing so clears the cache. Enable?"
+    )
 }
 
 /// Loads or creates the cache encryption key in the operating-system credential vault.
@@ -544,12 +596,46 @@ pub async fn set_local_search_cache_settings(
     enabled: bool,
     retention_days: i64,
 ) -> Result<CacheSettings, String> {
+    if !ALLOWED_RETENTION_DAYS.contains(&retention_days) {
+        return Err("Choose 7, 30, 90 days, or Until cleared.".into());
+    }
+
+    // The webview checkbox is a usability affordance, not the authorization boundary.
+    // Read the prior state without initializing or modifying SQLite, then require a
+    // native Yes/No decision before the first opt-in can reserve a receipt or write data.
+    let was_enabled = if enabled {
+        let inspect_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            cache_enabled_without_mutation(&inspect_app)
+        })
+        .await
+        .map_err(|error| format!("Cache settings inspection worker failed: {error}"))??
+    } else {
+        false
+    };
+    let consent_granted = if cache_enable_confirmation_required(was_enabled, enabled) {
+        let approved = crate::native_consent::confirm_native(
+            &app,
+            "Enable encrypted local search cache",
+            cache_enable_confirmation_message(retention_days),
+            tokio_util::sync::CancellationToken::new(),
+            Duration::from_secs(120),
+        )
+        .await;
+        if !approved {
+            return Err(
+                "The native confirmation was declined, cancelled or expired; search caching remains off."
+                    .into(),
+            );
+        }
+        true
+    } else {
+        false
+    };
+
     let input_metadata = serde_json::to_vec(&(enabled, retention_days))
         .map_err(|error| format!("Could not encode cache settings audit metadata: {error}"))?;
     tauri::async_runtime::spawn_blocking(move || {
-        if !ALLOWED_RETENTION_DAYS.contains(&retention_days) {
-            return Err("Choose 7, 30, 90 days, or Until cleared.".into());
-        }
         crate::with_local_state_receipt(
             &app,
             "search_cache.settings.update",
@@ -559,6 +645,15 @@ pub async fn set_local_search_cache_settings(
                 let tx = db
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|error| error.to_string())?;
+                let current = settings_from_db(&tx)?;
+                // A concurrent disable between the read-only check and this transaction
+                // must not turn an old "already enabled" observation into a fresh opt-in.
+                if enabled && !current.enabled && !consent_granted {
+                    return Err(
+                        "Search caching was disabled before this update; a fresh native confirmation is required."
+                            .into(),
+                    );
+                }
                 tx.execute(
                     "UPDATE cache_settings SET value=?1 WHERE key='enabled'",
                     params![if enabled { "true" } else { "false" }],
@@ -909,4 +1004,75 @@ mod tests {
         assert_eq!(MAX_CACHE_ENTRIES, 50);
         assert_eq!(MAX_CACHE_BYTES, 10 * 1024 * 1024);
     }
+    #[test]
+    fn read_only_cache_consent_check_never_creates_a_missing_database() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("ujani-cache-consent-{unique}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("local-search-cache.sqlite3");
+        assert!(!cache_enabled_from_path(&path).unwrap());
+        assert!(!path.exists());
+
+        let db = Connection::open(&path).unwrap();
+        initialize(&db).unwrap();
+        drop(db);
+        assert!(!cache_enabled_from_path(&path).unwrap());
+
+        let db = Connection::open(&path).unwrap();
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        drop(db);
+        assert!(cache_enabled_from_path(&path).unwrap());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn native_cache_confirmation_discloses_encryption_retention_and_local_only_scope() {
+        let message = cache_enable_confirmation_message(0);
+        assert!(message.contains("AES-256-GCM"));
+        assert!(message.contains("operating-system credential vault"));
+        assert!(message.contains("No-result searches expire after 24 hours"));
+        assert!(message.contains("not sent to a cloud service"));
+        assert!(message.contains("until cleared"));
+    }
+
+    #[test]
+    fn native_confirmation_is_required_only_for_the_off_to_on_transition() {
+        assert!(!cache_enable_confirmation_required(false, false));
+        assert!(cache_enable_confirmation_required(false, true));
+        assert!(!cache_enable_confirmation_required(true, true));
+        assert!(!cache_enable_confirmation_required(true, false));
+    }
+
+    #[test]
+    fn native_cache_confirmation_precedes_receipt_reservation_and_settings_write() {
+        let source = include_str!("search_cache.rs");
+        let start = source.find("pub async fn set_local_search_cache_settings(").unwrap();
+        let end = source[start..]
+            .find("\n#[tauri::command]")
+            .map(|offset| start + offset)
+            .unwrap();
+        let command = &source[start..end];
+        let inspect = command.find("cache_enabled_without_mutation").unwrap();
+        let confirmation = command.find("confirm_native").unwrap();
+        let receipt = command.find("with_local_state_receipt").unwrap();
+        let write = command.find("UPDATE cache_settings").unwrap();
+
+        assert!(
+            inspect < confirmation,
+            "prior opt-in state must be read before deciding whether to prompt"
+        );
+        assert!(
+            confirmation < receipt,
+            "native consent must precede receipt reservation"
+        );
+        assert!(
+            receipt < write,
+            "receipt reservation must precede persistent settings mutation"
+        );
+        assert!(
+            command.contains("!current.enabled && !consent_granted"),
+            "the transaction must recheck the off-to-on transition after the native dialog"
+        );
+    }
+
 }
