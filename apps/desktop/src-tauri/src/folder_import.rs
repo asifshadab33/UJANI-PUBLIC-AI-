@@ -30,6 +30,19 @@ fn is_supported_text_file(path: &Path) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.as_str())
 }
 
+fn safe_skipped_file_name(name: &str) -> String {
+    name.chars()
+        .take(255)
+        .map(|character| {
+            if character.is_control() {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 struct SelectedTextFile {
     name: String,
@@ -280,7 +293,7 @@ fn collect_selected_folder_with_budget(
         if !ujani_core::valid_display_file_name(&display_name) {
             skipped_file_count += 1;
             if skipped_file_names.len() < MAX_REPORTED_SKIPPED_FILE_NAMES {
-                skipped_file_names.push(display_name.into_owned());
+                skipped_file_names.push(safe_skipped_file_name(&display_name));
             }
             continue;
         }
@@ -330,7 +343,7 @@ fn collect_selected_folder_with_budget(
 mod tests {
     use super::{
         collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
-        MAX_TOTAL_BYTES,
+        MAX_REPORTED_SKIPPED_FILE_NAMES, MAX_TOTAL_BYTES,
     };
     use tokio_util::sync::CancellationToken;
     use std::{
@@ -406,13 +419,30 @@ mod tests {
         fs::write(folder.0.join("safe.txt"), "safe content").unwrap();
         fs::write(folder.0.join(r"team\notes.txt"), "path-like name").unwrap();
         fs::write(folder.0.join("notes:stream.txt"), "alternate stream name").unwrap();
+        fs::write(folder.0.join("notes\n.txt"), "control character name").unwrap();
 
         let collected = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
-        assert_eq!(collected.skipped_file_count, 2);
+        assert_eq!(collected.skipped_file_count, 3);
         assert!(collected.skipped_file_names.contains(&r"team\notes.txt".to_string()));
         assert!(collected.skipped_file_names.contains(&"notes:stream.txt".to_string()));
+        assert!(collected.skipped_file_names.iter().any(|name| {
+            name.starts_with("notes") && name.ends_with(".txt") && !name.chars().any(char::is_control)
+        }));
         assert_eq!(collected.files.len(), 1);
         assert_eq!(collected.files[0].name, "safe.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounds_skipped_file_name_report() {
+        let folder = TestFolder::new();
+        for index in 0..12 {
+            fs::write(folder.0.join(format!("invalid-{index}:name.txt")), "skipped").unwrap();
+        }
+
+        let collected = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
+        assert_eq!(collected.skipped_file_count, 12);
+        assert_eq!(collected.skipped_file_names.len(), MAX_REPORTED_SKIPPED_FILE_NAMES);
     }
 
     #[test]
