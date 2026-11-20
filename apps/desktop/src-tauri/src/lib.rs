@@ -2577,6 +2577,17 @@ async fn get_device_info() -> Result<DeviceInfo, String> {
         .map_err(|error| format!("Device information probe worker failed: {error}"))
 }
 
+#[cfg(test)]
+mod device_info_probe_tests {
+    #[test]
+    fn device_inventory_probe_returns_basic_os_identity() {
+        let info = super::collect_device_info();
+        assert!(!info.os.trim().is_empty());
+        assert!(!info.architecture.trim().is_empty());
+        assert!(!info.system_locale.trim().is_empty());
+    }
+}
+
 /// Debug-only deterministic adapters are never exposed as production AI capabilities.
 fn debug_demo_commands_enabled() -> bool {
     cfg!(debug_assertions)
