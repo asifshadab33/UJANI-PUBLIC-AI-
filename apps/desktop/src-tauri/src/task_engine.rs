@@ -109,7 +109,7 @@ async fn read_local_resource_snapshot() -> Result<(bool, u64), String> {
 
 /// Re-check runtime availability and confirm that the requested model is installed
 /// immediately before inference. UI state and an earlier planning result are advisory only.
-async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(), String> {
+async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(bool, u64), String> {
     let (cpu_available, available_memory_mb) = read_local_resource_snapshot().await?;
     let ollama_available = ollama::is_available().await;
     plan_with_runtime_capabilities(
@@ -124,7 +124,7 @@ async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(),
     ))?;
     let metadata = ollama::inspect_model_metadata(model).await?;
     validate_local_model_metadata(selected, &metadata, available_memory_mb)?;
-    Ok(())
+    Ok((cpu_available, available_memory_mb))
 }
 
 /// Match the selected model against exact names returned by the local Ollama inventory.
@@ -213,8 +213,8 @@ impl LocalTaskEngine {
             "worker" | "partner" => return Err("Worker and Partner execution require a secure external gateway, which is not implemented. No cloud request was made.".into()),
             _ => return Err("Unknown execution mode.".into()),
         };
-        ensure_local_model_ready("local.ai.generate", model).await?;
-        let (cpu_available, available_memory_mb) = read_local_resource_snapshot().await?;
+        let (cpu_available, available_memory_mb) =
+            ensure_local_model_ready("local.ai.generate", model).await?;
         let mut available = BTreeSet::new();
         if cpu_available { available.insert("cpu".to_string()); }
         let route = RouteRequest {
