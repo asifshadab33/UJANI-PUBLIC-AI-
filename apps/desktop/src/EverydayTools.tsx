@@ -21,6 +21,8 @@ type LargeFileScanResult = {
   truncated: boolean;
   note: string;
 };
+type RecentFile = { file_name: string; path: string; size_bytes: number; modified_unix_ms: number };
+type RecentFileScanResult = { root_name: string; scanned_files: number; recent_files: RecentFile[]; truncated: boolean; note: string };
 
 const formatSize = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
@@ -41,6 +43,11 @@ export default function EverydayTools() {
   const [largeTaskId, setLargeTaskId] = useState("");
   const [largeError, setLargeError] = useState("");
   const [minimumSizeMb, setMinimumSizeMb] = useState("100");
+  const [recentDays, setRecentDays] = useState("30");
+  const [recentResult, setRecentResult] = useState<RecentFileScanResult | null>(null);
+  const [recentBusy, setRecentBusy] = useState(false);
+  const [recentTaskId, setRecentTaskId] = useState("");
+  const [recentError, setRecentError] = useState("");
 
   useEffect(() => {
     // Compare OS wall-clock deltas with the browser monotonic timer. This is
@@ -116,6 +123,32 @@ export default function EverydayTools() {
     }
   }
 
+  async function scanRecentFiles() {
+    if (recentBusy || !isTauri()) return;
+    const id = `recent-files-${Date.now()}`;
+    setRecentTaskId(id);
+    setRecentBusy(true);
+    setRecentError("");
+    setRecentResult(null);
+    try {
+      setRecentResult(await invoke<RecentFileScanResult>("find_recent_files", { taskId: id, days: Number(recentDays) }));
+    } catch (reason) {
+      setRecentError(String(reason));
+    } finally {
+      setRecentBusy(false);
+      setRecentTaskId("");
+    }
+  }
+
+  async function cancelRecentScan() {
+    if (!recentTaskId) return;
+    try {
+      await invoke<boolean>("cancel_active_task", { taskId: recentTaskId });
+    } catch (reason) {
+      setRecentError(`Could not cancel the scan: ${String(reason)}`);
+    }
+  }
+
   const zone = clock ? new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(clock).find((part) => part.type === "timeZoneName")?.value : "";
 
   return <section className="model-box" id="everyday-tools">
@@ -179,6 +212,33 @@ export default function EverydayTools() {
         <small>{file.modified_unix_ms ? `Modified: ${new Date(file.modified_unix_ms).toLocaleString()}` : "Modified time unavailable"}</small>
       </div>) : <p>No files met the selected size threshold within the scan limits.</p>}
       <small>{largeResult.note}</small>
+    </div>}
+
+    <div className="section-heading">
+      <div><h3><FileSearch size={17}/> Find recently modified files</h3><p>Find files changed recently in a folder you select, using timestamps only.</p></div>
+    </div>
+    <label className="muted" htmlFor="recent-file-window">Look back</label>
+    <select id="recent-file-window" value={recentDays} onChange={(event) => setRecentDays(event.target.value)} disabled={recentBusy}>
+      <option value="7">7 days</option>
+      <option value="30">30 days</option>
+      <option value="90">90 days</option>
+    </select>
+    <button className="model-run" type="button" onClick={scanRecentFiles} disabled={recentBusy || !isTauri()}>
+      {recentBusy ? "Scanning selected folder…" : "Choose folder and find recent files"} <FileSearch size={15}/>
+    </button>
+    {recentBusy && <><p className="progress" role="status">Reading file metadata only. No file contents are opened.</p><button className="model-run" type="button" onClick={cancelRecentScan} disabled={!recentTaskId}>Cancel scan</button></>}
+    <small className="muted">Selected folder only; up to 5,000 entries, six levels, 100 results and 60 seconds. Symlinks and reparse points are skipped. Nothing is changed.</small>
+    {recentError && <p className="error" role="alert">{recentError}</p>}
+    {recentResult && <div className="result">
+      <div className="result-title">Recent-file preview <span>{recentResult.recent_files.length} results · {recentResult.scanned_files} files checked</span></div>
+      <p>{recentResult.root_name}</p>
+      {recentResult.truncated && <p className="muted">The scan reached a safety limit or skipped inaccessible entries. Choose a smaller folder for a more complete result.</p>}
+      {recentResult.recent_files.length ? recentResult.recent_files.map((file) => <div className="saved-history-item" key={file.path}>
+        <b>{file.file_name} · {formatSize(file.size_bytes)}</b>
+        <small>{file.path}</small>
+        <small>Modified: {new Date(file.modified_unix_ms).toLocaleString()}</small>
+      </div>) : <p>No matching files were found within the scan limits.</p>}
+      <small>{recentResult.note}</small>
     </div>}
     <p className="muted"><ShieldCheck size={14}/> These tools only create previews. They never delete, move, rename, overwrite or upload your files.</p>
   </section>;

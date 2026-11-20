@@ -57,6 +57,7 @@ pub fn registered_operations() -> Vec<OperationDescriptor> {
         OperationDescriptor { id: "file.search.pdf_text".into(), description: "Search text extracted from PDFs in one user-selected local folder".into(), required_capabilities: vec!["cpu".into(), "pdf.text_extraction".into(), "pdf.worker.resource_limits".into(), "pdf.worker.filesystem_isolation".into(), "pdf.worker.network_isolation".into()], minimum_available_memory_mb: 256, max_runtime_seconds: 600 },
         OperationDescriptor { id: "file.duplicates.preview".into(), description: "Preview duplicate files by bounded local content hashing in one user-selected folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 128, max_runtime_seconds: 60 },
         OperationDescriptor { id: "file.large_files.preview".into(), description: "Preview large-file metadata in one user-selected local folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
+        OperationDescriptor { id: "file.recent.preview".into(), description: "Preview recently modified file metadata in one user-selected local folder".into(), required_capabilities: vec!["cpu".into()], minimum_available_memory_mb: 64, max_runtime_seconds: 60 },
     ]
 }
 
@@ -203,6 +204,7 @@ mod tests {
             ("file.search.pdf_text", 256, 600),
             ("file.duplicates.preview", 128, 60),
             ("file.large_files.preview", 64, 60),
+            ("file.recent.preview", 64, 60),
         ];
 
         for (operation_id, minimum_memory_mb, max_runtime_seconds) in cases {
