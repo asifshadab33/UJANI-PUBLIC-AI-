@@ -70,9 +70,10 @@ pub async fn find_empty_folders(
             })
         },
     )?;
-    let selected = selected
-        .await
-        .map_err(|error| format!("Folder picker failed: {error}"))?;
+    let selected = tokio::select! {
+        _ = token.cancelled() => return Err("Empty-folder scan cancelled by user.".into()),
+        selected = selected => selected.map_err(|error| format!("Folder picker failed: {error}"))?,
+    };
     let folder = super::require_selected_folder(
         selected,
         "Folder selection cancelled. Nothing was scanned.",
@@ -206,6 +207,13 @@ fn scan_empty_folders(
                         }
                     }
                     for item in pending.into_iter().rev() {
+                        if token.is_cancelled() {
+                            return Err("Empty-folder scan cancelled by user.".into());
+                        }
+                        if start.elapsed() >= MAX_RUNTIME || entries_seen >= MAX_ENTRIES {
+                            truncated = true;
+                            break;
+                        }
                         let child = item.path();
                         match fs::symlink_metadata(&child) {
                             Ok(metadata)
