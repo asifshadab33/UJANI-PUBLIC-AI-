@@ -593,6 +593,19 @@ pub async fn clear_task_history(app: AppHandle) -> Result<(), String> {
  use super::*;
 
  fn db()->Connection{let c=Connection::open_in_memory().unwrap();initialize(&c).unwrap();c}
+
+ #[test]
+ fn settings_read_does_not_require_or_create_a_database() {
+  let missing = settings_from_optional_db(None).unwrap();
+  assert!(!missing.enabled);
+  assert_eq!(missing.retention_days, 30);
+  assert_eq!(missing.max_entries, MAX_ENTRIES);
+
+  let db = db();
+  assert!(!settings_from_optional_db(Some(&db)).unwrap().enabled);
+  db.execute("UPDATE history_settings SET value='true' WHERE key='enabled'", []).unwrap();
+  assert!(settings_from_optional_db(Some(&db)).unwrap().enabled);
+ }
  fn test_key()->[u8;32]{Aes256Gcm::generate_key(&mut OsRng).into()}
  fn metadata<'a>(mode:&'a str,model:&'a str,kind:&'a str,created_at:i64)->HistoryMetadata<'a>{
   HistoryMetadata{mode,model,kind,created_at}
