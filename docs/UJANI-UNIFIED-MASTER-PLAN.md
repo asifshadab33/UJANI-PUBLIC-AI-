@@ -166,3 +166,71 @@ This is a first evidence-backed snapshot from current repository documentation, 
 - [ ] Record test coverage and missing user-journey coverage.
 - [ ] Mark every requirement with code, test, integration, runtime and release evidence independently.
 - [ ] Confirm no duplicate registry, planner, cache, consent, task router, scheduler or dashboard service is proposed.
+
+## 12. Project health audit and course correction (20 November 2026)
+
+### Overall finding
+UJANI is maturing as a substantial prototype, but the project is at risk of becoming broader and more interconnected faster than its user journeys, runtime boundaries and release evidence are maturing. The main risk is not that the vision is wrong; it is that too many partially implemented subsystems can combine into a desktop experience that is slow, confusing, brittle or not useful enough to justify its complexity. Neither product is release-ready on the evidence currently recorded.
+
+This is an architecture/process audit based on repository documentation, selected source files, PR metadata and CI evidence. It is not a complete source-code audit, physical-device test, performance benchmark or independent security assessment.
+
+### Corrections to the way we are developing
+1. **Stop treating all numbered batches as one giant parallel implementation.** Parallelise independent, bounded work only. A downstream feature must wait for its prerequisite contract, owner module, test fixture and security boundary. Batch numbers are a dependency map, not a mandate to start every feature simultaneously.
+2. **Introduce a feature freeze for new capability families.** Until the Public reliability gate passes, add no new major Public feature family (for example full video understanding, OCR/vision suite, broad connector integrations or another assistant mode). Fix and validate the workflows already exposed first. For Enterprise, do not expand scheduling or worker features until the authenticated control plane, durable trust and telemetry path are real.
+3. **Make user journeys the unit of completion.** A feature is complete only when a user can discover it, understand its privacy/permission implications, use it end-to-end, recover from failure, cancel it, and get a useful result on supported hardware. A crate, command, schema, mock screen or unit test alone is not a completed feature.
+4. **One owner per capability.** Before any implementation, name the existing source module and data store that own it. Extend that owner. Reject duplicate registries, caches, indexes, reminder stores, consent databases, task routers, schedulers, identity/session systems and dashboards.
+5. **Prefer a small reliable product over a broad demo.** Hide, disable or label incomplete features rather than exposing controls that cannot complete a real workflow. Do not keep features visible merely because code exists.
+6. **Performance is a release gate, not a later polish batch.** Every long-running operation needs a bounded resource budget, cancellable underlying work, timeout, progress/error state, cleanup and UI responsiveness tests. Never block the Tauri/UI thread with file I/O, model inference, PDF parsing, network calls or large serialization.
+7. **Do not conflate CI with product validation.** CI passing proves only the checks it ran. Track separate evidence for unit tests, integration, cross-platform builds, packaged install/uninstall, real OS permission behavior, physical-device UX, performance and recovery.
+8. **No silent background services.** No always-on AI, hidden polling, device waking, auto-download, auto-participation or cloud fallback. User/administrator consent must be visible, scoped, revocable and enforced at the execution boundary.
+9. **Keep security secondary in product scope but mandatory in engineering.** Do not build a replacement antivirus/firewall/SIEM or autonomous response system. Integrate customer/user-selected tools through small, optional, read-only adapters unless a separately reviewed need justifies more.
+10. **Limit cross-repository coupling.** Keep Public and Enterprise independently buildable and useful. Share versioned language-neutral contracts and fixtures only where a real integration requires them; do not create a shared runtime dependency solely for architectural neatness.
+
+### Corrected delivery gates
+
+**Public AI — gate P0: make the existing app dependable**
+- Inventory all user-visible controls and map each to a real end-to-end workflow or explicitly mark it unavailable.
+- Reproduce and fix freezes, slow navigation, blocking tasks, stale UI state, cancellation failures and resource leaks.
+- Audit every native IPC command for authorization before side effects; validate paths, symlinks and TOCTOU; ensure destructive actions require explicit confirmation.
+- Prove Ollama is loopback-only, with no proxy/redirect/cloud fallback, explicit model/context selection, bounded requests and cancellation.
+- Keep PDF/folder processing disabled or strictly bounded until OS-enforced isolation and cleanup are demonstrated.
+- Test encrypted history key lifecycle and cache expiry/deletion; no plaintext fallback.
+- Measure cold start, idle CPU/RAM, common search latency, large-file behavior, model first-token/throughput, cancellation latency and UI responsiveness on representative low-resource hardware.
+
+**Public AI — gate P1: finish only the highest-value existing journeys**
+- Setup and model choice; local model chat; file/folder search; duplicate/large-file discovery; safe document/PDF text workflows; local reminders.
+- Use deterministic OS/native tools when they outperform or simplify model-based work.
+- Keep advanced media understanding and broad external connectors deferred until the core journeys pass P0/P1.
+
+**Enterprise AI — gate E0: establish a real, read-only control plane**
+- Implement an authenticated service boundary, tenant-scoped durable repository and operator identity/RBAC before presenting a live fleet.
+- Keep the console explicitly labelled demo/read-only until it consumes live authenticated APIs.
+- Complete trusted-device enrollment, proof-of-possession, owner consent, key rotation/revocation and protected key custody.
+- Add authenticated, bounded, replay-resistant telemetry with atomic durable acceptance and freshness/unknown states.
+- Prove tenant isolation and audit behavior against a real supported database and service process, not just migrations and pure policy tests.
+
+**Enterprise AI — gate E1: only then add safe resource coordination**
+- Durable leases/reservations, quotas, cancellation, expiry, crash recovery and scheduler policy.
+- First run in advisory/dry-run mode; compare recommendations with actual operator choices and measured capacity.
+- Remote dispatch and worker execution remain disabled until receiver-side authorization, isolation, quotas, revocation, cancellation, audit, recovery and independent security review all pass.
+
+**Shared gate S0**
+- Publish a single authoritative protocol compatibility matrix with exact schema hashes/fixtures and positive/negative cross-language tests.
+- Distinguish legacy Public peer protocol v2 and Enterprise WorkloadManifest v1 from the shared Personal-to-Enterprise task-contract v1. Do not imply these legacy formats are wire-compatible with each other or with the shared contract.
+- A shared schema is not a production transport, identity, consent, replay or execution service.
+
+### Complexity and scope risks to actively reject
+- Implementing every idea from every conversation as a separate subsystem.
+- Building a general-purpose AI agent, OS replacement, antivirus, firewall, SIEM or unrestricted automation engine.
+- Adding more execution modes or model providers before the existing route behavior is understandable and tested.
+- Shipping OCR, video/audio understanding, large model bundles or broad connectors before measuring device requirements, maintenance cost and real demand.
+- Creating a second database/store for data already owned by an existing module.
+- Enabling remote execution, automatic device participation or collective response because a policy test passes.
+- Treating a static dashboard, schema, mock adapter, local file ledger or migration as a deployed Enterprise service.
+- Calling a feature complete because its PR merged or its CI passed.
+
+### Definition of done from this audit onward
+Every user-facing capability must have: one owner; a named user journey; explicit permissions and data-flow explanation; supported-platform/resource limits; success and failure UX; cancellation/cleanup; automated positive and negative tests; integration evidence; performance evidence where relevant; and a documented status. If any required evidence is missing, label it partial, implemented-unverified, blocked or intentionally disabled—not complete.
+
+### Immediate decision
+Pause expansion of new feature families. Continue only: (a) reliability and regressions in both apps, (b) contract/ownership reconciliation, (c) Public P0/P1 user journeys, and (d) Enterprise E0 trust/control-plane/telemetry foundations. Revisit later batches only after these gates have evidence. This is a deliberate scope correction, not abandonment of the long-term vision.
