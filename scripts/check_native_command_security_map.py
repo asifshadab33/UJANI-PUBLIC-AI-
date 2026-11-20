@@ -328,25 +328,28 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
     except ValueError as error:
         return [str(error)]
 
-    required_resource_probe = ("spawn_blocking", "System::new", "refresh_memory", "available_memory")
-    if any(token not in command_tokens(resource_probe) for token in required_resource_probe):
+    def has_suffix(tokens: list[str], suffix: str) -> bool:
+        return any(token == suffix or token.endswith("." + suffix) or token.endswith("::" + suffix) for token in tokens)
+
+    resource_tokens = command_tokens(resource_probe)
+    if not all(has_suffix(resource_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_memory", "available_memory")):
         missing.append("read_local_resource_snapshot must offload sysinfo memory probes")
 
     model_tokens = command_tokens(model_admission)
     if model_tokens.count("read_local_resource_snapshot") != 1:
         missing.append("ensure_local_model_ready must reuse exactly one resource snapshot")
-    if any(token in model_tokens for token in ("System::new", "refresh_memory", "available_memory")):
+    if any(has_suffix(model_tokens, token) for token in ("System::new", "refresh_memory", "available_memory")):
         missing.append("ensure_local_model_ready must not perform synchronous OS probes")
 
     capability_tokens = command_tokens(capability_probe)
-    if any(token not in capability_tokens for token in ("spawn_blocking", "System::new", "refresh_memory", "available_memory")):
+    if not all(has_suffix(capability_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_memory", "available_memory")):
         missing.append("get_capability_snapshot must offload sysinfo probes")
 
     device_command_tokens = command_tokens(device_info_command)
     collector_tokens = command_tokens(device_info_collector)
-    if "spawn_blocking" not in device_command_tokens or "collect_device_info" not in device_command_tokens:
+    if not has_suffix(device_command_tokens, "spawn_blocking") or not has_suffix(device_command_tokens, "collect_device_info"):
         missing.append("get_device_info must call its collector through spawn_blocking")
-    if any(token not in collector_tokens for token in ("System::new", "refresh_cpu", "refresh_memory")):
+    if not all(has_suffix(collector_tokens, token) for token in ("System::new", "refresh_cpu", "refresh_memory")):
         missing.append("collect_device_info must keep OS reads in the blocking collector")
     return missing
 
