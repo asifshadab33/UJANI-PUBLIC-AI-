@@ -395,7 +395,7 @@ def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
 
     masked = strip_rust_noncode(body)
     blocking_call = re.search(
-        r"spawn_blocking\\s*\\(\\s*(?:move\\s*)?\\|\\|\\s*\\{", masked
+        r"spawn_blocking\s*\(\s*(?:move\s*)?\|\|\s*\{", masked
     )
     if not blocking_call:
         return ["get_ollama_status must offload all host inventory probes inside spawn_blocking"]
