@@ -270,6 +270,7 @@ mod tests {
         fs::create_dir_all(root.join("empty")).unwrap();
         fs::create_dir_all(root.join("nonempty/sub")).unwrap();
         fs::write(root.join("nonempty/file.txt"), b"x").unwrap();
+        fs::write(root.join("nonempty/sub/keep.txt"), b"nested").unwrap();
         let result = scan_empty_folders(&root, &CancellationToken::new()).unwrap();
         assert_eq!(result.empty_folders.len(), 1);
         assert_eq!(result.empty_folders[0].name, "empty");
