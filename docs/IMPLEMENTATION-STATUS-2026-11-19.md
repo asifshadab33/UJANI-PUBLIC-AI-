@@ -1,46 +1,44 @@
 # UJANI Public AI — implementation and release status
 
-**Snapshot:** 2026-11-19. Evidence was checked against GitHub during this run; this is a point-in-time status, not unattended progress or a security certification.
+**Snapshot:** 2026-11-19 evening. This is a live GitHub evidence snapshot, not unattended progress or a security certification.
 
 ## Current main
 
-- Main SHA: `ce7d72d55312b230d4585c13f45db471f1e06131` (PR #351 merged).
-- Pre-merge main `d34c47e2e9dc52c544a33626db9bb46caeea2712` CI and CodeQL passed.
-- Post-merge CI/CodeQL for `ce7d72d55312b230d4585c13f45db471f1e06131` are pending at this snapshot.
-- Recent merged work includes #336 freshness warning, #338 release gates, #340 history/cache consent, #348 hash-bound scan evidence, #347 clock reliability, and #351 non-streaming Ollama cancellation regression.
+- Main SHA: `6b4ab2ec5ccae5528b5de3e4b1ee16e63100d32f`.
+- This main includes today's merged PRs #365 (native-command manifest mapping regressions; merge `9b74ec8dc4f3c2ae2e024b4939f1f114f7289c37`), #366 (cloud-gateway DNS answer-set filtering tests; merge `ebd909a04a16659c314927ee3c192efbcbec8034`) and #369 (catalogue-aligned model RAM recommendations; merge `6b4ab2ec5ccae5528b5de3e4b1ee16e63100d32f`).
+- Current-head CI [44582163967](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44582163967) is in progress; CodeQL [44582164172](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44582164172) has passed. Do not describe this post-merge SHA as fully green until native Linux/Windows/macOS jobs finish.
+- The immediately preceding main SHA `ebd909a04a16659c314927ee3c192efbcbec8034` had CI [44579400789](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44579400789) and CodeQL [44579408265](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44579408265) cancelled when PR #369 advanced main. The earlier baseline `95cd331ca870a3ca4de534997ee07f508a00669a` passed CI [44549577584](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577584) and CodeQL [44549577477](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/44549577477), including Linux/Windows/macOS native tests.
+- Today's earlier merged work also includes #351 (non-streaming Ollama cancellation regression), #354 (evidence-qualified model inventory v2 UI), and #363 (history deletion input validation before receipt). Earlier same-day changes include clock reliability, history/cache consent ordering and hash-bound file-scan evidence.
 
-## Merged cancellation regression (#351)
+## Current open PRs
 
-- Exact head: `ef4b98d5c0a2ac16f09ccf057a689758dc76ff55`.
-- Passed exact-head: Rust lint, Rust core tests, Rust dependency audit, frontend dependency audit, React/TypeScript build, workflow lint, native tests on Linux/Windows/macOS, installer size audit on Linux/Windows/macOS, JavaScript/TypeScript and Rust CodeQL, Android ARM64 compatibility, security-sensitive change watch.
-- Unsigned preview installers were skipped (no signing/release).
-- Merged as `ce7d72d55312b230d4585c13f45db471f1e06131`.
-- The test uses a local TCP server with an incomplete chunked response and verifies cancellation closes the response; it does not enable any new remote route.
+| PR | Exact head | Latest evidence at this snapshot |
+|---|---|---|
+| [#364](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/364) | `b6ddd05f89f8a265eb0403b39757e7537e9f1dff` | Removed a redundant nonce binding after Clippy failed on the prior head; exact-head CI rerun is in progress/queued. Do not merge until every required check passes. |
+| [#367](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/367) | `c5b3ac14d9e769ace576676201fa270643681d3b` | Rust tests/lint/audits, TypeScript build, CodeQL, Linux/Windows native tests and Linux/Windows installers passed; macOS native and installer jobs remain in progress. |
+| [#368](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/368) | `095807597b5d69e569b38f02181196ef49bd4470` | All functional, native and security checks passed; macOS installer was cancelled and needs a successful rerun. |
+| [#370](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/370) | `152f32ccb28602ca8570a1ab65e0753602932cf6` | Cross-platform filename validation now skips and reports unsafe folder entries without discarding valid files. Rust/frontend tests, audits, CodeQL and Linux/Windows installers passed; Linux native and Android ARM64 reruns are in progress, with macOS native/installer pending. |
+| [#371](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/371) | `cb988d329a4999b09258d4d76dd59f6b89e04c99` | Updated audit wording and named CodeQL in the merge prerequisite. Exact-head CI is in progress; CodeQL analysis is still running. |
+Open PR heads and base branches must be rechecked before merging; none of the above is counted as merged.
 
-## Active PRs
+## Model/runtime intelligence
 
-- #353 [native command audit-manifest contract tests](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/353), exact head `a035f0a398cbbc907705a5e18e19fda1e8d6b423`: CI, CodeQL and installer audit are still in progress/queued.
-- #354 [evidence-qualified model inventory v2 UI](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/354), exact head `03fbec05766052be3edbe73672c71ca223d555ac`: local Node helper tests passed 6/6; exact-head CI, CodeQL and installer audit are pending/in progress. This presents existing bounded local metadata only; unknowns stay unknown and it does not select/download/run models.
-- This status-document PR #352 is open; update it before merging if the snapshot changes.
+- Public's local model/runtime v2 producer and evidence-qualified UI are merged. It uses existing bounded OS and loopback Ollama observations, keeps collection `personal_local_only`, distinguishes verified/reported/estimated/unknown evidence, and preserves explicit user choice.
+- No prompt, file content, path, credential or conversation data is sent to Enterprise. No model is automatically selected, downloaded, installed or switched. Managed downloads remain disabled pending provenance, licence, checksum, size/storage and fresh compatibility validation.
+- Shared v2 schema/vector parity does not create an Enterprise transport or authorization path.
 
 ## Release blockers and verification limits
 
-- Full native IPC command authorization/denial matrix and alternate invocation surfaces still need security review. The source-mapped manifest is not proof of runtime authorization.
-- Rust desktop dependency audit still reports **7 allowed warnings** (glib, proc-macro-error, ttf-parser, zbus_names, zvariant, zvariant_derive, chrono); see issue #73. The audit job's green status is not a clean dependency audit.
-- Complete application-level OS sandboxing is not implemented/verified across platforms. PDF worker confinement has documented gaps: macOS uses deprecated `sandbox-exec`; Windows Job Objects do not deny filesystem/network access by themselves; Linux worker restrictions require device validation.
-- Managed model downloads remain disabled pending provenance, licence, checksum, size/storage and compatibility evidence.
-- Filesystem symlink/reparse-point and TOCTOU validation, history key recovery/rotation, PDF upload/cancel/freeze regression tests, fuzzing, recovery cleanup and platform-specific containment remain.
-- Production signing/updater provenance/rollback, physical-device install/launch tests and independent external security review remain unverified.
-- Worker/Partner and peer execution remain disabled. Local-first processing, visible user control and explicit cloud consent remain the product boundary.
-
-## Honest status
-
-UJANI Public AI remains **pre-alpha / controlled-testing candidate**, not production-ready. Hosted CI is evidence for those exact commits, not physical-device testing, signing validation, sandbox certification or independent review.
+- Native IPC inventory and manifest checks are audit aids, **not runtime authorization proof**. Issue #120 remains open for command-by-command policy, consent, receipt, denial-before-side-effect and alternate invocation coverage.
+- The latest completed main Rust dependency audit reported **7 non-failing advisory warnings** (the audit job does not fail on these findings; this is not an explicit advisory allowlist): unmaintained `chrono` (RUSTSEC-2026-0543), `proc-macro-error` (RUSTSEC-2024-0370), `ttf-parser` (RUSTSEC-2026-0192), `zbus_names` (RUSTSEC-2026-0371), `zvariant` (RUSTSEC-2026-0370), `zvariant_derive` (RUSTSEC-2026-0372), and unsound `glib::VariantStrIter` (RUSTSEC-2024-0429). A successful audit job with these warnings is not a clean dependency set.
+- Complete application-level OS sandboxing and PDF-worker confinement are not independently verified across platforms. Windows Job Objects alone do not deny filesystem/network access; macOS `sandbox-exec` is deprecated; Linux restrictions still require device validation.
+- History key rotation/recovery, filesystem symlink/reparse-point and TOCTOU tests, PDF upload/cancel/freeze regressions, fuzz campaigns, crash recovery, production signing, SBOM/provenance, updater rollback and physical install/upgrade/uninstall tests remain separate gates.
+- Worker/Partner, peer execution and remote task dispatch remain disabled. No production release is authorised by this status update.
 
 ## Next work
 
-1. Complete exact-head CI for #354 and #353; fix failures rather than suppress them.
-2. Continue command-by-command IPC review and filesystem-boundary tests.
-3. Resolve the seven Rust dependency warnings through reproducible, cross-platform-tested migrations.
-4. Complete PDF worker/platform containment and regressions.
-5. Perform physical install/launch, freeze recovery, file/PDF, cancellation, privacy and update/rollback testing.
+1. Complete current-head CI and CodeQL for #364, #367–#371; resolve failures, stale bases and review blockers before merging.
+2. Finish native IPC authorization/negative tests and filesystem/PDF boundary review.
+3. Remediate or precisely bound the seven Rust advisories with cross-platform evidence.
+4. Complete OS-enforced PDF/application isolation, key recovery and crash/cancel regressions.
+5. Run physical-device installation, upgrade, uninstall, minimum-OS, signing and rollback validation; commission independent security review.
