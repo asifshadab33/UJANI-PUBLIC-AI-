@@ -2554,8 +2554,8 @@ struct RunResult {
     execution: String,
 }
 
-#[tauri::command]
-fn get_device_info() -> DeviceInfo {
+/// Collects OS device information on a blocking worker thread.
+fn collect_device_info() -> DeviceInfo {
     let mut system = System::new();
     system.refresh_cpu();
     system.refresh_memory();
@@ -2567,6 +2567,14 @@ fn get_device_info() -> DeviceInfo {
         available_memory_mb: system.available_memory() / (1024 * 1024),
         system_locale: sys_locale::get_locale().unwrap_or_else(|| "Unknown".into()),
     }
+}
+
+/// Keep synchronous OS inventory probes off the async command executor.
+#[tauri::command]
+async fn get_device_info() -> Result<DeviceInfo, String> {
+    tauri::async_runtime::spawn_blocking(collect_device_info)
+        .await
+        .map_err(|error| format!("Device information probe worker failed: {error}"))
 }
 
 /// Debug-only deterministic adapters are never exposed as production AI capabilities.
