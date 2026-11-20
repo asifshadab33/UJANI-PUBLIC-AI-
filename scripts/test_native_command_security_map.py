@@ -16,8 +16,61 @@ from check_native_command_security_map import (
     missing_cloud_transfer_preflight_guards,
     missing_folder_import_preflight_guards,
     missing_local_state_mutation_receipt_guards,
+    missing_reminder_destructive_confirmation_guards,
     manifest_entry_errors,
 )
+
+
+class ReminderDestructiveConfirmationTests(unittest.TestCase):
+    GUARDED_SOURCE = """
+        fn destructive_confirmation(request: &ReminderRequest) -> Result<Option<(&'static str, &'static str)>, String> {
+            match request {
+                ReminderRequest::Delete { id } => {
+                    valid_id(id)?;
+                    Ok(Some(("Delete local reminder", "delete only this reminder")))
+                }
+                ReminderRequest::ClearAll => Ok(Some(("Clear all local reminders", "delete every reminder"))),
+                _ => Ok(None),
+            }
+        }
+        async fn manage_local_reminders(app: AppHandle, request: ReminderRequest) -> Result<(), String> {
+            if let Some((title, message)) = destructive_confirmation(&request)? {
+                let approved = crate::native_consent::confirm_native(
+                    &app,
+                    title,
+                    message.to_string(),
+                    tokio_util::sync::CancellationToken::new(),
+                    std::time::Duration::from_secs(120),
+                ).await;
+                if !approved { return Err("declined".into()); }
+            }
+            tauri::async_runtime::spawn_blocking(move || manage_blocking(app, request)).await
+        }
+    """
+
+    def test_delete_and_clear_all_require_native_confirmation_before_storage_worker(self):
+        self.assertEqual(missing_reminder_destructive_confirmation_guards(self.GUARDED_SOURCE), [])
+
+    def test_each_destructive_action_must_be_covered(self):
+        source = self.GUARDED_SOURCE.replace(
+            "ReminderRequest::Delete { id }",
+            "ReminderRequest::Create { id }",
+        )
+        self.assertEqual(missing_reminder_destructive_confirmation_guards(source), ["delete"])
+
+    def test_delete_identifier_is_validated_before_consent(self):
+        source = self.GUARDED_SOURCE.replace("valid_id(id)?;", "")
+        self.assertEqual(missing_reminder_destructive_confirmation_guards(source), ["delete"])
+
+    def test_missing_confirmation_fails_closed_in_static_audit(self):
+        source = self.GUARDED_SOURCE.replace(
+            "crate::native_consent::confirm_native",
+            "crate::skip_native_confirmation",
+        )
+        self.assertEqual(
+            missing_reminder_destructive_confirmation_guards(source),
+            ["clear_all", "delete"],
+        )
 
 
 class NativeCommandManifestContractTests(unittest.TestCase):

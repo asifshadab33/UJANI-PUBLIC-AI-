@@ -194,7 +194,7 @@ export default function ReminderCentre() {
   }
 
   async function clearAllReminders() {
-    if (!window.confirm("Delete every saved local reminder? This cannot be undone.")) return;
+    // Native IPC owns the destructive-action confirmation; avoid a duplicate webview prompt.
     await run(async () => {
       const response = await manage({ action: "clear_all" });
       if (response.kind !== "cleared") throw new Error("Local reminders could not be cleared.");
