@@ -27,12 +27,12 @@ Batches run concurrently when independent; dependencies and release gates remain
 - Public #397 JPEG header dimensions: merged as `a102ed0552decd46801173c46b8538b0972319b9`; exact-head CI, CodeQL, Android check and installer audit passed before merge; main-branch workflow evidence has not yet been returned by the connector.
 - Public #395 recent-file preview: merged as `e22a31fc7912d7d4db72327e7e95a964b6e8381f`; exact-head CI, CodeQL, Android compatibility and installer audit passed before merge.
 - Public #396 empty-folder preview: draft; hosted CI passed, but a verified selected-root TOCTOU redirection risk remains (symlink swap between root check and canonicalization); cancellation checks also need tightening. Not mergeable from a safety perspective.
-- Public #400 async host-probe offloading: draft; exact-head checks passed, but current PR metadata reports mergeable=false (conflict/outdated base); do not merge until refreshed/reconciled.
+- Public #407 async host-probe offloading: recreated on current main; CI, CodeQL, Android, security-watch and installer checks are pending.
 - Public #401 model-runtime v2 capability boundary: merged as `669a98b79eff3340e77f19efdb450ace88e5a83f`; exact-head CI, CodeQL and Android checks passed before merge. Post-merge main workflow evidence remains pending.
 - Public dependency PRs #384, #391, #388–#390, #385–#387: assess independently; do not batch blindly. Failed platform/native checks are blockers.
-- Public #404 strict duplicate-key schema validator: draft; Python/Rust core tests, TypeScript, workflow lint, dependency audit and Rust lint have passed; native Linux/Windows/macOS checks still in progress.
+- Public #406 strict duplicate-key schema validator: recreated on current main; exact-head CI, CodeQL and security-watch checks are queued/in progress.
 - Enterprise #312 strict duplicate-key projection validator: merged as `1f70b5d1ce5b08c4a2bed3ebcc16fc7f845db224`; CI, CodeQL, dependency audit and security watch passed before merge.
-- Enterprise #313 strict duplicate-key model-inventory intake parser: first CI run caught a missing trait qualification and then formatting; both were fixed on the branch. New exact-head CI is running; do not merge until green.
+- Enterprise #313 strict duplicate-key model-inventory intake parser: CI exposed trait qualification, formatting, then a delimiter typo during repair; these were corrected. Latest exact-head CI/security runs are pending; do not merge until green.
 
 ## Release posture
 
