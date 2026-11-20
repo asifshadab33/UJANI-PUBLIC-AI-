@@ -463,7 +463,7 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
 
     cache_expectations = {
         "set_local_search_cache_settings": ("with_local_state_receipt", "transaction_with_behavior", "UPDATE cache_settings"),
-        "clear_local_search_cache": ("with_local_state_receipt", "transaction_with_behavior", "DELETE FROM search_cache"),
+        "clear_local_search_cache": ("confirm_native", "if !approved", "with_local_state_receipt", "transaction_with_behavior", "DELETE FROM search_cache"),
     }
     for name, ordered in cache_expectations.items():
         try:
@@ -491,8 +491,8 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
 
     history_expectations = {
         "set_task_history_enabled": ("confirm_native", "if !approved", "with_local_state_receipt", "migrate_plaintext_rows", "UPDATE history_settings"),
-        "delete_task_history": ("with_local_state_receipt", "DELETE FROM task_history"),
-        "clear_task_history": ("with_local_state_receipt", "DELETE FROM task_history"),
+        "delete_task_history": ("confirm_native", "if !approved", "with_local_state_receipt", "DELETE FROM task_history"),
+        "clear_task_history": ("confirm_native", "if !approved", "with_local_state_receipt", "DELETE FROM task_history"),
     }
     for name, ordered in history_expectations.items():
         try:
