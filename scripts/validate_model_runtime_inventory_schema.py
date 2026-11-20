@@ -9,6 +9,22 @@ import jsonschema
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _reject_duplicate_json_keys(pairs):
+    """Fail on duplicate JSON keys recursively rather than accepting last-key-wins."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _json_load_strict(text):
+    return json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+
+
 SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v1.schema.json"
 V2_SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v2.schema.json"
 
@@ -35,7 +51,7 @@ def _git_blob_sha1(path: Path) -> str:
 def validate_shared_contract_manifest() -> None:
     """Fail CI if either repository drifts from the shared v1 contract artifacts."""
     manifest_path = ROOT / "schemas/shared-contract-manifest-v1.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = _json_load_strict(manifest_path.read_text(encoding="utf-8"))
     assert manifest.get("manifest_version") == 1
     assert manifest.get("hash_algorithm") == "git_blob_sha1"
     assert manifest.get("artifacts") == EXPECTED_SHARED_ARTIFACTS
@@ -55,12 +71,12 @@ def validate_shared_contract_manifest() -> None:
 def validate_self_evolution_schema() -> None:
     schema_path = Path(__file__).resolve().parents[1] / "schemas/self-evolution-proposal-v1.schema.json"
     fixture_path = Path(__file__).resolve().parents[1] / "schemas/test-vectors/self-evolution-proposal-v1.json"
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema = _json_load_strict(schema_path.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator.check_schema(schema)
     assert schema["$id"] == "urn:ujani:self-evolution-proposal:v1"
     assert schema["properties"]["schema_version"]["const"] == 1
     validator = jsonschema.Draft202012Validator(schema)
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture = _json_load_strict(fixture_path.read_text(encoding="utf-8"))
     validator.validate(fixture)
 
     # The schema is a structural contract, not an authorization grant.
@@ -350,7 +366,7 @@ def _v2_references_valid(inventory: dict) -> bool:
 
 
 def validate_model_runtime_inventory_v2() -> None:
-    schema = json.loads(V2_SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = _json_load_strict(V2_SCHEMA_PATH.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator.check_schema(schema)
     assert schema["$id"] == "urn:ujani:model-runtime-inventory:v2"
     assert schema["properties"]["schema_version"]["const"] == 2
@@ -359,14 +375,14 @@ def validate_model_runtime_inventory_v2() -> None:
     assert "Alternatives" in compatibility_schema["required_accelerator_apis"]["description"]
     validator = jsonschema.Draft202012Validator(schema)
     fixture_path = V2_SCHEMA_PATH.parent / "test-vectors/model-runtime-inventory-v2.json"
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture = _json_load_strict(fixture_path.read_text(encoding="utf-8"))
     validator.validate(fixture)
     assert _v2_references_valid(fixture)
     assert _v2_enterprise_inventory_authorized(fixture)
 
     # Public emits a distinct personal-local-only descriptor without Enterprise identity.
     public_fixture_path = V2_SCHEMA_PATH.parent / "test-vectors/model-runtime-inventory-v2-public-local.json"
-    public_fixture = json.loads(public_fixture_path.read_text(encoding="utf-8"))
+    public_fixture = _json_load_strict(public_fixture_path.read_text(encoding="utf-8"))
     validator.validate(public_fixture)
     assert public_fixture["collection_context"]["scope"] == "personal_local_only"
     assert public_fixture["collection_context"]["owner_consent"] == "not_required_local_only"
@@ -660,8 +676,21 @@ def validate_model_runtime_inventory_v2() -> None:
     print("Model/runtime inventory v2 schema, policy-boundary and selection checks passed.")
 
 def main() -> None:
+    # Duplicate keys are ambiguous across parsers and can invalidate signatures
+    # or policy decisions; reject them at all nesting levels.
+    for raw in (
+        '{"schema_version":2,"schema_version":2}',
+        '{"sender":{"device_id":"trusted","device_id":"attacker"}}',
+        '{"capabilities":{"chat":true,"chat":false}}',
+    ):
+        try:
+            _json_load_strict(raw)
+        except ValueError as error:
+            assert "duplicate JSON key" in str(error)
+        else:
+            raise AssertionError("duplicate JSON keys unexpectedly accepted")
     validate_shared_contract_manifest()
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema = _json_load_strict(SCHEMA_PATH.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["$id"] == "urn:ujani:model-runtime-inventory:v1"
     assert schema["type"] == "object" and schema["additionalProperties"] is False
@@ -681,7 +710,7 @@ def main() -> None:
         "verified", "reported", "estimated", "unknown"
     ]
     fixture_path = SCHEMA_PATH.parent / "test-vectors/model-runtime-inventory-v1.json"
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture = _json_load_strict(fixture_path.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
     validator.validate(fixture)
     assert fixture["schema_version"] == 1
