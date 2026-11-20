@@ -19,6 +19,8 @@ from check_native_command_security_map import (
     missing_local_state_mutation_receipt_guards,
     missing_reminder_destructive_confirmation_guards,
     missing_async_os_probe_offload_guards,
+    missing_model_recommendation_probe_offload_guards,
+    missing_ollama_status_probe_offload_guards,
     manifest_entry_errors,
 )
 
