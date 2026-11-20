@@ -956,21 +956,32 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
         (None, None)
     };
 
-    let mut system = System::new();
-    system.refresh_cpu();
-    system.refresh_memory();
-    let cpu_logical_cores = std::thread::available_parallelism()
-        .ok()
-        .map(|count| count.get().min(65_535) as u32)
-        .or_else(|| {
-            let count = system.cpus().len();
-            (count > 0).then_some(count.min(65_535) as u32)
-        });
-    let total_memory_bytes = system.total_memory();
+    // Keep synchronous host inventory calls off the async command executor.
+    let (cpu_logical_cores, total_memory_bytes, available_memory_bytes, os_name, os_version) =
+        tauri::async_runtime::spawn_blocking(|| {
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+            let cpu_logical_cores = std::thread::available_parallelism()
+                .ok()
+                .map(|count| count.get().min(65_535) as u32)
+                .or_else(|| {
+                    let count = system.cpus().len();
+                    (count > 0).then_some(count.min(65_535) as u32)
+                });
+            (
+                cpu_logical_cores,
+                system.total_memory(),
+                system.available_memory(),
+                System::name(),
+                System::os_version(),
+            )
+        })
+        .await
+        .map_err(|error| format!("Ollama status host probe failed: {error}"))?;
     let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
-    let memory_available_mb = memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
-    let os_name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
-    let os_version = System::os_version();
+    let memory_available_mb = memory_total_mb.map(|_| available_memory_bytes / (1024 * 1024));
+    let os_name = os_name.unwrap_or_else(|| std::env::consts::OS.to_string());
     let architecture = std::env::consts::ARCH.to_string();
     // Capture OS evidence after the OS/hardware observations have been collected.
     let os_observed_at_unix_ms = SystemTime::now()
