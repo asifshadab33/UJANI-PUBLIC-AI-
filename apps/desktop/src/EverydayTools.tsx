@@ -24,7 +24,6 @@ type LargeFileScanResult = {
 type RecentFile = { file_name: string; path: string; size_bytes: number; modified_unix_ms: number };
 type RecentFileScanResult = { root_name: string; scanned_files: number; recent_files: RecentFile[]; truncated: boolean; note: string };
 
-
 const formatSize = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -49,7 +48,6 @@ export default function EverydayTools() {
   const [recentBusy, setRecentBusy] = useState(false);
   const [recentTaskId, setRecentTaskId] = useState("");
   const [recentError, setRecentError] = useState("");
-
 
   useEffect(() => {
     // Compare OS wall-clock deltas with the browser monotonic timer. This is
@@ -124,7 +122,6 @@ export default function EverydayTools() {
       setLargeError(`Could not cancel the scan: ${String(reason)}`);
     }
   }
-
 
   async function scanRecentFiles() {
     if (recentBusy || !isTauri()) return;
