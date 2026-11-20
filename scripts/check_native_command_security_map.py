@@ -347,8 +347,18 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
         missing.append("get_capability_snapshot must offload sysinfo probes")
 
     status_tokens = command_tokens(ollama_status)
-    if not all(has_suffix(status_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_cpu", "refresh_memory")):
-        missing.append("get_ollama_status must offload sysinfo CPU and memory probes")
+    status_masked = strip_rust_noncode(ollama_status)
+    blocking_call = re.search(r"spawn_blocking\\s*\\(\\s*(?:move\\s*)?\\|\\|\\s*\\{", status_masked)
+    blocking_probe_tokens: list[str] = []
+    if blocking_call:
+        opening = status_masked.find("{", blocking_call.start())
+        closing = find_matching_delimiter(status_masked, opening, "{", "}")
+        blocking_probe_tokens = command_tokens(ollama_status[opening + 1:closing])
+    if not all(has_suffix(blocking_probe_tokens, token) for token in ("System::new", "refresh_cpu", "refresh_memory")):
+        missing.append("get_ollama_status must offload sysinfo CPU and memory probes inside spawn_blocking")
+
+    if not has_suffix(status_tokens, "spawn_blocking"):
+        missing.append("get_ollama_status must use spawn_blocking")
 
     device_command_tokens = command_tokens(device_info_command)
     collector_tokens = command_tokens(device_info_collector)
