@@ -256,3 +256,142 @@ PRs #302 and #303 are merged and recorded in the Public AI section above. The re
 ### Cross-repository boundary
 
 The shared task-contract v1 schema, model-runtime-inventory schema, model catalogue, test vectors and hash-pinned manifests are draft protocol foundations only; production semantics and end-to-end interoperability approval remain pending. Public AI's Worker and Partner modes are distinct from Enterprise's organisation-managed worker fleet: Worker means approved cloud plans/delegations while this device performs allow-listed local compute; Partner means iterative, bounded local/cloud collaboration. Both Public modes remain preview-only. Fortress blocks UJANI cloud requests today, but OS-wide network isolation is not yet enforced. Neither product may silently start the other, share prompts/files by default, or infer trust/consent from model inventory. Before any Enterprise remote task, the authenticated service must bind sender, organisation, worker, exact task digest, administrator and worker-owner consent, replay claims and a durable lease in one fail-closed admission flow; the worker must independently revalidate policy and enforce OS quotas. No remote execution is enabled by these changes.
+
+
+---
+
+# UJANI Master Delivery Plan — consolidated cross-project baseline
+
+**Revision:** 20 November 2026  
+**Purpose:** One coordinated requirements, implementation, verification and release plan for UJANI Public AI and UJANI Enterprise AI. This section is the cross-project planning index. The two repositories remain separately governed; their detailed handbooks, roadmaps, threat models, schemas, command inventories and release gates remain the implementation references. Do not create a competing roadmap or mark an item complete without evidence from the relevant repository and runtime.
+
+## 1. Product outcome and non-negotiable principles
+
+UJANI exists to make useful AI work happen on computing resources already available to the user or organisation, reducing avoidable dependence on central AI data centres. It must remain practical, lightweight, transparent and usable—not merely a collection of policy contracts.
+
+1. **Local-first and resource-aware:** prefer deterministic OS tools and suitable local models before external inference. Use other devices only when explicitly authorised and demonstrably appropriate.
+2. **Consent before side effects:** no silent model download, runtime start, external transfer, device participation, background work, destructive action or privileged OS change.
+3. **OS-first, lightweight design:** reuse native search, file, calendar, notification, credential-vault and security capabilities where appropriate. Do not reimplement a full OS service or bundle heavyweight engines unnecessarily.
+4. **Truthful capability reporting:** distinguish detected, runtime-verified, catalogue-claimed, estimated, stale and unknown. Unknown is never silently upgraded to compatible, healthy or schedulable.
+5. **Security at enforcement boundaries:** UI state, model output, schema validation and policy previews are not authorization. Enforce permissions in native/service/receiver code before side effects.
+6. **Observable and reversible operation:** show execution location, resources, progress, approvals, provenance, errors and cancellation. Provide recovery, revocation and deletion paths.
+7. **No premature distributed execution:** Enterprise remote work remains disabled until authenticated identity, owner consent, tenant isolation, encrypted transport, receiver-side policy, OS isolation, quotas, cancellation, audit and independent review are proven.
+8. **Evidence-based energy claims:** never wake sleeping devices. Compare equivalent completed work and include device, network, retry, cooling and transfer overhead. Publish measured and estimated inputs separately.
+
+## 2. Product scope by application
+
+### 2.1 UJANI Public AI — personal desktop assistant
+
+**Setup and everyday usability**
+- A clean first-run experience that works without Ollama or any model installed; Basic, Advanced, Choose models and Not now paths; accessible settings, understandable errors and clear capability states.
+- Small-model-first recommendations for ordinary hardware. Show each model's purpose, suitable tasks, limitations, exact artifact/source/digest, quantisation, download and installed size, RAM/VRAM guidance, runtime/platform support and licence before an optional install.
+- Make installed, available-to-download, unsupported and unknown states distinct. Never silently switch models or fall back to cloud.
+
+**Native OS-powered productivity**
+- User-scoped file/folder search, metadata search, document-content search, PDF search, duplicate detection, large-file discovery, and safe sorting/organisation of documents and images.
+- Locate videos and media using OS metadata/indexing where available. Distinguish locating a video from expensive scene understanding, transcription or summarisation.
+- Open results in the user's chosen OS application. Respect selected roots, OS permissions, symlinks/reparse points, exclusions and bounded traversal. No unrestricted whole-disk indexing by default.
+- Basic device/system questions and lightweight deterministic helpers should work without a model where possible.
+
+**Local AI and document workflows**
+- Local chat, summarisation, translation, rewriting, explanation and document Q&A through typed runtime adapters.
+- Bounded PDF/text processing, image metadata and, only after separate resource/privacy review, optional OCR or vision. Scanned-PDF OCR, full image understanding, audio transcription and video scene understanding are not to be claimed until implemented and tested.
+- Keep advanced media pipelines optional; do not burden the default installer with large models or duplicate mature OS/media tools.
+
+**Personal intelligence and integrations**
+- An optional daily planner for user tasks, commitments, reminders, renewals, birthdays and follow-ups.
+- Consent-based connectors to supported calendars, Outlook, Zoom meeting metadata, notes and other documented provider APIs. Read/write scopes are separate; show what is accessed, last sync, provenance and retention; allow revocation.
+- Prefer provider-native schedulers and OS notifications when suitable. No hidden mailbox ingestion, screen surveillance, background agent loop or automatic sending/calendar mutation.
+
+**Execution, privacy and reliability**
+- Preserve Fortress, Smart, Worker and Partner as distinct, honestly described modes. Fortress must not be called OS-isolated until OS enforcement is verified. Worker/Partner remain unavailable until their separate secure transport, consent, dispatch, quota and receiver-side enforcement gates pass.
+- Complete universal native IPC authorization/denial-before-side-effect coverage; typed operations; cancellation, timeouts, bounded output, task receipts and clear execution provenance.
+- Protect history, reminders and search caches; opt-in persistence, encrypted sensitive fields, key lifecycle, retention, export/deletion and recovery. Metadata/plaintext boundaries must be disclosed.
+- Fix freezes, hangs, stale task state, memory pressure, model/runtime failures and UI responsiveness across supported platforms.
+
+### 2.2 UJANI Enterprise AI — organisation-controlled resource coordination
+
+**Real control plane and trust**
+- Deployable authenticated HTTP/API service, organisation identity-provider integration (OIDC/SAML as selected), tenant-derived server identity, RBAC, step-up/dual approval where appropriate, CSRF/origin/rate/body protections and durable fail-closed audit.
+- Durable tenant-scoped repositories and migration/backup/restore procedures. Existing Rust policy, PostgreSQL migrations, signed claims and file-backed ledgers are foundations—not a live service by themselves.
+- Device lifecycle: invitation/enrolment, proof of possession, tenant binding, owner consent, key custody/rotation/revocation, lost-device handling, monotonic generations, replay/expiry and audit.
+- Production KMS/HSM/TPM or protected host key-provider integration and external anti-rollback anchor; reconcile file-backed registry/ledger with the PostgreSQL transaction path before relying on either for live admission.
+
+**Endpoint inventory and resource coordination**
+- A least-privilege, visible endpoint agent for explicitly enrolled company-owned or owner-authorised devices; read-only inventory/telemetry first.
+- Authenticated fresh CPU/RAM/GPU/NPU/runtime, storage, power, thermal, interactive-use and health evidence. Unknown/stale telemetry remains unknown and cannot admit work.
+- Resource-aware placement, quotas, priorities, maintenance windows, fairness, atomic reservations, durable leases, queue/back-pressure, cancellation, expiry and crash recovery.
+- Model catalogue parity with Public, but administrator-approved model/runtime policy, controlled distribution, per-device fit evidence and user visibility. Never treat fleet RAM as one machine's model memory.
+- Worker-side OS isolation, least privilege, network/filesystem/process restrictions, resource enforcement, signed assignments, independent policy revalidation and signed result receipts before any dispatch.
+
+**Operator and organisation experience**
+- Live tenant-scoped operator dashboard: device enrollment/trust/heartbeat/freshness, capacity, alerts, model inventory, approvals, leases/workloads, audit search/export, maintenance and staged updates. Synthetic demo data must always be labelled and never masquerade as live fleet data.
+- Optional Enterprise Intelligence Planner coordinating approved Outlook/Microsoft Graph, Google Workspace, Zoom metadata, CalDAV, project/task and compatible MCP/workflow systems. Tenant policy and individual user consent are independent; personal reminders are not automatically manager-visible.
+- Enterprise Intelligence Orchestration Layer as a lightweight customer-controlled coordination layer over existing products—not a replacement for them. Reuse the capability registry and connector contracts; do not create parallel plugin, scheduler, consent or event frameworks.
+- Optional older-network/security integrations for customer-selected firewall, endpoint protection, Suricata, Zeek and Malcolm deployments. Infrastructure Shield/Security Centre is secondary to the compute-utilisation mission and must not become a proprietary-tool replacement.
+
+**Collective Defence — separately gated optional capability**
+- Default off; independent organisation and individual opt-in; clear event categories, purpose, recipients, retention and revocation.
+- Read-only bounded endpoint signals first; authenticated tenant ingestion, privacy minimisation, provenance, confidence, replay/poisoning protection, deterministic explainable correlation and analyst workflows.
+- No file contents, credentials, private conversations, unrestricted logs, remote shell, autonomous destructive response or fleet-wide containment. Any future reversible response needs separate approval, least privilege, rollback and independent review.
+
+### 2.3 Shared Public/Enterprise foundations
+
+- Versioned task, capability, model-runtime inventory, catalogue, status, receipt and evidence contracts; compatibility policy and end-to-end fixtures tested in both repositories.
+- Adaptive Capability Architecture (ACA): capability discovery with provenance/freshness, compatibility preflight, typed adapters, policy/permission metadata, lifecycle (enable/update/remove), rollback and recovery. Discovery is not authorization; a catalogue entry is not proof of runtime capability.
+- Common capability vocabulary and execution provenance without forcing a shared code library where independent ownership is safer.
+- Contract versioning, schema validation, cross-language vectors, migration policy and explicit deprecation rules.
+- Shared benchmark methodology for latency, quality, memory/VRAM, energy, reliability and data movement; measured, estimated and unknown values remain distinct.
+
+## 3. Small-batch delivery programme
+
+Batches are small, reviewable PRs with explicit acceptance tests. Public and Enterprise streams should progress in parallel whenever independent. Start discovery, test authoring, documentation and isolated implementation concurrently; respect dependencies before enabling integrated behaviour. Do not combine unrelated work into a single large PR.
+
+| Batch | Public AI workstream | Enterprise AI workstream | Exit evidence |
+|---|---|---|---|
+| **0 — reconcile and baseline** | Reconcile roadmap, command inventory, claims ledger, open/closed PRs, CI and manual smoke matrix; review reminder PR #379. | Reconcile roadmap, issues, policy/service contracts, migrations, trust/ledger state and open/closed PRs. | One requirement register; exact main SHAs; duplicate/conflict list; baseline CI and explicit NOT RUN physical tests. |
+| **1 — stability and security boundaries** | Finish command-by-command IPC authorization and denial-before-side-effect audit; filesystem/path/TOCTOU review; PDF worker limits/isolation; cancellation, cache/history/reminder protection; freeze/hang regressions. | Threat-model service boundary; reconcile registry/ledger/PostgreSQL admission and audit; harden key lifecycle, tenant isolation, revocation, replay and crash recovery contracts. | Negative tests for unauthorized, malformed, stale, revoked, oversized, concurrent and cancelled operations; no weakened security gates. |
+| **2 — ACA, models and identity** | Complete hardware/runtime evidence and small-model-first advisor; model catalogue artifact provenance, licence, exact sizes, fit guidance and optional install lifecycle. | Complete trusted device identity/enrolment/revocation/key-provider integration plan and implement safe production service prerequisites; approved model governance and inventory contract. | Cross-platform compatibility tests; model lifecycle tests; identity/replay/rotation/revocation tests; shared schema vectors pass in both repos. |
+| **3 — native tools and authenticated inventory** | Improve OS-first search, folder/file/PDF metadata and content workflows, duplicate/large-file discovery, selected-root permission and open-in-OS flows. | Implement authenticated read-only device inventory/telemetry intake and tenant-scoped persistence; freshness, sequence and consent enforced server-side. | Real application-path tests; tenant isolation, stale telemetry and permission tests; no unauthenticated live data. |
+| **4 — documents and operator experience** | Harden document/PDF workflows, supported image metadata/OCR boundaries, progress, cancellation, large-file and recovery tests; improve accessibility and onboarding. | Connect live read-only operator API/dashboard to authenticated repository; device detail, freshness, alerts, model inventory and audit visibility. | Native UI integration tests; synthetic/live separation; accessible workflows; PostgreSQL integration tests on exact migrations. |
+| **5 — planners and connectors** | Deliver personal planner, reminders and consent-based calendar/Outlook/Zoom/notes connectors using OS/provider-native services where possible. | Deliver tenant-governed Enterprise planner and read-only connectors; separate tenant policy from individual consent; operator workflows and provider health. | Consent/revocation, scope, timezone/DST, pagination, rate-limit, prompt-injection and data-retention tests; no implicit writes. |
+| **6 — safe task lifecycle and orchestration** | Complete typed task graph execution only for allow-listed adapters; mode routing, receipts, verification, cancellation and local resource admission. Worker/Partner stay gated. | Complete durable queue, atomic admission/leases, quotas, fairness, cancellation, recovery and worker-side enforcement. Dispatch remains disabled until all receiver-side and isolation gates pass. | Restart/concurrency/replay/revocation tests; signed provenance; resource limits; failure recovery; adversarial tenant tests. |
+| **7 — optional advanced domains** | Evaluate optional OCR/vision/audio/video understanding, extra runtimes/mobile adapters and SDK/plugins only after cost, privacy and resource review. | Implement opt-in read-only Collective Defence, explainable correlation, Security Centre/Infrastructure Shield and older-network integrations in independently gated slices. | Explicit opt-in/revocation; privacy minimisation; lab corpus and false-positive tests; no autonomous destructive response. |
+| **8 — performance and release** | Cross-platform native builds, signed installers/updater, rollback, SBOM/provenance, accessibility, manual install/launch, model-absent and low-resource tests, independent security review. | Customer-hosted deployment, protected keys, migration/backup/restore, agent rollout/rollback, operational monitoring, lab fleet tests, energy benchmarks and independent security review. | Release checklist passes with exact artifacts, supported OS baselines, test records and independent review. No release claim based on CI alone. |
+
+## 4. Cross-project dependency and parallelism rules
+
+- Batches 0–2 establish trusted boundaries and contracts. Independent Public UI/search work and Enterprise service/DB work may proceed in parallel, but no live data or dispatch may bypass identity, consent or tenant isolation.
+- Public native OS tools do not depend on Enterprise. Enterprise read-only service, identity and inventory can be developed in parallel with Public model/runtime and OS-tool work.
+- Planner connectors can be prototyped against read-only fixtures while identity/consent services are built, but live-account integration is gated on least-privilege OAuth, revocation and retention.
+- Enterprise dashboard layout and accessibility can progress with clearly labelled synthetic fixtures; live mode remains unavailable until the authenticated service is connected.
+- Collective Defence schemas, sensor tests and deterministic correlation can progress in isolation; production collection/ingestion and response remain gated.
+- Shared schemas are versioned and tested in both repos. Do not merge repositories or force a shared crate merely to remove duplication.
+- Every PR must have one bounded objective, tests for both success and denial/failure paths, docs/claims updates and exact-head CI. Merge only after review, required checks and unchanged expected head SHA.
+
+## 5. Requirement status and evidence standard
+
+Use these distinct states in the master register:
+- **Implemented:** code is present on the target branch.
+- **Implemented-unverified:** code exists but integration, platform or runtime evidence is missing.
+- **Partial:** only part of the user outcome works.
+- **Missing:** no adequate implementation.
+- **Intentionally disabled:** deliberately blocked by a safety or dependency gate.
+- **Deferred:** deliberately postponed with rationale and revisit condition.
+
+Each requirement record must include: stable ID; application/shared scope; user outcome; source conversation/decision; repository paths; issue/PR/commit; dependencies; security/privacy/performance/usability risks; acceptance criteria; test evidence; platform/runtime evidence; release milestone; status and last verification date.
+
+A feature is complete only when it works through the actual application path, has positive and negative regression coverage, exposes understandable progress/errors/cancellation, preserves consent and privacy, and has the relevant platform evidence. CI success alone is not runtime verification. Physical device tests, installer launch, accessibility, independent security review and energy measurement must be separately recorded as PASS, FAIL, BLOCKED or NOT RUN.
+
+## 6. Release gates and non-goals
+
+- Public and Enterprise remain pre-alpha/controlled-preview until their respective release gates are satisfied.
+- No silent compute, sleeping-device wake, unapproved data transfer, unrestricted shell, model-generated code execution, stealth monitoring or automatic destructive response.
+- No Public peer execution or Enterprise fleet dispatch until authenticated transport, receiver-side authorization, OS isolation, quotas, cancellation, signed receipts, recovery and independent review pass.
+- No claims of full Fortress OS isolation, production identity, live fleet management, image/audio/video understanding, GPU/NPU support, measured energy savings or compliance without evidence.
+- Do not bundle large models or heavy third-party engines in the default Public installer. Prefer optional adapters and customer-selected Enterprise integrations.
+- Preserve open-source licensing, attribution, reproducible dependencies, SBOM, vulnerability response and clear legal/operational disclaimers.
+
+## 7. Operating rule for future development
+
+This document is the single cross-project planning index. Update it when a requirement is added, changed, implemented, deferred or blocked. Keep detailed technical truth in each repository's existing handbook, roadmap, claims ledger, command inventory, threat model and release-gate documents, and link the evidence here. At each development checkpoint: refresh both main branches and open PRs; reconcile requirements; work in small independent batches in parallel; run exact-head CI; review diffs; merge only verified safe changes; then run integration and manual validation. Never claim unattended/background progress between conversations.
