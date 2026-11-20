@@ -278,14 +278,17 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         """
         self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), [])
         consent_after_receipt = history.replace(
-            "confirm_native().await;",
-            "with_local_state_receipt(); confirm_native().await;",
+            "if enabled_value {\n                confirm_native().await;",
+            "if enabled_value {\n                with_local_state_receipt(); confirm_native().await;",
         )
         self.assertEqual(
             missing_local_state_mutation_receipt_guards(cache, consent_after_receipt, security),
             ["set_task_history_enabled"],
         )
-        without_consent = history.replace("confirm_native().await;", "skip_confirmation();")
+        without_consent = history.replace(
+            "if enabled_value {\n                confirm_native().await;",
+            "if enabled_value {\n                skip_confirmation();",
+        )
         self.assertEqual(
             missing_local_state_mutation_receipt_guards(cache, without_consent, security),
             ["set_task_history_enabled"],
