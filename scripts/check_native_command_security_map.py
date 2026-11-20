@@ -315,6 +315,45 @@ def missing_chat_ipc_preflight_guards(source: str) -> list[str]:
     return []
 
 
+
+def missing_async_os_probe_offload_guards(native_source: str, task_engine_source: str) -> list[str]:
+    """Keep synchronous OS resource probes off async command executors."""
+    missing: list[str] = []
+    try:
+        resource_probe = rust_function_body(task_engine_source, "read_local_resource_snapshot")
+        model_admission = rust_function_body(task_engine_source, "ensure_local_model_ready")
+        capability_probe = rust_function_body(native_source, "get_capability_snapshot")
+        device_info_command = rust_function_body(native_source, "get_device_info")
+        device_info_collector = rust_function_body(native_source, "collect_device_info")
+    except ValueError as error:
+        return [str(error)]
+
+    def has_suffix(tokens: list[str], suffix: str) -> bool:
+        return any(token == suffix or token.endswith("." + suffix) or token.endswith("::" + suffix) for token in tokens)
+
+    resource_tokens = command_tokens(resource_probe)
+    if not all(has_suffix(resource_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_memory", "available_memory")):
+        missing.append("read_local_resource_snapshot must offload sysinfo memory probes")
+
+    model_tokens = command_tokens(model_admission)
+    if model_tokens.count("read_local_resource_snapshot") != 1:
+        missing.append("ensure_local_model_ready must reuse exactly one resource snapshot")
+    if any(has_suffix(model_tokens, token) for token in ("System::new", "refresh_memory", "available_memory")):
+        missing.append("ensure_local_model_ready must not perform synchronous OS probes")
+
+    capability_tokens = command_tokens(capability_probe)
+    if not all(has_suffix(capability_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_memory", "available_memory")):
+        missing.append("get_capability_snapshot must offload sysinfo probes")
+
+    device_command_tokens = command_tokens(device_info_command)
+    collector_tokens = command_tokens(device_info_collector)
+    if not has_suffix(device_command_tokens, "spawn_blocking") or not has_suffix(device_command_tokens, "collect_device_info"):
+        missing.append("get_device_info must call its collector through spawn_blocking")
+    if not all(has_suffix(collector_tokens, token) for token in ("System::new", "refresh_cpu", "refresh_memory")):
+        missing.append("collect_device_info must keep OS reads in the blocking collector")
+    return missing
+
+
 def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
     """Require classification, transfer policy and native approval before cloud side effects."""
     try:
@@ -667,6 +706,10 @@ def main() -> int:
     errors: list[str] = []
     required = ("classification", "capability", "scope", "effects", "boundary", "receipt", "tests", "status", "caller", "data_classification", "consent", "cancellation", "resource_limits", "failure_mode")
     errors.extend(manifest_mapping_errors(groups, required))
+    task_engine_source = TASK_ENGINE.read_text(encoding="utf-8")
+    missing_os_probe_guards = missing_async_os_probe_offload_guards(source, task_engine_source)
+    if missing_os_probe_guards:
+        errors.extend("async OS probe: " + item for item in missing_os_probe_guards)
     # The shared local policy evaluator must remain on both ordinary local
     # operation planning and every node in a local task graph.
     require_tokens(
