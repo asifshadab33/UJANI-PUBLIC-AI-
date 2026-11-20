@@ -284,6 +284,31 @@ class OllamaStatusProbeOffloadTests(unittest.TestCase):
         """
         self.assertEqual(missing_ollama_status_probe_offload_guards(source), [])
 
+    def test_valid_worker_followed_by_direct_host_probes_is_rejected(self):
+        source = """
+        async fn get_ollama_status() {
+            let inventory = tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_cpu();
+                system.refresh_memory();
+                let cores = std::thread::available_parallelism();
+                let total = system.total_memory();
+                let available = system.available_memory();
+                let name = System::name();
+                let version = System::os_version();
+                (cores, total, available, name, version)
+            }).await?;
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+            build_status(inventory)
+        }
+        """
+        self.assertIn(
+            "get_ollama_status must not perform synchronous host inventory probes outside spawn_blocking",
+            missing_ollama_status_probe_offload_guards(source),
+        )
+
     def test_direct_host_inventory_probe_on_async_executor_is_rejected(self):
         source = """
         async fn get_ollama_status() {
