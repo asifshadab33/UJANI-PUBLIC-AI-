@@ -101,7 +101,6 @@ fn scan_empty_folders(root: &Path, token: &CancellationToken) -> Result<EmptyFol
             Some(Err(_)) => truncated = true,
             Some(Ok(first)) => {
                 if depth < MAX_DEPTH {
-                    stack.push((canonical.clone(), depth));
                     // Continue enumeration to discover child directories, without following links.
                     let mut pending = vec![first];
                     for entry in entries {
@@ -116,7 +115,7 @@ fn scan_empty_folders(root: &Path, token: &CancellationToken) -> Result<EmptyFol
                             Err(_) => truncated = true,
                         }
                     }
-                }
+                } else { truncated = true; }
             }
         }
     }
