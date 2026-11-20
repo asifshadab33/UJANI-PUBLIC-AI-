@@ -137,7 +137,7 @@ fn scan_empty_folders(
         if token.is_cancelled() {
             return Err("Empty-folder scan cancelled by user.".into());
         }
-        if start.elapsed() >= MAX_RUNTIME || visited >= MAX_DIRS {
+        if start.elapsed() >= MAX_RUNTIME || visited >= MAX_DIRS || entries_seen >= MAX_ENTRIES {
             truncated = true;
             break;
         }
@@ -178,8 +178,12 @@ fn scan_empty_folders(
                     name,
                 });
             }
-            Some(Err(_)) => truncated = true,
+            Some(Err(_)) => {
+                entries_seen += 1;
+                truncated = true;
+            }
             Some(Ok(first)) => {
+                entries_seen += 1;
                 if depth < MAX_DEPTH {
                     // Continue enumeration to discover child directories, without following links.
                     let mut pending = vec![first];
