@@ -513,7 +513,7 @@ def missing_history_enable_confirmation_guards(source: str) -> list[str]:
     enable_branch = executable[opening + 1:closing]
     # Accept the crate-qualified production call and the unqualified test
     # fixture alias, while requiring an actual function invocation.
-    approval = re.search(r"(?:[A-Za-z_]\\w*::)*confirm_native\\s*\\(", enable_branch)
+    approval = re.search(r"(?:[A-Za-z_]\w*::)*confirm_native\s*\(", enable_branch)
     ordered = (
         "if !approved",
         "return Err",
