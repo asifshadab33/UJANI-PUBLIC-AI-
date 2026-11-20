@@ -30,6 +30,9 @@ Batches run concurrently when independent; dependencies and release gates remain
 - Public #400 async host-probe offloading: draft; exact-head checks passed, but current PR metadata reports mergeable=false (conflict/outdated base); do not merge until refreshed/reconciled.
 - Public #401 model-runtime v2 capability boundary: merged as `669a98b79eff3340e77f19efdb450ace88e5a83f`; exact-head CI, CodeQL and Android checks passed before merge. Post-merge main workflow evidence remains pending.
 - Public dependency PRs #384, #391, #388–#390, #385–#387: assess independently; do not batch blindly. Failed platform/native checks are blockers.
+- Public #404 strict duplicate-key schema validator: draft; exact-head CI pending.
+- Enterprise #312 strict duplicate-key projection validator: draft; exact-head CI pending.
+- Enterprise #313 strict duplicate-key model-inventory intake parser: draft; exact-head Rust tests/lint/security checks pending.
 
 ## Release posture
 
