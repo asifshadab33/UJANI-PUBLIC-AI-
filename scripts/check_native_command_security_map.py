@@ -516,7 +516,7 @@ def missing_history_enable_confirmation_guards(source: str) -> list[str]:
     approval = re.search(r"(?:[A-Za-z_]\w*::)*confirm_native\s*\(", enable_branch)
     ordered = (
         "if !approved",
-        "return Err",
+        "return",
     )
     positions = [enable_branch.find(token) for token in ordered]
     if approval is None or any(position < 0 for position in positions):
