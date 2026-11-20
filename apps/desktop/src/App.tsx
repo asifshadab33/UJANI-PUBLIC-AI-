@@ -82,7 +82,7 @@ function composeConversationPrompt(messages: ChatMessage[], current: string): st
   return clippedContext ? `Conversation context (recent messages):\n${clippedContext}\n\nUser: ${currentText}\nAssistant:` : currentText;
 }
 type FolderFileResult = { file_name: string; size_bytes: number; word_count: number; line_count: number; top_keywords: string[]; summary: string | null; note: string };
-type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number };
+type FolderImportResult = { cancelled: boolean; files: FolderFileResult[]; total_bytes: number; skipped_file_count: number; skipped_file_names: string[] };
 const CLOUD_PROVIDER_PRESETS = [
   { id: "openai", label: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini" },
   { id: "openrouter", label: "OpenRouter (check for free models)", endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "" },
@@ -195,6 +195,7 @@ export default function App() {
   const [folderBusy, setFolderBusy] = useState(false);
   const [activeFolderTaskId, setActiveFolderTaskId] = useState<string | null>(null);
   const [folderError, setFolderError] = useState("");
+  const [folderNotice, setFolderNotice] = useState("");
   const [translationText, setTranslationText] = useState("");
   const [targetLanguage, setTargetLanguage] = useState("English");
   const [translationResult, setTranslationResult] = useState("");
@@ -731,6 +732,7 @@ export default function App() {
   async function handleFolderSelection() {
     setFolderResults([]);
     setFolderError("");
+    setFolderNotice("");
     if (!isTauri()) { setFolderError("Launch the Tauri desktop app to select a folder."); return; }
     if (executionMode !== "fortress" && executionMode !== "smart") {
       setFolderError("Folder processing is local-only. Select Fortress or Smart.");
@@ -747,12 +749,19 @@ export default function App() {
       });
       if (result.cancelled) return;
       setFolderResults(result.files);
+      if (result.skipped_file_count > 0) {
+        const count = result.skipped_file_count;
+        const names = result.skipped_file_names.join(", ");
+        const additional = count - result.skipped_file_names.length;
+        const omitted = additional > 0 ? `, and ${additional} more` : "";
+        setFolderNotice(`Skipped non-portable file name${count === 1 ? "" : "s"}: ${names}${omitted}. Rename them using portable file names and retry.`);
+      }
       for (const item of result.files) {
         if (item.summary) {
           await saveToPersistentHistory("Folder document: " + item.file_name, item.summary, "document", ollamaModel || "analysis-only");
         }
       }
-      if (result.files.length === 0) {
+      if (result.files.length === 0 && result.skipped_file_count === 0) {
         setFolderError("No supported text files were found in the selected folder.");
       }
     } catch (error) {
@@ -1383,6 +1392,7 @@ export default function App() {
             <small className="muted">The native OS dialog grants this one-time selection. UJANI reads only direct child TXT, MD, CSV, JSON, RS, PY, JS, TS, HTML, XML and LOG files: maximum 10 files, 256 KiB each, 1 MiB total. No recursive traversal or persistent folder permission. Summaries use local Ollama only; without it, analysis still works.</small>
             {folderBusy && <><p className="progress" role="status">Processing selected folder locally…</p><button type="button" className="model-run" onClick={cancelFolderImport} disabled={!activeFolderTaskId}>Cancel folder import</button></>}
             {folderError && <p className="error" role="alert">{folderError}</p>}
+            {folderNotice && <p className="muted" role="status">{folderNotice}</p>}
             {folderResults.map((item) => <div className="result" key={item.file_name}>
               <div className="result-title">{item.file_name}<span>{item.word_count} words · {item.line_count} lines · {item.size_bytes} bytes</span></div>
               <small>Keywords: {item.top_keywords.join(", ") || "None detected"}</small>

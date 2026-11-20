@@ -18,6 +18,7 @@ const MAX_DIRECTORY_ENTRIES: usize = 5_000;
 const MAX_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOTAL_BYTES: usize = 1024 * 1024;
 const MAX_FOLDER_SCAN_DURATION: Duration = Duration::from_secs(15);
+const MAX_REPORTED_SKIPPED_FILE_NAMES: usize = 10;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
@@ -29,11 +30,31 @@ fn is_supported_text_file(path: &Path) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.as_str())
 }
 
+fn safe_skipped_file_name(name: &str) -> String {
+    name.chars()
+        .take(255)
+        .map(|character| {
+            if character.is_control() {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 struct SelectedTextFile {
     name: String,
     content: String,
     size_bytes: usize,
+}
+
+#[derive(Debug)]
+struct CollectedFolder {
+    files: Vec<SelectedTextFile>,
+    skipped_file_count: usize,
+    skipped_file_names: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -52,6 +73,8 @@ pub struct FolderImportResult {
     cancelled: bool,
     files: Vec<FolderFileResult>,
     total_bytes: usize,
+    skipped_file_count: usize,
+    skipped_file_names: Vec<String>,
 }
 
 /// Opens a native OS folder picker and processes only its immediate text-file children.
@@ -122,13 +145,18 @@ pub async fn process_selected_folder(
     .await
     .map_err(|error| format!("Folder selection worker failed: {error}"))??;
 
-    let Some(files) = selected else {
+    let Some(collected) = selected else {
         return Ok(FolderImportResult {
             cancelled: true,
             files: Vec::new(),
             total_bytes: 0,
+            skipped_file_count: 0,
+            skipped_file_names: Vec::new(),
         });
     };
+    let files = collected.files;
+    let skipped_file_count = collected.skipped_file_count;
+    let skipped_file_names = collected.skipped_file_names;
 
     // Bind the receipt to the exact selected filenames and contents, without
     // copying document data into the receipt ledger.
@@ -207,6 +235,8 @@ pub async fn process_selected_folder(
                 cancelled: false,
                 files: results,
                 total_bytes,
+                skipped_file_count,
+                skipped_file_names,
             })
         },
         registration,
@@ -215,7 +245,7 @@ pub async fn process_selected_folder(
 }
 
 /// Reads a bounded, sorted set of supported direct-child text files without following links.
-fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<Vec<SelectedTextFile>, String> {
+fn collect_selected_folder(folder: &Path, token: &CancellationToken) -> Result<CollectedFolder, String> {
     collect_selected_folder_with_budget(folder, token, MAX_FOLDER_SCAN_DURATION)
 }
 
@@ -223,7 +253,7 @@ fn collect_selected_folder_with_budget(
     folder: &Path,
     token: &CancellationToken,
     max_duration: Duration,
-) -> Result<Vec<SelectedTextFile>, String> {
+) -> Result<CollectedFolder, String> {
     crate::ensure_task_not_cancelled(token)?;
     let walked = crate::safe_fs::walk_directory(
         folder,
@@ -247,6 +277,8 @@ fn collect_selected_folder_with_budget(
     let selected_root = walked.root.clone();
     let mut files = Vec::new();
     let mut total_bytes = 0usize;
+    let mut skipped_file_count = 0usize;
+    let mut skipped_file_names = Vec::new();
     for entry in walked.files {
         crate::ensure_task_not_cancelled(token)?;
         // The walker returns canonical paths. Require a direct child and reopen it
@@ -256,6 +288,14 @@ fn collect_selected_folder_with_budget(
         // plus final-link checks and do not claim equivalent race protection.
         if entry.path.parent() != Some(selected_root.as_path()) {
             return Err("A selected file no longer belongs directly to the chosen folder.".into());
+        }
+        let display_name = entry.name.to_string_lossy();
+        if !ujani_core::valid_display_file_name(&display_name) {
+            skipped_file_count += 1;
+            if skipped_file_names.len() < MAX_REPORTED_SKIPPED_FILE_NAMES {
+                skipped_file_names.push(safe_skipped_file_name(&display_name));
+            }
+            continue;
         }
 
         let handle = crate::safe_fs::open_regular_file_under_root(&selected_root, &entry.path)
@@ -282,7 +322,7 @@ fn collect_selected_folder_with_budget(
             .map_err(|_| format!("{} is not valid UTF-8 text.", entry.name.to_string_lossy()))?;
 
         files.push(SelectedTextFile {
-            name: entry.name.to_string_lossy().into_owned(),
+            name: display_name.into_owned(),
             size_bytes: content.len(),
             content,
         });
@@ -292,14 +332,18 @@ fn collect_selected_folder_with_budget(
     }
 
     files.sort_by_cached_key(|file| file.name.to_lowercase());
-    Ok(files)
+    Ok(CollectedFolder {
+        files,
+        skipped_file_count,
+        skipped_file_names,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
-        MAX_TOTAL_BYTES,
+        MAX_REPORTED_SKIPPED_FILE_NAMES, MAX_TOTAL_BYTES,
     };
     use tokio_util::sync::CancellationToken;
     use std::{
@@ -361,10 +405,44 @@ mod tests {
         fs::create_dir(folder.0.join("nested")).unwrap();
         fs::write(folder.0.join("nested").join("hidden.txt"), "not recursive").unwrap();
 
-        let files = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0].name, "alpha.md");
-        assert_eq!(files[1].name, "zeta.txt");
+        let collected = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
+        assert_eq!(collected.skipped_file_count, 0);
+        assert_eq!(collected.files.len(), 2);
+        assert_eq!(collected.files[0].name, "alpha.md");
+        assert_eq!(collected.files[1].name, "zeta.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_nonportable_display_names_without_aborting_valid_folder_files() {
+        let folder = TestFolder::new();
+        fs::write(folder.0.join("safe.txt"), "safe content").unwrap();
+        fs::write(folder.0.join(r"team\notes.txt"), "path-like name").unwrap();
+        fs::write(folder.0.join("notes:stream.txt"), "alternate stream name").unwrap();
+        fs::write(folder.0.join("notes\n.txt"), "control character name").unwrap();
+
+        let collected = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
+        assert_eq!(collected.skipped_file_count, 3);
+        assert!(collected.skipped_file_names.contains(&r"team\notes.txt".to_string()));
+        assert!(collected.skipped_file_names.contains(&"notes:stream.txt".to_string()));
+        assert!(collected.skipped_file_names.iter().any(|name| {
+            name.starts_with("notes") && name.ends_with(".txt") && !name.chars().any(char::is_control)
+        }));
+        assert_eq!(collected.files.len(), 1);
+        assert_eq!(collected.files[0].name, "safe.txt");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounds_skipped_file_name_report() {
+        let folder = TestFolder::new();
+        for index in 0..12 {
+            fs::write(folder.0.join(format!("invalid-{index}:name.txt")), "skipped").unwrap();
+        }
+
+        let collected = collect_selected_folder(&folder.0, &CancellationToken::new()).unwrap();
+        assert_eq!(collected.skipped_file_count, 12);
+        assert_eq!(collected.skipped_file_names.len(), MAX_REPORTED_SKIPPED_FILE_NAMES);
     }
 
     #[test]
