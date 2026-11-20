@@ -43,7 +43,7 @@ export default function LocalFinder() {
       .catch(() => {
         if (!active || cacheSettingsRequest.current !== requestId) return;
         setCacheSettingsAvailable(false);
-        setCacheMessage("Cache settings unavailable. Caching controls are disabled; searches may use the cache.");
+        setCacheMessage("Cache settings unavailable. Cache lookup is skipped when settings cannot be verified; searches run fresh.");
       });
     invoke<RecentSearch[]>("list_recent_local_searches").then((items) => {
       if (active) setRecentSearches(items);
