@@ -504,7 +504,7 @@ export default function App() {
   }
 
   async function clearPersistentHistory() {
-    if (!window.confirm("Delete all saved UJANI task history? This does not securely erase storage media.")) return;
+    // Native IPC owns the destructive-action confirmation; avoid a duplicate webview prompt.
     try { await invoke("clear_task_history"); setPersistentHistory([]); }
     catch (error) { setHistoryError(String(error)); }
   }

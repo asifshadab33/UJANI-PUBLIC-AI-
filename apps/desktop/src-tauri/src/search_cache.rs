@@ -690,6 +690,18 @@ pub async fn set_local_search_cache_settings(
 /// Clears cached results, encrypted recent-query history and approved folder-scope records.
 #[tauri::command]
 pub async fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
+    let approved = crate::native_consent::confirm_native(
+        &app,
+        "Clear local search cache",
+        "Clear UJANI's locally stored search results, recent search history and approved folder-scope records? This affects only UJANI's local cache; it does not delete your original files or models. This action cannot be undone.\n\nApprove this one-time deletion?".to_string(),
+        tokio_util::sync::CancellationToken::new(),
+        Duration::from_secs(120),
+    )
+    .await;
+    if !approved {
+        return Err("Local search-cache clearing was declined, cancelled or timed out. No data was changed.".into());
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
         crate::with_local_state_receipt(
             &app,

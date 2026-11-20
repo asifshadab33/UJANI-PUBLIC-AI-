@@ -117,6 +117,12 @@ For every registered command, complete a row with:
 - execution receipt/audit event, stable operation ID and secret/content minimisation;
 - unit and integration tests, including denial-before-side-effect tests.
 
+## 2026-11-20 destructive local-state confirmation slice
+
+The native IPC commands for `search_cache::clear_local_search_cache`, `history::delete_task_history` and `history::clear_task_history` require a native Yes/No confirmation before reserving a mutation receipt or opening the database for the destructive write. A decline, timeout or closed confirmation channel returns an error without changing local state. The prompts identify the affected UJANI-local records and clarify that original files and installed models are not deleted.
+
+The shared native confirmation helper has unit coverage for explicit approval, denial, channel closure, timeout and cancellation. Static command-security checks enforce confirmation-before-receipt ordering for these three destructive commands, and the manifest records their updated status. This is a targeted native consent improvement; it does not complete the full command-level authorization matrix or replace remaining per-command negative tests.
+
 ## Release rule
 
 This inventory is a starting point, **not completion of issue #120**. Do not close the native-command audit or declare Public AI release-ready until all registered and conditional commands have complete mappings, sensitive commands enforce shared native authorization, required receipts are covered, negative tests pass, and CI rejects unreviewed command additions.
