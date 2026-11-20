@@ -533,7 +533,7 @@ pub async fn clear_task_history(app: AppHandle) -> Result<(), String> {
     let approved = crate::native_consent::confirm_native(
         &app,
         "Clear saved task history",
-        "Permanently delete all locally saved UJANI task history? This does not delete your original files, models or other application data. This action cannot be undone.\n\nApprove this one-time deletion?",
+        "Permanently delete all locally saved UJANI task history? This does not delete your original files, models or other application data. This action cannot be undone.\n\nApprove this one-time deletion?".to_string(),
         tokio_util::sync::CancellationToken::new(),
         std::time::Duration::from_secs(120),
     )
