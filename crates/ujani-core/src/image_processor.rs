@@ -14,6 +14,64 @@ pub struct ImageInfo {
     pub description: String,
 }
 
+/// Parse dimensions from JPEG start-of-frame markers within the bounded header bytes.
+fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if data.len() < 2 || data[..2] != [0xff, 0xd8] {
+        return None;
+    }
+    let mut offset = 2usize;
+    while offset + 1 < data.len() {
+        if data[offset] != 0xff {
+            return None;
+        }
+        while offset < data.len() && data[offset] == 0xff {
+            offset += 1;
+        }
+        let marker = *data.get(offset)?;
+        offset += 1;
+        // Standalone markers do not carry segment lengths.
+        if marker == 0xd8 || marker == 0xd9 || marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            if marker == 0xd9 {
+                return None;
+            }
+            continue;
+        }
+        let length_bytes = data.get(offset..offset + 2)?;
+        let segment_length = u16::from_be_bytes([length_bytes[0], length_bytes[1]]) as usize;
+        if segment_length < 2 {
+            return None;
+        }
+        let segment_end = offset.checked_add(segment_length)?;
+        if segment_end > data.len() {
+            return None;
+        }
+        // SOF marker families (excluding DHT/JPG/DAC markers).
+        let is_sof = matches!(
+            marker,
+            0xc0 | 0xc1 | 0xc2 | 0xc3 | 0xc5 | 0xc6 | 0xc7 | 0xc9 | 0xca | 0xcb | 0xcd | 0xce | 0xcf
+        );
+        if is_sof {
+            if segment_length < 8 {
+                return None;
+            }
+            let component_count = data[offset + 7] as usize;
+            let expected_length = 8usize.checked_add(3usize.checked_mul(component_count)?)?;
+            if component_count == 0 || segment_length != expected_length {
+                return None;
+            }
+            let height = u16::from_be_bytes([data[offset + 3], data[offset + 4]]) as u32;
+            let width = u16::from_be_bytes([data[offset + 5], data[offset + 6]]) as u32;
+            return (width > 0 && height > 0).then_some((width, height));
+        }
+        if marker == 0xda {
+            // Start-of-scan means frame headers were not found in the prefix.
+            return None;
+        }
+        offset = segment_end;
+    }
+    None
+}
+
 pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> Result<ImageInfo, String> {
     if !valid_display_file_name(file_name) { return Err("A valid image file name without path separators or control characters is required.".into()); }
     if data.is_empty() || data.len() > MAX_IMAGE_BYTES || original_size_bytes == 0 || original_size_bytes > MAX_ORIGINAL_IMAGE_BYTES || data.len() as u64 > original_size_bytes { return Err("Image must be 1 byte–20 MiB; only its first 64 KiB header is processed.".into()); }
@@ -28,7 +86,7 @@ pub fn inspect_image(file_name: &str, data: &[u8], original_size_bytes: u64) -> 
         }
         "jpg" | "jpeg" => {
             if data.len() < 3 || data[..2] != [0xff, 0xd8] { return Err("Invalid JPEG header.".into()); }
-            ("JPEG", None)
+            ("JPEG", jpeg_dimensions(data))
         }
         "gif" => {
             if data.len() < 10 || !(&data[..6] == b"GIF87a" || &data[..6] == b"GIF89a") { return Err("Invalid GIF header.".into()); }
@@ -148,6 +206,36 @@ mod additional_format_tests {
         bmp[18..22].copy_from_slice(&32_i32.to_le_bytes());
         bmp[22..26].copy_from_slice(&16_i32.to_le_bytes());
         assert!(inspect_image("legacy-os2.bmp", &bmp, bmp.len() as u64).is_err());
+    }
+
+    #[test]
+    fn reads_jpeg_dimensions_from_sof_marker_after_app_segment() {
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, b'J', b'F'];
+        jpeg.extend_from_slice(&[
+            0xff, 0xc0, 0x00, 0x11, 8, 0x01, 0x2c, 0x02, 0x58, 3,
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
+        ]);
+        let info = inspect_image("photo.jpeg", &jpeg, jpeg.len() as u64).unwrap();
+        assert_eq!(info.dimensions, Some((600, 300)));
+    }
+
+    #[test]
+    fn malformed_jpeg_sof_is_reported_as_dimensions_unavailable() {
+        let jpeg = [0xff, 0xd8, 0xff, 0xc0, 0x00, 0x04, 8, 0, 0];
+        let info = inspect_image("photo.jpg", &jpeg, jpeg.len() as u64).unwrap();
+        assert_eq!(info.dimensions, None);
+
+        let mut short_components = vec![0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 8, 0, 1, 0, 1, 3];
+        short_components.extend_from_slice(&[1, 0x11, 0, 2, 0x11, 0]);
+        let info = inspect_image("photo.jpg", &short_components, short_components.len() as u64).unwrap();
+        assert_eq!(info.dimensions, None);
+
+        // A SOF segment with trailing bytes beyond its component table is malformed.
+        let extra_byte_sof = [
+            0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0c, 8, 0, 1, 0, 1, 1, 1, 0x11, 0, 0,
+        ];
+        let info = inspect_image("photo.jpg", &extra_byte_sof, extra_byte_sof.len() as u64).unwrap();
+        assert_eq!(info.dimensions, None);
     }
 
     #[test]
