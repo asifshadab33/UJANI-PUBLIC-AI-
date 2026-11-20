@@ -354,6 +354,29 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
     return missing
 
 
+def missing_model_recommendation_probe_offload_guards(source: str) -> list[str]:
+    """Keep synchronous host memory discovery off the async model-recommendation command."""
+    try:
+        body = rust_function_body(source, "get_model_recommendation")
+    except ValueError:
+        return ["get_model_recommendation"]
+
+    tokens = command_tokens(body)
+    try:
+        blocking_at = tokens.index("spawn_blocking")
+        system_at = tokens.index("System::new")
+        refresh_at = tokens.index("refresh_memory")
+        total_at = tokens.index("total_memory")
+        available_at = tokens.index("available_memory")
+        await_at = tokens.index("await")
+    except ValueError:
+        return ["get_model_recommendation must offload bounded memory probes"]
+
+    if not blocking_at < system_at < refresh_at < total_at < available_at < await_at:
+        return ["get_model_recommendation must run all sysinfo memory probes inside spawn_blocking"]
+    return []
+
+
 def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
     """Require classification, transfer policy and native approval before cloud side effects."""
     try:
@@ -710,6 +733,9 @@ def main() -> int:
     missing_os_probe_guards = missing_async_os_probe_offload_guards(source, task_engine_source)
     if missing_os_probe_guards:
         errors.extend("async OS probe: " + item for item in missing_os_probe_guards)
+    missing_model_probe_guards = missing_model_recommendation_probe_offload_guards(source)
+    if missing_model_probe_guards:
+        errors.extend("model recommendation OS probe: " + item for item in missing_model_probe_guards)
     # The shared local policy evaluator must remain on both ordinary local
     # operation planning and every node in a local task graph.
     require_tokens(
