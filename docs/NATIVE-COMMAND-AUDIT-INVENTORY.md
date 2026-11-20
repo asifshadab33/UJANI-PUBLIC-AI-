@@ -130,6 +130,6 @@ This inventory is a starting point, **not completion of issue #120**. Do not clo
 
 ### 2026-11-20 reminder deletion consent
 
-- The native `manage_local_reminders` IPC boundary now requires a native Yes/No confirmation for deleting one reminder or clearing all reminders. A decline, timeout or closed confirmation channel fails closed before the blocking storage worker, receipt reservation or database access.
+- The native `manage_local_reminders` IPC boundary now validates a Delete identifier before prompting, then requires native Yes/No confirmation for deleting one reminder or clearing all reminders. A decline, timeout or closed confirmation channel fails closed before the blocking storage worker, receipt reservation or database access.
 - The reminder centre no longer uses a webview `window.confirm` for clear-all; the native command owns the destructive-action decision, so direct IPC callers receive the same guard.
 - Static source-order regressions and a Rust action-classification test cover Delete and ClearAll. This is a targeted destructive-action safeguard, not completion of the full per-command authorization matrix.
