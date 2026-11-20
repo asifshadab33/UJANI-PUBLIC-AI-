@@ -2,7 +2,6 @@
 //! The core crate remains side-effect-free; this module enforces policy before invoking local adapters.
 use serde::Serialize;
 use std::collections::BTreeSet;
-use sysinfo::System;
 use ujani_core::router::{evaluate_mode, ExecutionMode, RouteAction, RouteRequest};
 use ujani_core::{analyze_text as core_analyze_text, inspect_image as core_inspect_image, FileAnalysis, ImageInfo};
 use ujani_core::capability::{plan_local_task, CapabilityRecord, CapabilityState};
@@ -93,14 +92,26 @@ fn plan_with_runtime_capabilities(
     }
 }
 
+/// Read synchronous OS resource information outside the async executor. This probe is
+/// advisory and does not reserve memory or guarantee runtime fit.
+async fn read_local_resource_snapshot() -> Result<(bool, u64), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut system = sysinfo::System::new();
+        system.refresh_memory();
+        (
+            std::thread::available_parallelism().is_ok(),
+            system.available_memory() / (1024 * 1024),
+        )
+    })
+    .await
+    .map_err(|error| format!("Local resource probe worker failed: {error}"))
+}
+
 /// Re-check runtime availability and confirm that the requested model is installed
 /// immediately before inference. UI state and an earlier planning result are advisory only.
 async fn ensure_local_model_ready(operation_id: &str, model: &str) -> Result<(), String> {
-    let mut system = System::new();
-    system.refresh_memory();
-    let cpu_available = std::thread::available_parallelism().is_ok();
+    let (cpu_available, available_memory_mb) = read_local_resource_snapshot().await?;
     let ollama_available = ollama::is_available().await;
-    let available_memory_mb = system.available_memory() / (1024 * 1024);
     plan_with_runtime_capabilities(
         operation_id,
         available_memory_mb,
@@ -203,10 +214,9 @@ impl LocalTaskEngine {
             _ => return Err("Unknown execution mode.".into()),
         };
         ensure_local_model_ready("local.ai.generate", model).await?;
-        let mut system = System::new();
-        system.refresh_memory();
+        let (cpu_available, available_memory_mb) = read_local_resource_snapshot().await?;
         let mut available = BTreeSet::new();
-        if std::thread::available_parallelism().is_ok() { available.insert("cpu".to_string()); }
+        if cpu_available { available.insert("cpu".to_string()); }
         let route = RouteRequest {
             task_id: "local-ai-task".into(),
             operation: "local.ai.generate".into(),
@@ -214,7 +224,7 @@ impl LocalTaskEngine {
             required_capabilities: BTreeSet::from(["cpu".to_string()]),
             available_capabilities: available,
             local_memory_required_mb: 0,
-            available_memory_mb: system.available_memory() / (1024 * 1024),
+            available_memory_mb,
             external_data_approved: false,
             network_capability_available: false,
             requested_collaboration_rounds: 0,
