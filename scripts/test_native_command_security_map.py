@@ -23,15 +23,18 @@ from check_native_command_security_map import (
 
 class ReminderDestructiveConfirmationTests(unittest.TestCase):
     GUARDED_SOURCE = """
-        fn destructive_confirmation(request: &ReminderRequest) -> Option<(&'static str, &'static str)> {
+        fn destructive_confirmation(request: &ReminderRequest) -> Result<Option<(&'static str, &'static str)>, String> {
             match request {
-                ReminderRequest::Delete { .. } => Some(("Delete local reminder", "delete only this reminder")),
-                ReminderRequest::ClearAll => Some(("Clear all local reminders", "delete every reminder")),
-                _ => None,
+                ReminderRequest::Delete { id } => {
+                    valid_id(id)?;
+                    Ok(Some(("Delete local reminder", "delete only this reminder")))
+                }
+                ReminderRequest::ClearAll => Ok(Some(("Clear all local reminders", "delete every reminder"))),
+                _ => Ok(None),
             }
         }
         async fn manage_local_reminders(app: AppHandle, request: ReminderRequest) -> Result<(), String> {
-            if let Some((title, message)) = destructive_confirmation(&request) {
+            if let Some((title, message)) = destructive_confirmation(&request)? {
                 let approved = crate::native_consent::confirm_native(
                     &app,
                     title,
@@ -53,6 +56,10 @@ class ReminderDestructiveConfirmationTests(unittest.TestCase):
             "ReminderRequest::Delete { .. }",
             "ReminderRequest::Create { .. }",
         )
+        self.assertEqual(missing_reminder_destructive_confirmation_guards(source), ["delete"])
+
+    def test_delete_identifier_is_validated_before_consent(self):
+        source = self.GUARDED_SOURCE.replace("valid_id(id)?;", "")
         self.assertEqual(missing_reminder_destructive_confirmation_guards(source), ["delete"])
 
     def test_missing_confirmation_fails_closed_in_static_audit(self):
