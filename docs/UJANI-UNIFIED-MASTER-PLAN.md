@@ -105,3 +105,64 @@ Reconfirm repository status against current main before release. Application pol
 
 ## 10. Immediate execution
 Start Batch 0 in both repositories simultaneously. In parallel, begin independent safe Batch 1 and ACA inventory after assigning file ownership. Do not start dispatch, live worker execution, automatic device participation or other privileged remote actions. Establish the single requirement register and duplicate map first, then execute all eligible batches in parallel while respecting dependencies and security gates.
+
+## 11. Initial repository-backed inventory (20 November 2026)
+
+This is a first evidence-backed snapshot from current repository documentation, not a substitute for source/test/runtime inspection. Status labels below describe documented boundaries, not independent certification.
+
+### Public AI inventory
+
+| Requirement area | Initial status | Existing owner/evidence to extend |
+|---|---|---|
+| Tauri 2 desktop, Rust core, React UI | Implemented-unverified | Existing desktop application and native command registry |
+| Four execution modes | Partial / intentionally disabled routes | Existing router and EXECUTION-MODES contract; Worker and Partner remain unavailable |
+| Loopback Ollama inference | Implemented-unverified | Existing Ollama adapter; preserve loopback-only/no-cloud-fallback boundary |
+| Model catalogue and first-run onboarding | Partial | Existing MODEL-SELECTION-ONBOARDING.md and catalogs/local-model-catalog-v1.json; catalogue is descriptive, not trusted artifact manifest |
+| Hardware/model fit | Partial | Existing native device inventory and pre-inference fit checks; GPU/NPU remain unknown unless verified |
+| File search, duplicate detection, large-file discovery | Implemented-unverified | Existing local_search, everyday_tools and file_insights commands; test real application flows and OS boundaries |
+| Search cache | Implemented-unverified | Existing search_cache commands/settings; preserve privacy, expiry and user controls |
+| PDF/text processing | Partial / platform-gated | Existing selected-document/PDF pipeline; folder PDF search and summarisation remain fail-closed until worker isolation is verified |
+| Image processing | Partial | Header/metadata inspection only; OCR, image understanding and vision Q&A are not implemented |
+| Video/audio understanding | Missing | Do not create bundled heavy subsystems without a separately approved design |
+| Local reminders | Partial | Existing reminder_store; native confirmation for destructive deletion is merged in PR #379; daily planner and OS-app connectors are separate future scope |
+| Encrypted task history | Implemented-unverified | Existing AES-256-GCM history with OS-vault dependency and opt-in; verify migration, backup/restore, key lifecycle and OS matrix |
+| Universal native IPC authorisation | Partial | Existing 44-command inventory; safety_policy/policy_gate are not yet universal gates |
+| OS-enforced Fortress and PDF worker sandbox | Missing / release-blocking | Existing policy is not OS isolation |
+| Physical installation, signed production release, independent review | Implemented-unverified or missing by platform | Existing CI artifacts are not proof of signed production release or device validation |
+
+### Enterprise AI inventory
+
+| Requirement area | Initial status | Existing owner/evidence to extend |
+|---|---|---|
+| Policy/admission primitives | Implemented-unverified | Existing ujani-enterprise-policy crate and tests |
+| Device enrollment/key rotation/revocation | Partial | Signed policy/persistence primitives exist; production key provider and authenticated service lifecycle remain pending |
+| Durable reservation ledger | Partial | Single-host file-backed ledger; not a distributed transaction service |
+| PostgreSQL migrations/RLS primitives | Implemented-unverified | Migrations and tests exist; production SQLx repository/adapter is not present |
+| Authenticated operator service core | Partial | Existing operator_control_plane service core; no network listener, OIDC/SAML adapter, durable repository or deployed endpoint |
+| Operator console | Partial | Static read-only/demo console; no live fleet API |
+| Device telemetry/inventory | Missing as a production ingestion path | Contracts/admission logic exist; authenticated heartbeat/telemetry service and live dashboard integration remain |
+| Live scheduler/worker execution | Intentionally disabled / missing | Do not enable until all trust, identity, transport, receiver enforcement, quota, isolation and audit gates pass |
+| Energy placement policy | Partial | Pure comparison/admission helpers; no live scheduler or measured energy benchmark |
+| Collective Defence | Partial policy foundation | Dual-consent primitives are not a deployed event service or response system |
+| Security Centre/older network integrations | Planned / partial adapters | Keep optional, vendor-neutral and secondary to resource utilisation |
+| Production KMS/HSM/TPM and monotonic anchor | Missing | Interfaces/test providers do not prove production key custody or anti-rollback |
+
+### Cross-repository reconciliation blockers
+
+1. **Shared protocol drift:** Public project status describes a shared Personal-to-Enterprise task-contract v1 in both repositories, while Enterprise INTEGRATION_CONTRACT_DRAFT.md still describes Public protocol v2 and Enterprise manifest v1 as non-wire-compatible. Reconcile actual schemas, generated fixtures, signatures, consent binding, version policy and end-to-end tests before claiming interoperability. Do not introduce a second protocol or silently rename versions.
+2. **ACA ownership:** Public already exposes capability snapshot/catalogue/model recommendation commands; Enterprise already has capability/model inventory contracts and advisory matching. ACA must extend these existing owners rather than create parallel registries.
+3. **Search/cache ownership:** Public already has local search and search-cache modules. New PDF/video/image search must integrate with the existing search result/cache architecture where appropriate, not add a competing index/cache.
+4. **Planner ownership:** Local reminders already exist. A daily planner should compose the existing reminder/task facilities and consent-based connectors rather than create a second reminder store.
+5. **Model catalogue ownership:** The descriptive model catalogue is intended to be shared; product-specific user/admin policy must remain separate. Exact artifact provenance, digest, quantisation and install authorization are not implied by catalogue metadata.
+6. **Enterprise operator ownership:** Extend the existing operator_control_plane service core and console contracts; do not create a second dashboard API or identity/session mechanism.
+7. **Security ownership:** Extend existing consent, device trust, audit and lease modules. Do not add a parallel consent database or trust registry without an explicit migration design.
+
+### Batch 0 acceptance checklist
+
+- [ ] Enumerate all source modules and native commands in both repositories.
+- [ ] Map each existing command/provider/schema/UI flow to exactly one requirement ID and owner.
+- [ ] Compare all open, merged and closed PRs affecting each owner; identify superseded work.
+- [ ] Reconcile protocol versions and generated/shared fixtures.
+- [ ] Record test coverage and missing user-journey coverage.
+- [ ] Mark every requirement with code, test, integration, runtime and release evidence independently.
+- [ ] Confirm no duplicate registry, planner, cache, consent, task router, scheduler or dashboard service is proposed.
