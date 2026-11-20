@@ -348,7 +348,7 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
 
     status_tokens = command_tokens(ollama_status)
     status_masked = strip_rust_noncode(ollama_status)
-    blocking_call = re.search(r"spawn_blocking\\s*\\(\\s*(?:move\\s*)?\\|\\|\\s*\\{", status_masked)
+    blocking_call = re.search(r"spawn_blocking\s*\(\s*(?:move\s*)?\|\|\s*\{", status_masked)
     blocking_probe_tokens: list[str] = []
     if blocking_call:
         opening = status_masked.find("{", blocking_call.start())
