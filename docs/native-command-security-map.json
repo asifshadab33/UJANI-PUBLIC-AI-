@@ -418,6 +418,22 @@
       "resource_limits": "Bounded traversal is implemented; exact depth, entry, byte, result and time limits are maintained in source and require per-command review.",
       "failure_mode": "Reject invalid scope, traversal errors or exhausted budgets without modifying user files; verify cache writes separately where applicable."
     },
+    "empty_folders::find_empty_folders": {
+      "classification": "selected_folder_metadata_read",
+      "capability": "file.empty_dirs.preview",
+      "scope": "Only folder explicitly selected through native picker",
+      "effects": "Read-only directory-entry metadata; no files or directory contents are changed",
+      "boundary": "registered local-policy/capability preflight before the native picker, then bounded directory traversal with cancellation and timeout",
+      "receipt": "none-read-only",
+      "tests": "selected-folder preflight, empty/nonempty distinction and symlink exclusion",
+      "status": "native local-policy preflight wired; full command review pending",
+      "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
+      "data_classification": "Treat caller-supplied task identifiers and arguments as untrusted; paths are obtained only from the native picker.",
+      "consent": "Native OS folder picker limits scope to the user's explicit selection; selection is not a blanket grant for other folders or future operations.",
+      "cancellation": "Task cancellation token and 60-second budget are implemented; confirm platform-specific cancellation and timeout behaviour.",
+      "resource_limits": "Maximum 5,000 directories, depth 6, 100 results and 60 seconds. Symlinks/reparse points are skipped.",
+      "failure_mode": "Reject unsafe selected roots; inaccessible entries and exhausted budgets are marked incomplete; no mutation occurs."
+    },
     "everyday_tools::get_local_clock": {
       "classification": "read_only_os_info",
       "capability": "os.clock.read",
