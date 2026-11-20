@@ -21,6 +21,9 @@ type LargeFileScanResult = {
   truncated: boolean;
   note: string;
 };
+type EmptyFolder = { path: string; name: string };
+type EmptyFolderScanResult = { root_name: string; scanned_directories: number; empty_folders: EmptyFolder[]; truncated: boolean; note: string };
+
 
 const formatSize = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
@@ -41,6 +44,11 @@ export default function EverydayTools() {
   const [largeTaskId, setLargeTaskId] = useState("");
   const [largeError, setLargeError] = useState("");
   const [minimumSizeMb, setMinimumSizeMb] = useState("100");
+  const [emptyFolderResult, setEmptyFolderResult] = useState<EmptyFolderScanResult | null>(null);
+  const [emptyFolderBusy, setEmptyFolderBusy] = useState(false);
+  const [emptyFolderTaskId, setEmptyFolderTaskId] = useState("");
+  const [emptyFolderError, setEmptyFolderError] = useState("");
+
 
   useEffect(() => {
     // Compare OS wall-clock deltas with the browser monotonic timer. This is
@@ -116,6 +124,33 @@ export default function EverydayTools() {
     }
   }
 
+
+  async function scanEmptyFolders() {
+    if (emptyFolderBusy || !isTauri()) return;
+    const id = `empty-folders-${Date.now()}`;
+    setEmptyFolderTaskId(id);
+    setEmptyFolderBusy(true);
+    setEmptyFolderError("");
+    setEmptyFolderResult(null);
+    try {
+      setEmptyFolderResult(await invoke<EmptyFolderScanResult>("find_empty_folders", { taskId: id }));
+    } catch (reason) {
+      setEmptyFolderError(String(reason));
+    } finally {
+      setEmptyFolderBusy(false);
+      setEmptyFolderTaskId("");
+    }
+  }
+
+  async function cancelEmptyFolderScan() {
+    if (!emptyFolderTaskId) return;
+    try {
+      await invoke<boolean>("cancel_active_task", { taskId: emptyFolderTaskId });
+    } catch (reason) {
+      setEmptyFolderError(`Could not cancel scan: ${String(reason)}`);
+    }
+  }
+
   const zone = clock ? new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(clock).find((part) => part.type === "timeZoneName")?.value : "";
 
   return <section className="model-box" id="everyday-tools">
@@ -179,6 +214,25 @@ export default function EverydayTools() {
         <small>{file.modified_unix_ms ? `Modified: ${new Date(file.modified_unix_ms).toLocaleString()}` : "Modified time unavailable"}</small>
       </div>) : <p>No files met the selected size threshold within the scan limits.</p>}
       <small>{largeResult.note}</small>
+    </div>}
+
+    <div className="section-heading">
+      <div><h3><FolderSearch size={17}/> Find empty folders</h3><p>Preview directories with no items inside, within a folder you choose.</p></div>
+    </div>
+    <button className="model-run" type="button" onClick={scanEmptyFolders} disabled={emptyFolderBusy || !isTauri()}>
+      {emptyFolderBusy ? "Scanning selected folder…" : "Choose folder and find empty folders"} <FolderSearch size={15}/>
+    </button>
+    {emptyFolderBusy && <><p className="progress" role="status">Checking directory entries only; no files are opened or changed.</p><button className="model-run" type="button" onClick={cancelEmptyFolderScan} disabled={!emptyFolderTaskId}>Cancel scan</button></>}
+    <small className="muted">Selected folder only; maximum 5,000 directories, 10,000 entries, six levels, 100 results and 60 seconds. Symbolic links/reparse points are skipped. Nothing is deleted.</small>
+    {emptyFolderError && <p className="error" role="alert">{emptyFolderError}</p>}
+    {emptyFolderResult && <div className="result">
+      <div className="result-title">Empty-folder preview <span>{emptyFolderResult.empty_folders.length} results · {emptyFolderResult.scanned_directories} directories checked</span></div>
+      <p>{emptyFolderResult.root_name}</p>
+      {emptyFolderResult.truncated && <p className="muted">The scan reached a safety limit or skipped inaccessible entries; results may be incomplete.</p>}
+      {emptyFolderResult.empty_folders.length ? emptyFolderResult.empty_folders.map((folder) => <div className="saved-history-item" key={folder.path}>
+        <b>{folder.name || folder.path}</b><small>{folder.path}</small>
+      </div>) : <p>No completely empty folders found within the scan limits.</p>}
+      <small>{emptyFolderResult.note}</small>
     </div>}
     <p className="muted"><ShieldCheck size={14}/> These tools only create previews. They never delete, move, rename, overwrite or upload your files.</p>
   </section>;

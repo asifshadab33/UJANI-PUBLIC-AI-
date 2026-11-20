@@ -7,7 +7,7 @@ Scope: Tauri command surface registered by `apps/desktop/src-tauri/src/lib.rs` o
 
 ## Inventory source and count
 
-The current `ujani_invoke_handler!` registration contains **44 statically named command entries**, plus a feature-supplied peer-command expansion. The main native source also contains 24 directly annotated command functions; module-level commands are registered by qualified module path. The inventory must be refreshed whenever the handler or command modules change.
+The current `ujani_invoke_handler!` registration contains **45 statically named command entries**, plus a feature-supplied peer-command expansion. The main native source also contains 24 directly annotated command functions; module-level commands are registered by qualified module path. The inventory must be refreshed whenever the handler or command modules change.
 
 ## Registered command inventory
 
@@ -39,6 +39,7 @@ The current `ujani_invoke_handler!` registration contains **44 statically named 
 | Filesystem | `local_search::find_local_files` |
 | Filesystem | `everyday_tools::find_duplicate_files` |
 | Filesystem | `file_insights::find_large_files` |
+| Filesystem | `empty_folders::find_empty_folders` |
 | OS information | `everyday_tools::get_local_clock` |
 | Search cache | `search_cache::get_local_search_cache_settings` |
 | Search cache | `search_cache::list_recent_local_searches` |
