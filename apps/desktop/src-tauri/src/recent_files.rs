@@ -57,7 +57,10 @@ pub async fn find_recent_files(
                 .map_err(|_| "The selected folder is not a local filesystem path.".to_string())
         }),
     )?;
-    let selected = selected.await.map_err(|error| format!("Folder picker failed: {error}"))?;
+    let selected = tokio::select! {
+        _ = token.cancelled() => return Err("Recent-file scan cancelled by user.".into()),
+        selected = selected => selected.map_err(|error| format!("Folder picker failed: {error}"))?,
+    };
     let folder = super::require_selected_folder(selected, "Folder selection cancelled. Nothing was scanned.")?;
     if token.is_cancelled() {
         return Err("Recent-file scan cancelled by user.".into());
