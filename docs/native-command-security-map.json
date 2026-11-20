@@ -431,7 +431,7 @@
       "data_classification": "Treat caller-supplied task identifiers and arguments as untrusted; paths are obtained only from the native picker.",
       "consent": "Native OS folder picker limits scope to the user's explicit selection; selection is not a blanket grant for other folders or future operations.",
       "cancellation": "Task cancellation token and 60-second budget are implemented; confirm platform-specific cancellation and timeout behaviour.",
-      "resource_limits": "Maximum 5,000 directories, depth 6, 100 results and 60 seconds. Symlinks/reparse points are skipped.",
+      "resource_limits": "Maximum 5,000 directories, 10,000 entries, depth 6, 100 results and 60 seconds. Symlinks/reparse points are skipped.",
       "failure_mode": "Reject unsafe selected roots; inaccessible entries and exhausted budgets are marked incomplete; no mutation occurs."
     },
     "everyday_tools::get_local_clock": {
