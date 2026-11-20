@@ -699,6 +699,8 @@ export default function App() {
     const userMessage = request.trim();
     const taskId = "local-ai-" + Date.now().toString(36);
     setActiveTaskId(taskId);
+    pendingChatDeltaRef.current = "";
+    if (chatDeltaFrameRef.current !== null) { window.cancelAnimationFrame(chatDeltaFrameRef.current); chatDeltaFrameRef.current = null; }
     setLocalStreamingText("");
     setTaskProgress({ task_id: taskId, stage: "starting", message: "Starting local task…", progress_percent: 5 });
     setAiBusy(true); setOllamaError(""); setAiResult(null); setLocalCapacityFallbackNotice("");
@@ -721,7 +723,7 @@ export default function App() {
         );
       }
     }
-    finally { setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
+    finally { pendingChatDeltaRef.current = ""; if (chatDeltaFrameRef.current !== null) { window.cancelAnimationFrame(chatDeltaFrameRef.current); chatDeltaFrameRef.current = null; } setAiBusy(false); setActiveTaskId(null); setLocalStreamingText(""); }
   }
 
   async function cancelLocalAi() {
