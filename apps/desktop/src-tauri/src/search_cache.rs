@@ -693,7 +693,7 @@ pub async fn clear_local_search_cache(app: AppHandle) -> Result<(), String> {
     let approved = crate::native_consent::confirm_native(
         &app,
         "Clear local search cache",
-        "Clear UJANI's locally stored search results, recent search history and approved folder-scope records? This affects only UJANI's local cache; it does not delete your original files or models. This action cannot be undone.\n\nApprove this one-time deletion?",
+        "Clear UJANI's locally stored search results, recent search history and approved folder-scope records? This affects only UJANI's local cache; it does not delete your original files or models. This action cannot be undone.\n\nApprove this one-time deletion?".to_string(),
         tokio_util::sync::CancellationToken::new(),
         Duration::from_secs(120),
     )
