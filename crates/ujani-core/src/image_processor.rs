@@ -54,6 +54,11 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
             if segment_length < 8 {
                 return None;
             }
+            let component_count = data[offset + 7] as usize;
+            let expected_length = 8usize.checked_add(3usize.checked_mul(component_count)?)?;
+            if component_count == 0 || segment_length < expected_length {
+                return None;
+            }
             let height = u16::from_be_bytes([data[offset + 3], data[offset + 4]]) as u32;
             let width = u16::from_be_bytes([data[offset + 5], data[offset + 6]]) as u32;
             return (width > 0 && height > 0).then_some((width, height));
