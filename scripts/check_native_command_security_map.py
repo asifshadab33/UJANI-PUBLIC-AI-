@@ -387,26 +387,41 @@ def missing_model_recommendation_probe_offload_guards(source: str) -> list[str]:
 
 
 def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
-    """Keep host CPU, memory and OS-version discovery off the async Ollama status command."""
+    """Require all synchronous host inventory probes to execute inside one blocking worker."""
     try:
         body = rust_function_body(source, "get_ollama_status")
     except ValueError:
         return ["get_ollama_status"]
 
-    tokens = command_tokens(body)
-    blocking_at = token_index(tokens, "spawn_blocking")
-    if blocking_at < 0:
-        return ["get_ollama_status must offload all host inventory probes before awaiting the worker"]
+    masked = strip_rust_noncode(body)
+    blocking_call = re.search(
+        r"spawn_blocking\\s*\\(\\s*(?:move\\s*)?\\|\\|\\s*\\{", masked
+    )
+    if not blocking_call:
+        return ["get_ollama_status must offload all host inventory probes inside spawn_blocking"]
 
-    # The command legitimately awaits Ollama network calls before collecting host
-    # inventory. Validate only the blocking closure and its own join await.
-    worker_tokens = tokens[blocking_at + 1:]
-    required = ("System::new", "refresh_cpu", "refresh_memory",
-                "available_parallelism", "total_memory", "available_memory",
-                "System::name", "System::os_version", "await")
+    opening = masked.find("{", blocking_call.start())
+    closing = find_matching_delimiter(masked, opening, "{", "}")
+    worker_tokens = command_tokens(body[opening + 1:closing])
+    outside_tokens = command_tokens(body[:opening] + body[closing + 1:])
+    required = (
+        "System::new",
+        "refresh_cpu",
+        "refresh_memory",
+        "available_parallelism",
+        "total_memory",
+        "available_memory",
+        "System::name",
+        "System::os_version",
+    )
     positions = [token_index(worker_tokens, token) for token in required]
     if any(position < 0 for position in positions) or positions != sorted(positions):
-        return ["get_ollama_status must offload all host inventory probes before awaiting the worker"]
+        return ["get_ollama_status must offload all host inventory probes inside spawn_blocking"]
+
+    if any(token_index(outside_tokens, token) >= 0 for token in required):
+        return ["get_ollama_status must not perform synchronous host inventory probes outside spawn_blocking"]
+    if token_index(command_tokens(body[closing + 1:]), "await") < 0:
+        return ["get_ollama_status must await the blocking worker"]
     return []
 
 
