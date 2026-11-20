@@ -1,6 +1,10 @@
 //! Bounded, read-only empty-directory discovery scoped to a native folder selection.
 use serde::Serialize;
-use std::{fs, path::{Path, PathBuf}, time::{Duration, Instant}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio_util::sync::CancellationToken;
@@ -11,7 +15,10 @@ const MAX_RESULTS: usize = 100;
 const MAX_RUNTIME: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize)]
-pub struct EmptyFolderEntry { pub path: String, pub name: String }
+pub struct EmptyFolderEntry {
+    pub path: String,
+    pub name: String,
+}
 
 #[derive(Debug, Serialize)]
 pub struct EmptyFolderScanResult {
@@ -33,70 +40,141 @@ pub async fn find_empty_folders(
     let token = registration.token.clone();
     super::ensure_task_not_cancelled(&token)?;
     let snapshot = super::get_selected_folder_capability_snapshot_for_task(&token).await;
-    super::emit_task_progress(&app, &task_id, "starting", "Choose a folder for an empty-folder preview.", 1);
+    super::emit_task_progress(
+        &app,
+        &task_id,
+        "starting",
+        "Choose a folder for an empty-folder preview.",
+        1,
+    );
     let picker_app = app.clone();
     let selected = super::run_selected_folder_preflight(
         &token,
         snapshot.as_ref().map_err(Clone::clone),
         &["file.empty_dirs.preview"],
-        move || tauri::async_runtime::spawn_blocking(move || {
-            let Some(folder) = picker_app.dialog().file().set_title("Choose a folder to find empty folders").blocking_pick_folder() else {
-                return Ok(None);
-            };
-            folder.into_path().map(Some).map_err(|_| "Selected folder is not a local filesystem path.".to_string())
-        }),
+        move || {
+            tauri::async_runtime::spawn_blocking(move || {
+                let Some(folder) = picker_app
+                    .dialog()
+                    .file()
+                    .set_title("Choose a folder to find empty folders")
+                    .blocking_pick_folder()
+                else {
+                    return Ok(None);
+                };
+                folder
+                    .into_path()
+                    .map(Some)
+                    .map_err(|_| "Selected folder is not a local filesystem path.".to_string())
+            })
+        },
     )?;
-    let selected = selected.await.map_err(|error| format!("Folder picker failed: {error}"))?;
-    let folder = super::require_selected_folder(selected, "Folder selection cancelled. Nothing was scanned.")?;
+    let selected = selected
+        .await
+        .map_err(|error| format!("Folder picker failed: {error}"))?;
+    let folder = super::require_selected_folder(
+        selected,
+        "Folder selection cancelled. Nothing was scanned.",
+    )?;
     let worker_token = token.clone();
-    let worker = tauri::async_runtime::spawn_blocking(move || scan_empty_folders(&folder, &worker_token));
+    let worker =
+        tauri::async_runtime::spawn_blocking(move || scan_empty_folders(&folder, &worker_token));
     let result = tokio::select! {
         _ = token.cancelled() => Err("Empty-folder scan cancelled by user.".into()),
         outcome = tokio::time::timeout(MAX_RUNTIME, worker) => match outcome {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => Err(format!("Empty-folder scan worker failed: {error}")),
-            Err(_) => { token.cancel(); Err("Empty-folder scan exceeded its 60-second time budget. Choose a smaller folder.".into()) }
+            Err(_) => {
+                token.cancel();
+                Err("Empty-folder scan exceeded its 60-second time budget. Choose a smaller folder.".into())
+            }
         }
     };
     match &result {
-        Ok(_) => super::emit_task_progress(&app, &task_id, "completed", "Empty-folder preview finished. No directories were changed.", 100),
-        Err(error) if error.contains("cancelled") => super::emit_task_progress(&app, &task_id, "cancelled", "Scan cancelled.", 0),
+        Ok(_) => super::emit_task_progress(
+            &app,
+            &task_id,
+            "completed",
+            "Empty-folder preview finished. No directories were changed.",
+            100,
+        ),
+        Err(error) if error.contains("cancelled") => super::emit_task_progress(
+            &app,
+            &task_id,
+            "cancelled",
+            "Scan cancelled.",
+            0,
+        ),
         Err(error) => super::emit_task_progress(&app, &task_id, "failed", error, 0),
     }
     result
 }
 
-fn scan_empty_folders(root: &Path, token: &CancellationToken) -> Result<EmptyFolderScanResult, String> {
-    let root_meta = fs::symlink_metadata(root).map_err(|e| format!("Cannot inspect selected root: {e}"))?;
+fn scan_empty_folders(
+    root: &Path,
+    token: &CancellationToken,
+) -> Result<EmptyFolderScanResult, String> {
+    let root_meta = fs::symlink_metadata(root)
+        .map_err(|error| format!("Cannot inspect selected root: {error}"))?;
     if crate::safe_fs::is_reparse_point(&root_meta) || !root_meta.is_dir() {
         return Err("Choose a real directory, not a symbolic link or reparse point.".into());
     }
-    let canonical_root = fs::canonicalize(root).map_err(|e| format!("Cannot resolve selected folder: {e}"))?;
-    let root_name = canonical_root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Selected folder".into());
+    let canonical_root =
+        fs::canonicalize(root).map_err(|error| format!("Cannot resolve selected folder: {error}"))?;
+    let root_name = canonical_root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Selected folder".into());
     let start = Instant::now();
     let mut stack: Vec<(PathBuf, usize)> = vec![(canonical_root.clone(), 0)];
     let mut empty_folders = Vec::new();
     let mut visited = 0usize;
     let mut truncated = false;
-    while let Some((dir, depth)) = stack.pop() {
-        if token.is_cancelled() { return Err("Empty-folder scan cancelled by user.".into()); }
-        if start.elapsed() >= MAX_RUNTIME || visited >= MAX_DIRS { truncated = true; break; }
-        let meta = match fs::symlink_metadata(&dir) {
-            Ok(m) if m.is_dir() && !crate::safe_fs::is_reparse_point(&m) => m,
+
+    while let Some((directory, depth)) = stack.pop() {
+        if token.is_cancelled() {
+            return Err("Empty-folder scan cancelled by user.".into());
+        }
+        if start.elapsed() >= MAX_RUNTIME || visited >= MAX_DIRS {
+            truncated = true;
+            break;
+        }
+        let metadata = match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.is_dir() && !crate::safe_fs::is_reparse_point(&metadata) => {
+                metadata
+            }
             Ok(_) => continue,
-            Err(_) => { truncated = true; continue; }
+            Err(_) => {
+                truncated = true;
+                continue;
+            }
         };
-        let canonical = match fs::canonicalize(&dir) { Ok(p) if p.starts_with(&canonical_root) => p, _ => { truncated = true; continue; } };
-        let _ = meta;
+        let canonical = match fs::canonicalize(&directory) {
+            Ok(path) if path.starts_with(&canonical_root) => path,
+            _ => {
+                truncated = true;
+                continue;
+            }
+        };
+        let _ = metadata;
         visited += 1;
         let mut entries = match fs::read_dir(&canonical) {
             Ok(entries) => entries,
-            Err(_) => { truncated = true; continue; }
+            Err(_) => {
+                truncated = true;
+                continue;
+            }
         };
         match entries.next() {
             None => {
-                let name = canonical.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                empty_folders.push(EmptyFolderEntry { path: canonical.display().to_string(), name });
+                let name = canonical
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                empty_folders.push(EmptyFolderEntry {
+                    path: canonical.display().to_string(),
+                    name,
+                });
             }
             Some(Err(_)) => truncated = true,
             Some(Ok(first)) => {
@@ -104,31 +182,55 @@ fn scan_empty_folders(root: &Path, token: &CancellationToken) -> Result<EmptyFol
                     // Continue enumeration to discover child directories, without following links.
                     let mut pending = vec![first];
                     for entry in entries {
-                        match entry { Ok(item) => pending.push(item), Err(_) => truncated = true }
-                        if pending.len() > MAX_DIRS { truncated = true; break; }
+                        match entry {
+                            Ok(item) => pending.push(item),
+                            Err(_) => truncated = true,
+                        }
+                        if pending.len() > MAX_DIRS {
+                            truncated = true;
+                            break;
+                        }
                     }
                     for item in pending.into_iter().rev() {
                         let child = item.path();
                         match fs::symlink_metadata(&child) {
-                            Ok(m) if m.is_dir() && !crate::safe_fs::is_reparse_point(&m) => stack.push((child, depth + 1)),
-                            Ok(_) => {},
+                            Ok(metadata)
+                                if metadata.is_dir()
+                                    && !crate::safe_fs::is_reparse_point(&metadata) =>
+                            {
+                                stack.push((child, depth + 1));
+                            }
+                            Ok(_) => {}
                             Err(_) => truncated = true,
                         }
                     }
-                } else { truncated = true; }
+                } else {
+                    truncated = true;
+                }
             }
         }
     }
-    empty_folders.sort_by(|a,b| a.path.cmp(&b.path));
-    if empty_folders.len() > MAX_RESULTS { empty_folders.truncate(MAX_RESULTS); truncated = true; }
-    Ok(EmptyFolderScanResult { root_name, scanned_directories: visited, empty_folders, truncated,
-        note: "Read-only preview. No directory contents were changed, deleted or moved. Symbolic links and reparse points are skipped.".into() })
+
+    empty_folders.sort_by(|left, right| left.path.cmp(&right.path));
+    if empty_folders.len() > MAX_RESULTS {
+        empty_folders.truncate(MAX_RESULTS);
+        truncated = true;
+    }
+    Ok(EmptyFolderScanResult {
+        root_name,
+        scanned_directories: visited,
+        empty_folders,
+        truncated,
+        note: "Read-only preview. No directory contents were changed, deleted or moved. Symbolic links and reparse points are skipped.".into(),
+    })
 }
 
 #[cfg(target_os = "android")]
 #[tauri::command]
 pub async fn find_empty_folders(
-    _app: AppHandle, _control: State<'_, super::TaskControlState>, _task_id: String,
+    _app: AppHandle,
+    _control: State<'_, super::TaskControlState>,
+    _task_id: String,
 ) -> Result<EmptyFolderScanResult, String> {
     Err("Folder-based empty-folder scanning is not available in the Android preview; Storage Access Framework support is not implemented yet.".into())
 }
@@ -136,26 +238,44 @@ pub async fn find_empty_folders(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{time::{SystemTime, UNIX_EPOCH}};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     fn temp_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("ujani-empty-folders-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()))
+        std::env::temp_dir().join(format!(
+            "ujani-empty-folders-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
     }
+
     #[test]
     fn finds_only_truly_empty_directories_and_does_not_modify_files() {
-        let root=temp_dir(); fs::create_dir_all(root.join("empty")).unwrap();
-        fs::create_dir_all(root.join("nonempty/sub")).unwrap(); fs::write(root.join("nonempty/file.txt"), b"x").unwrap();
-        let result=scan_empty_folders(&root, &CancellationToken::new()).unwrap();
-        assert_eq!(result.empty_folders.len(),1); assert_eq!(result.empty_folders[0].name,"empty");
-        assert!(root.join("nonempty/file.txt").exists()); fs::remove_dir_all(root).unwrap();
+        let root = temp_dir();
+        fs::create_dir_all(root.join("empty")).unwrap();
+        fs::create_dir_all(root.join("nonempty/sub")).unwrap();
+        fs::write(root.join("nonempty/file.txt"), b"x").unwrap();
+        let result = scan_empty_folders(&root, &CancellationToken::new()).unwrap();
+        assert_eq!(result.empty_folders.len(), 1);
+        assert_eq!(result.empty_folders[0].name, "empty");
+        assert!(root.join("nonempty/file.txt").exists());
+        fs::remove_dir_all(root).unwrap();
     }
+
     #[cfg(unix)]
     #[test]
     fn skips_directory_symlinks() {
         use std::os::unix::fs::symlink;
-        let root=temp_dir(); fs::create_dir_all(root.join("empty")).unwrap();
-        let outside=temp_dir(); fs::create_dir_all(&outside).unwrap(); symlink(&outside,root.join("link")).unwrap();
-        let result=scan_empty_folders(&root,&CancellationToken::new()).unwrap();
-        assert_eq!(result.empty_folders.len(),1);
-        fs::remove_dir_all(root).unwrap(); fs::remove_dir_all(outside).unwrap();
+
+        let root = temp_dir();
+        fs::create_dir_all(root.join("empty")).unwrap();
+        let outside = temp_dir();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+        let result = scan_empty_folders(&root, &CancellationToken::new()).unwrap();
+        assert_eq!(result.empty_folders.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 }
