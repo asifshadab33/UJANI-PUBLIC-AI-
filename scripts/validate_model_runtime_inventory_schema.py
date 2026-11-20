@@ -23,6 +23,8 @@ def _reject_duplicate_json_keys(pairs):
 
 def _json_load_strict(text):
     return json.loads(text, object_pairs_hook=_reject_duplicate_json_keys)
+
+
 SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v1.schema.json"
 V2_SCHEMA_PATH = ROOT / "schemas/model-runtime-inventory-v2.schema.json"
 
