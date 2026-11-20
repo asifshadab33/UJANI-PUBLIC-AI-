@@ -176,6 +176,14 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
                 system.available_memory()
             }).await
         }
+        async fn get_ollama_status() {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_cpu();
+                system.refresh_memory();
+                (system.total_memory(), system.available_memory())
+            }).await
+        }
         async fn get_device_info() {
             tauri::async_runtime::spawn_blocking(collect_device_info).await
         }
@@ -360,7 +368,7 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
         }
         """
         self.assertIn(
-            "get_ollama_status must offload sysinfo CPU and memory probes",
+            "get_ollama_status must offload sysinfo CPU and memory probes inside spawn_blocking",
             missing_async_os_probe_offload_guards(native, task_engine),
         )
 
