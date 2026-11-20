@@ -145,7 +145,7 @@ jobs:
       - name: Reject updater artifacts until a non-empty signing public key is configured
         run: |
           node -e "const c=require('./apps/desktop/src-tauri/tauri.conf.json'); if (c.bundle.createUpdaterArtifacts && !c.plugins?.updater?.pubkey?.trim()) { console.error('Updater artifacts require a configured signing public key.'); process.exit(1); }"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: "1.25.0"
           cache: false
