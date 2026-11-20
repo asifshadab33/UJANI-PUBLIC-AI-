@@ -377,6 +377,23 @@ def missing_model_recommendation_probe_offload_guards(source: str) -> list[str]:
     return []
 
 
+def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
+    """Keep host CPU, memory and OS-version discovery off the async Ollama status command."""
+    try:
+        body = rust_function_body(source, "get_ollama_status")
+    except ValueError:
+        return ["get_ollama_status"]
+
+    tokens = command_tokens(body)
+    required = ("spawn_blocking", "System::new", "refresh_cpu", "refresh_memory",
+                "available_parallelism", "total_memory", "available_memory",
+                "System::name", "System::os_version", "await")
+    positions = [tokens.index(token) if token in tokens else -1 for token in required]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        return ["get_ollama_status must offload all host inventory probes before awaiting the worker"]
+    return []
+
+
 def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
     """Require classification, transfer policy and native approval before cloud side effects."""
     try:
@@ -736,6 +753,9 @@ def main() -> int:
     missing_model_probe_guards = missing_model_recommendation_probe_offload_guards(source)
     if missing_model_probe_guards:
         errors.extend("model recommendation OS probe: " + item for item in missing_model_probe_guards)
+    missing_ollama_probe_guards = missing_ollama_status_probe_offload_guards(source)
+    if missing_ollama_probe_guards:
+        errors.extend("Ollama status OS probe: " + item for item in missing_ollama_probe_guards)
     # The shared local policy evaluator must remain on both ordinary local
     # operation planning and every node in a local task graph.
     require_tokens(
