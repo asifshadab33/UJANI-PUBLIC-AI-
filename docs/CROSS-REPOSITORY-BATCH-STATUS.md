@@ -4,8 +4,8 @@
 
 ## Current main
 
-- Public AI: `main` at `669a98b79eff3340e77f19efdb450ace88e5a83f` (nested duplicate-key contract regression PR #402 merged).
-- Enterprise AI: `main` at `6f37092b4e184eab1405b6cc19fce44ba4247fb4` (Model Intelligence v2 boundary clarification PR #310 merged).
+- Public AI: `main` last verified at `e22a31fc7912d7d4db72327e7e95a964b6e8381f` (recent-file preview PR #395 merged after #397/#401).
+- Enterprise AI: `main` last verified at `1f70b5d1ce5b08c4a2bed3ebcc16fc7f845db224` (strict operator-projection JSON PR #312 merged).
 - Shared task contract, consent vector, model-runtime inventory v2 schema and validator are mirrored; parity must be checked by exact blob SHA or equivalent schema/fixture comparison each integration pass.
 
 ## Batch execution order
@@ -25,14 +25,14 @@ Batches run concurrently when independent; dependencies and release gates remain
 ## PRs currently requiring follow-up
 
 - Public #397 JPEG header dimensions: merged as `a102ed0552decd46801173c46b8538b0972319b9`; exact-head CI, CodeQL, Android check and installer audit passed before merge; main-branch workflow evidence has not yet been returned by the connector.
-- Public #395 recent-file preview: draft; review metadata-only traversal/open behavior and current-base compatibility.
-- Public #396 empty-folder preview: draft; root/descendant race and Windows path boundary are blockers.
+- Public #395 recent-file preview: merged as `e22a31fc7912d7d4db72327e7e95a964b6e8381f`; exact-head CI, CodeQL, Android compatibility and installer audit passed before merge.
+- Public #396 empty-folder preview: draft; hosted CI passed, but a verified selected-root TOCTOU redirection risk remains (symlink swap between root check and canonicalization); cancellation checks also need tightening. Not mergeable from a safety perspective.
 - Public #400 async host-probe offloading: draft; exact-head checks passed, but current PR metadata reports mergeable=false (conflict/outdated base); do not merge until refreshed/reconciled.
 - Public #401 model-runtime v2 capability boundary: merged as `669a98b79eff3340e77f19efdb450ace88e5a83f`; exact-head CI, CodeQL and Android checks passed before merge. Post-merge main workflow evidence remains pending.
 - Public dependency PRs #384, #391, #388–#390, #385–#387: assess independently; do not batch blindly. Failed platform/native checks are blockers.
-- Public #404 strict duplicate-key schema validator: draft; exact-head CI pending.
-- Enterprise #312 strict duplicate-key projection validator: draft; exact-head CI pending.
-- Enterprise #313 strict duplicate-key model-inventory intake parser: draft; exact-head Rust tests/lint/security checks pending.
+- Public #404 strict duplicate-key schema validator: draft; Python/Rust core tests, TypeScript, workflow lint, dependency audit and Rust lint have passed; native Linux/Windows/macOS checks still in progress.
+- Enterprise #312 strict duplicate-key projection validator: merged as `1f70b5d1ce5b08c4a2bed3ebcc16fc7f845db224`; CI, CodeQL, dependency audit and security watch passed before merge.
+- Enterprise #313 strict duplicate-key model-inventory intake parser: first CI run caught a missing trait qualification and then formatting; both were fixed on the branch. New exact-head CI is running; do not merge until green.
 
 ## Release posture
 
