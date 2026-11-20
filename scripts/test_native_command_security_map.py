@@ -17,6 +17,7 @@ from check_native_command_security_map import (
     missing_folder_import_preflight_guards,
     missing_local_state_mutation_receipt_guards,
     missing_reminder_destructive_confirmation_guards,
+    missing_async_os_probe_offload_guards,
     manifest_entry_errors,
 )
 
@@ -122,6 +123,114 @@ class NativeCommandManifestContractTests(unittest.TestCase):
         errors = manifest_mapping_errors(groups, self.REQUIRED_FIELDS)
         self.assertIn("default_commands:command: missing non-empty consent", errors)
         self.assertIn("default_commands:command: disabled mutation must say so in status", errors)
+
+
+class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
+    def test_os_resource_probes_are_offloaded_and_reused(self):
+        native = """
+        async fn get_capability_snapshot() {
+            let (cpus, memory) = tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_memory();
+                (system.available_memory(), std::thread::available_parallelism())
+            }).await?;
+        }
+        async fn get_device_info() {
+            tauri::async_runtime::spawn_blocking(collect_device_info).await
+        }
+        fn collect_device_info() {
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+        }
+        """
+        task_engine = """
+        async fn read_local_resource_snapshot() {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut system = sysinfo::System::new();
+                system.refresh_memory();
+                system.available_memory()
+            }).await
+        }
+        async fn ensure_local_model_ready() {
+            let snapshot = read_local_resource_snapshot().await?;
+            check_runtime(snapshot).await?;
+        }
+        """
+        self.assertEqual(missing_async_os_probe_offload_guards(native, task_engine), [])
+
+    def test_direct_sysinfo_probe_inside_model_admission_is_rejected(self):
+        native = """
+        async fn get_capability_snapshot() {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_memory();
+                system.available_memory()
+            }).await
+        }
+        async fn get_device_info() {
+            tauri::async_runtime::spawn_blocking(collect_device_info).await
+        }
+        fn collect_device_info() {
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+        }
+        """
+        task_engine = """
+        async fn read_local_resource_snapshot() {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_memory();
+                system.available_memory()
+            }).await
+        }
+        async fn ensure_local_model_ready() {
+            let mut system = System::new();
+            system.refresh_memory();
+            let snapshot = read_local_resource_snapshot().await?;
+            check_runtime(snapshot).await?;
+        }
+        """
+        self.assertIn(
+            "ensure_local_model_ready must not perform synchronous OS probes",
+            missing_async_os_probe_offload_guards(native, task_engine),
+        )
+
+    def test_missing_blocking_pool_for_device_info_is_rejected(self):
+        native = """
+        async fn get_capability_snapshot() {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_memory();
+                system.available_memory()
+            }).await
+        }
+        async fn get_device_info() {
+            collect_device_info()
+        }
+        fn collect_device_info() {
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+        }
+        """
+        task_engine = """
+        async fn read_local_resource_snapshot() {
+            tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_memory();
+                system.available_memory()
+            }).await
+        }
+        async fn ensure_local_model_ready() {
+            read_local_resource_snapshot().await?
+        }
+        """
+        self.assertIn(
+            "get_device_info must call its collector through spawn_blocking",
+            missing_async_os_probe_offload_guards(native, task_engine),
+        )
 
 
 class NativeCommandSideEffectOrderingTests(unittest.TestCase):
