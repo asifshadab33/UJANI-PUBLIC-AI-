@@ -283,7 +283,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let token = CancellationToken::new();
         token.cancel();
-        assert!(scan_empty_folders(&root, &token).unwrap_err().contains("cancelled"));
+        assert!(
+            scan_empty_folders(&root, &token)
+                .unwrap_err()
+                .contains("cancelled")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
