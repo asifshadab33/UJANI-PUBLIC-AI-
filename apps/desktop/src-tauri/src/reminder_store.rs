@@ -450,8 +450,36 @@ fn manage_blocking(app: AppHandle, request: ReminderRequest) -> Result<ReminderR
     }
 }
 
+fn destructive_confirmation(request: &ReminderRequest) -> Option<(&'static str, &'static str)> {
+    match request {
+        ReminderRequest::Delete { .. } => Some((
+            "Delete local reminder",
+            "Permanently delete the selected UJANI reminder? This removes only that local reminder record. This cannot be undone. Other reminders, saved history, original files and installed models are unaffected. No cloud service is contacted. Continue?",
+        )),
+        ReminderRequest::ClearAll => Some((
+            "Clear all local reminders",
+            "Permanently delete all saved UJANI reminders? This removes only local reminder records. This cannot be undone. Saved history, original files and installed models are unaffected. No cloud service is contacted. Continue?",
+        )),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn manage_local_reminders(app: AppHandle, request: ReminderRequest) -> Result<ReminderResponse, String> {
+    if let Some((title, message)) = destructive_confirmation(&request) {
+        let approved = crate::native_consent::confirm_native(
+            &app,
+            title,
+            message.to_string(),
+            tokio_util::sync::CancellationToken::new(),
+            std::time::Duration::from_secs(120),
+        )
+        .await;
+        if !approved {
+            return Err("Reminder deletion was declined, cancelled or timed out. No data was changed.".into());
+        }
+    }
+
     tauri::async_runtime::spawn_blocking(move || manage_blocking(app, request))
         .await.map_err(|error| format!("Reminder storage worker failed: {error}"))?
 }
@@ -459,6 +487,14 @@ pub async fn manage_local_reminders(app: AppHandle, request: ReminderRequest) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destructive_reminder_actions_require_native_confirmation() {
+        assert!(destructive_confirmation(&ReminderRequest::Delete { id: "r-test".into() }).is_some());
+        assert!(destructive_confirmation(&ReminderRequest::ClearAll).is_some());
+        assert!(destructive_confirmation(&ReminderRequest::GetSettings).is_none());
+        assert!(destructive_confirmation(&ReminderRequest::List).is_none());
+    }
 
     fn reminder() -> LocalReminder {
         LocalReminder {
