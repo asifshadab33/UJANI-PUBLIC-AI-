@@ -518,6 +518,35 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
 
     return sorted(set(missing))
 
+def missing_reminder_destructive_confirmation_guards(source: str) -> list[str]:
+    """Require native confirmation for reminder deletion before DB work starts."""
+    missing: list[str] = []
+    try:
+        helper = strip_rust_noncode(rust_function_body(source, "destructive_confirmation"))
+        handler = strip_rust_noncode(rust_function_body(source, "manage_local_reminders"))
+    except ValueError:
+        return ["delete", "clear_all"]
+
+    if "ReminderRequest::Delete" not in helper:
+        missing.append("delete")
+    if "ReminderRequest::ClearAll" not in helper:
+        missing.append("clear_all")
+
+    ordered = (
+        "destructive_confirmation",
+        "native_consent::confirm_native",
+        "CancellationToken::new()",
+        "Duration::from_secs(120)",
+        "if !approved",
+        "return Err",
+        "spawn_blocking",
+    )
+    positions = [handler.find(token) for token in ordered]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        missing.extend(("delete", "clear_all"))
+    return sorted(set(missing))
+
+
 def registered_commands(source: str) -> tuple[list[str], list[str]]:
     marker = "tauri::generate_handler!["
     start = source.find(marker)
@@ -862,7 +891,7 @@ def main() -> int:
         )
 
     # Reminder storage must stay encrypted, explicitly disabled by default and bounded.
-    require_tokens(
+    reminder_source = require_tokens(
         REMINDER_STORE,
         (
             "with_local_state_receipt",
@@ -880,6 +909,12 @@ def main() -> int:
         errors,
         "local reminder storage",
     )
+    missing_reminder_guards = missing_reminder_destructive_confirmation_guards(reminder_source)
+    if missing_reminder_guards:
+        errors.append(
+            "reminder deletion: native confirmation must cover Delete and ClearAll before the blocking storage worker in "
+            + ", ".join(missing_reminder_guards)
+        )
 
     if errors:
         print("Native command security-map check FAILED:")
