@@ -271,7 +271,7 @@ def missing_defender_status_guards(source: str, adapter_source: str) -> list[str
     except ValueError:
         return ["get_defender_status"]
     ordered = (
-        "native_consent::confirm_native",
+        "confirm_native",
         "Duration::from_secs(120)",
         "security_providers::read_defender_status().await",
     )
