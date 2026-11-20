@@ -127,3 +127,9 @@ This inventory is a starting point, **not completion of issue #120**. Do not clo
 - Saved history enabling requires native Yes/No confirmation before receipt reservation, vault-key access, legacy plaintext migration or settings write; disabling remains immediate.
 - Persistent search-cache enabling reads existing state without creating/migrating SQLite, requires native consent on off-to-on transition, rechecks current state inside the write transaction, and denies a concurrent re-enable without consent. The confirmation explains AES-GCM encryption, OS credential-vault custody, retention/storage limits and local-only scope.
 - Static command-security checks and regressions verify consent-before-receipt/write order, read-only state inspection, the off-to-on transition and transactional recheck. This is a targeted boundary improvement, not closure of the full native-command authorization audit.
+
+### 2026-11-20 reminder deletion consent
+
+- The native `manage_local_reminders` IPC boundary now requires a native Yes/No confirmation for deleting one reminder or clearing all reminders. A decline, timeout or closed confirmation channel fails closed before the blocking storage worker, receipt reservation or database access.
+- The reminder centre no longer uses a webview `window.confirm` for clear-all; the native command owns the destructive-action decision, so direct IPC callers receive the same guard.
+- Static source-order regressions and a Rust action-classification test cover Delete and ClearAll. This is a targeted destructive-action safeguard, not completion of the full per-command authorization matrix.
