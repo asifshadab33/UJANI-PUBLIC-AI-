@@ -223,7 +223,7 @@ export default function EverydayTools() {
       {emptyFolderBusy ? "Scanning selected folder…" : "Choose folder and find empty folders"} <FolderSearch size={15}/>
     </button>
     {emptyFolderBusy && <><p className="progress" role="status">Checking directory entries only; no files are opened or changed.</p><button className="model-run" type="button" onClick={cancelEmptyFolderScan} disabled={!emptyFolderTaskId}>Cancel scan</button></>}
-    <small className="muted">Selected folder only; maximum 5,000 directories, six levels, 100 results and 60 seconds. Symbolic links/reparse points are skipped. Nothing is deleted.</small>
+    <small className="muted">Selected folder only; maximum 5,000 directories, 10,000 entries, six levels, 100 results and 60 seconds. Symbolic links/reparse points are skipped. Nothing is deleted.</small>
     {emptyFolderError && <p className="error" role="alert">{emptyFolderError}</p>}
     {emptyFolderResult && <div className="result">
       <div className="result-title">Empty-folder preview <span>{emptyFolderResult.empty_folders.length} results · {emptyFolderResult.scanned_directories} directories checked</span></div>
