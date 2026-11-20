@@ -497,9 +497,20 @@ pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
 }
 
 #[tauri::command]
-pub fn delete_task_history(app: AppHandle, entry_id: i64) -> Result<(), String> {
+pub async fn delete_task_history(app: AppHandle, entry_id: i64) -> Result<(), String> {
     if entry_id <= 0 {
         return Err("Invalid history entry identifier.".into());
+    }
+    let approved = crate::native_consent::confirm_native(
+        &app,
+        "Delete saved history entry",
+        format!("Permanently delete saved UJANI history entry {entry_id}? This removes only the selected local history record and cannot be undone.\n\nApprove this one-time deletion?"),
+        tokio_util::sync::CancellationToken::new(),
+        std::time::Duration::from_secs(120),
+    )
+    .await;
+    if !approved {
+        return Err("History entry deletion was declined, cancelled or timed out. No data was changed.".into());
     }
     crate::with_local_state_receipt(
         &app,
@@ -518,7 +529,18 @@ pub fn delete_task_history(app: AppHandle, entry_id: i64) -> Result<(), String> 
 }
 
 #[tauri::command]
-pub fn clear_task_history(app: AppHandle) -> Result<(), String> {
+pub async fn clear_task_history(app: AppHandle) -> Result<(), String> {
+    let approved = crate::native_consent::confirm_native(
+        &app,
+        "Clear saved task history",
+        "Permanently delete all locally saved UJANI task history? This does not delete your original files, models or other application data. This action cannot be undone.\n\nApprove this one-time deletion?".to_string(),
+        tokio_util::sync::CancellationToken::new(),
+        std::time::Duration::from_secs(120),
+    )
+    .await;
+    if !approved {
+        return Err("History clearing was declined, cancelled or timed out. No data was changed.".into());
+    }
     crate::with_local_state_receipt(
         &app,
         "history.clear",
