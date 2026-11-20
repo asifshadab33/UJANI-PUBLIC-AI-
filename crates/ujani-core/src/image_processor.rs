@@ -56,7 +56,7 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
             }
             let component_count = data[offset + 7] as usize;
             let expected_length = 8usize.checked_add(3usize.checked_mul(component_count)?)?;
-            if component_count == 0 || segment_length < expected_length {
+            if component_count == 0 || segment_length != expected_length {
                 return None;
             }
             let height = u16::from_be_bytes([data[offset + 3], data[offset + 4]]) as u32;
@@ -228,6 +228,13 @@ mod additional_format_tests {
         let mut short_components = vec![0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 8, 0, 1, 0, 1, 3];
         short_components.extend_from_slice(&[1, 0x11, 0, 2, 0x11, 0]);
         let info = inspect_image("photo.jpg", &short_components, short_components.len() as u64).unwrap();
+        assert_eq!(info.dimensions, None);
+
+        // A SOF segment with trailing bytes beyond its component table is malformed.
+        let extra_byte_sof = [
+            0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0c, 8, 0, 1, 0, 1, 1, 1, 0x11, 0, 0,
+        ];
+        let info = inspect_image("photo.jpg", &extra_byte_sof, extra_byte_sof.len() as u64).unwrap();
         assert_eq!(info.dimensions, None);
     }
 
