@@ -5,6 +5,7 @@ mod native_consent;
 mod device_identity;
 mod everyday_tools;
 mod file_insights;
+mod recent_files;
 mod folder_import;
 mod local_search;
 mod search_cache;
@@ -2723,7 +2724,7 @@ macro_rules! ujani_invoke_handler {
             search_cache::get_local_search_cache_settings, search_cache::list_recent_local_searches,
             search_cache::set_local_search_cache_settings, search_cache::clear_local_search_cache,
             everyday_tools::get_local_clock, everyday_tools::find_duplicate_files,
-            file_insights::find_large_files, history::get_task_history_settings,
+            file_insights::find_large_files, recent_files::find_recent_files, history::get_task_history_settings,
             history::set_task_history_enabled, history::save_task_history, history::list_task_history,
             history::delete_task_history, history::clear_task_history,
             reminder_store::manage_local_reminders,
