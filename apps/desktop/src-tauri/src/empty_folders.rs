@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 const MAX_DEPTH: usize = 6;
 const MAX_DIRS: usize = 5_000;
+const MAX_ENTRIES: usize = 10_000;
 const MAX_RESULTS: usize = 100;
 const MAX_RUNTIME: Duration = Duration::from_secs(60);
 
@@ -129,6 +130,7 @@ fn scan_empty_folders(
     let mut stack: Vec<(PathBuf, usize)> = vec![(canonical_root.clone(), 0)];
     let mut empty_folders = Vec::new();
     let mut visited = 0usize;
+    let mut entries_seen = 0usize;
     let mut truncated = false;
 
     while let Some((directory, depth)) = stack.pop() {
@@ -182,6 +184,14 @@ fn scan_empty_folders(
                     // Continue enumeration to discover child directories, without following links.
                     let mut pending = vec![first];
                     for entry in entries {
+                        if token.is_cancelled() {
+                            return Err("Empty-folder scan cancelled by user.".into());
+                        }
+                        if start.elapsed() >= MAX_RUNTIME || entries_seen >= MAX_ENTRIES {
+                            truncated = true;
+                            break;
+                        }
+                        entries_seen += 1;
                         match entry {
                             Ok(item) => pending.push(item),
                             Err(_) => truncated = true,
