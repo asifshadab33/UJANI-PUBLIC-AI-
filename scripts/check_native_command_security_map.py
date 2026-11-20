@@ -511,13 +511,17 @@ def missing_history_enable_confirmation_guards(source: str) -> list[str]:
     opening = executable.find("{", enable_match.start())
     closing = find_matching_delimiter(executable, opening, "{", "}")
     enable_branch = executable[opening + 1:closing]
+    # Accept the crate-qualified production call and the unqualified test
+    # fixture alias, while requiring an actual function invocation.
+    approval = re.search(r"(?:[A-Za-z_]\\w*::)*confirm_native\\s*\\(", enable_branch)
     ordered = (
-        "native_consent::confirm_native",
         "if !approved",
         "return Err",
     )
     positions = [enable_branch.find(token) for token in ordered]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
+    if approval is None or any(position < 0 for position in positions):
+        return ["set_task_history_enabled"]
+    if [approval.start(), *positions] != sorted([approval.start(), *positions]):
         return ["set_task_history_enabled"]
 
     receipt_at = executable.find("with_local_state_receipt")
