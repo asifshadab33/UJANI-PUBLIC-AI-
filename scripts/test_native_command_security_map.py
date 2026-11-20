@@ -19,6 +19,8 @@ from check_native_command_security_map import (
     missing_local_state_mutation_receipt_guards,
     missing_reminder_destructive_confirmation_guards,
     missing_async_os_probe_offload_guards,
+    missing_model_recommendation_probe_offload_guards,
+    missing_ollama_status_probe_offload_guards,
     manifest_entry_errors,
 )
 
@@ -233,6 +235,96 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
             missing_async_os_probe_offload_guards(native, task_engine),
         )
 
+
+class ModelRecommendationProbeOffloadTests(unittest.TestCase):
+    def test_memory_probe_runs_inside_blocking_pool(self):
+        source = """
+        async fn get_model_recommendation() {
+            let memory = tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_memory();
+                let total = system.total_memory();
+                let available = system.available_memory();
+                (total, available)
+            }).await?;
+            recommend(memory)
+        }
+        """
+        self.assertEqual(missing_model_recommendation_probe_offload_guards(source), [])
+
+    def test_direct_memory_probe_on_async_executor_is_rejected(self):
+        source = """
+        async fn get_model_recommendation() {
+            let mut system = System::new();
+            system.refresh_memory();
+            let total = system.total_memory();
+            let available = system.available_memory();
+            recommend((total, available))
+        }
+        """
+        self.assertTrue(missing_model_recommendation_probe_offload_guards(source))
+
+
+class OllamaStatusProbeOffloadTests(unittest.TestCase):
+    def test_host_inventory_probes_run_inside_blocking_pool(self):
+        source = """
+        async fn get_ollama_status() {
+            let inventory = tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_cpu();
+                system.refresh_memory();
+                let cores = std::thread::available_parallelism();
+                let total = system.total_memory();
+                let available = system.available_memory();
+                let name = System::name();
+                let version = System::os_version();
+                (cores, total, available, name, version)
+            }).await?;
+            build_status(inventory)
+        }
+        """
+        self.assertEqual(missing_ollama_status_probe_offload_guards(source), [])
+
+    def test_valid_worker_followed_by_direct_host_probes_is_rejected(self):
+        source = """
+        async fn get_ollama_status() {
+            let inventory = tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_cpu();
+                system.refresh_memory();
+                let cores = std::thread::available_parallelism();
+                let total = system.total_memory();
+                let available = system.available_memory();
+                let name = System::name();
+                let version = System::os_version();
+                (cores, total, available, name, version)
+            }).await?;
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+            build_status(inventory)
+        }
+        """
+        self.assertIn(
+            "get_ollama_status must not perform synchronous host inventory probes outside spawn_blocking",
+            missing_ollama_status_probe_offload_guards(source),
+        )
+
+    def test_direct_host_inventory_probe_on_async_executor_is_rejected(self):
+        source = """
+        async fn get_ollama_status() {
+            let mut system = System::new();
+            system.refresh_cpu();
+            system.refresh_memory();
+            let cores = std::thread::available_parallelism();
+            let total = system.total_memory();
+            let available = system.available_memory();
+            let name = System::name();
+            let version = System::os_version();
+            build_status((cores, total, available, name, version))
+        }
+        """
+        self.assertTrue(missing_ollama_status_probe_offload_guards(source))
 
 class NativeCommandSideEffectOrderingTests(unittest.TestCase):
     def test_cloud_policy_and_native_approval_precede_receipt_budget_and_network(self):
