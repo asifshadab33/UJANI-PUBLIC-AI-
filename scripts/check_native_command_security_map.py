@@ -354,6 +354,75 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
     return missing
 
 
+def token_index(tokens: list[str], suffix: str) -> int:
+    """Find a Rust identifier by its final path component."""
+    return next(
+        (index for index, token in enumerate(tokens)
+         if token == suffix or token.endswith("." + suffix) or token.endswith("::" + suffix)),
+        -1,
+    )
+
+def missing_model_recommendation_probe_offload_guards(source: str) -> list[str]:
+    """Keep synchronous host memory discovery off the async model-recommendation command."""
+    try:
+        body = rust_function_body(source, "get_model_recommendation")
+    except ValueError:
+        return ["get_model_recommendation"]
+
+    tokens = command_tokens(body)
+    positions = [
+        token_index(tokens, "spawn_blocking"),
+        token_index(tokens, "System::new"),
+        token_index(tokens, "refresh_memory"),
+        token_index(tokens, "total_memory"),
+        token_index(tokens, "available_memory"),
+        token_index(tokens, "await"),
+    ]
+    if any(position < 0 for position in positions):
+        return ["get_model_recommendation must offload bounded memory probes"]
+    if positions != sorted(positions):
+        return ["get_model_recommendation must run all sysinfo memory probes inside spawn_blocking"]
+    return []
+
+
+def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
+    """Require all synchronous host inventory probes to execute inside one blocking worker."""
+    try:
+        body = rust_function_body(source, "get_ollama_status")
+    except ValueError:
+        return ["get_ollama_status"]
+
+    masked = strip_rust_noncode(body)
+    blocking_call = re.search(
+        r"spawn_blocking\s*\(\s*(?:move\s*)?\|\|\s*\{", masked
+    )
+    if not blocking_call:
+        return ["get_ollama_status must offload all host inventory probes inside spawn_blocking"]
+
+    opening = masked.find("{", blocking_call.start())
+    closing = find_matching_delimiter(masked, opening, "{", "}")
+    worker_tokens = command_tokens(body[opening + 1:closing])
+    outside_tokens = command_tokens(body[:opening] + body[closing + 1:])
+    required = (
+        "System::new",
+        "refresh_cpu",
+        "refresh_memory",
+        "available_parallelism",
+        "total_memory",
+        "available_memory",
+        "System::name",
+        "System::os_version",
+    )
+    positions = [token_index(worker_tokens, token) for token in required]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        return ["get_ollama_status must offload all host inventory probes inside spawn_blocking"]
+
+    if any(token_index(outside_tokens, token) >= 0 for token in required):
+        return ["get_ollama_status must not perform synchronous host inventory probes outside spawn_blocking"]
+    if token_index(command_tokens(body[closing + 1:]), "await") < 0:
+        return ["get_ollama_status must await the blocking worker"]
+    return []
+
 def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
     """Require classification, transfer policy and native approval before cloud side effects."""
     try:
@@ -742,6 +811,12 @@ def main() -> int:
     missing_os_probe_guards = missing_async_os_probe_offload_guards(source, task_engine_source)
     if missing_os_probe_guards:
         errors.extend("async OS probe: " + item for item in missing_os_probe_guards)
+    missing_model_probe_guards = missing_model_recommendation_probe_offload_guards(source)
+    if missing_model_probe_guards:
+        errors.extend("model recommendation OS probe: " + item for item in missing_model_probe_guards)
+    missing_ollama_probe_guards = missing_ollama_status_probe_offload_guards(source)
+    if missing_ollama_probe_guards:
+        errors.extend("Ollama status OS probe: " + item for item in missing_ollama_probe_guards)
     # The shared local policy evaluator must remain on both ordinary local
     # operation planning and every node in a local task graph.
     require_tokens(
