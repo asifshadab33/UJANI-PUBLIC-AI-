@@ -271,7 +271,7 @@ def missing_defender_status_guards(source: str, adapter_source: str) -> list[str
     except ValueError:
         return ["get_defender_status"]
     ordered = (
-        "native_consent::confirm_native",
+        "confirm_native",
         "Duration::from_secs(120)",
         "security_providers::read_defender_status().await",
     )
@@ -496,6 +496,40 @@ def missing_history_key_recovery_guards(source: str) -> list[str]:
 
 
 
+def missing_history_enable_confirmation_guards(source: str) -> list[str]:
+    """Require native approval only inside the history opt-in branch and before writes."""
+    try:
+        body = rust_function_body(source, "set_task_history_enabled")
+    except ValueError:
+        return ["set_task_history_enabled"]
+
+    executable = strip_rust_noncode(body)
+    enable_match = re.search(r"\bif\s+enabled_value\s*\{", executable)
+    if not enable_match:
+        return ["set_task_history_enabled"]
+
+    opening = executable.find("{", enable_match.start())
+    closing = find_matching_delimiter(executable, opening, "{", "}")
+    enable_branch = executable[opening + 1:closing]
+    # Accept the crate-qualified production call and the unqualified test
+    # fixture alias, while requiring an actual function invocation.
+    approval = re.search(r"(?:[A-Za-z_]\w*::)*confirm_native\s*\(", enable_branch)
+    ordered = (
+        "if !approved",
+        "return",
+    )
+    positions = [enable_branch.find(token) for token in ordered]
+    if approval is None or any(position < 0 for position in positions):
+        return ["set_task_history_enabled"]
+    if [approval.start(), *positions] != sorted([approval.start(), *positions]):
+        return ["set_task_history_enabled"]
+
+    receipt_at = executable.find("with_local_state_receipt")
+    if receipt_at < 0 or receipt_at <= closing:
+        return ["set_task_history_enabled"]
+    return []
+
+
 def missing_local_state_mutation_receipt_guards(cache_source: str, history_source: str, security_source: str) -> list[str]:
     """Require provenance reservation before cache/history/budget state mutations."""
     missing: list[str] = []
@@ -513,10 +547,6 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
         positions = [body.find(token) for token in ordered]
         if any(position < 0 for position in positions) or positions != sorted(positions):
             missing.append(name)
-        if name == "set_task_history_enabled":
-            enable_guard = body.find("if enabled_value")
-            if enable_guard < 0 or enable_guard > positions[0]:
-                missing.append(name)
         if name == "set_local_search_cache_settings":
             for table in ("search_cache", "recent_searches", "approved_scopes"):
                 if f"DELETE FROM {table}" not in body:
@@ -542,6 +572,8 @@ def missing_local_state_mutation_receipt_guards(cache_source: str, history_sourc
         positions = [body.find(token) for token in ordered]
         if any(position < 0 for position in positions) or positions != sorted(positions):
             missing.append(name)
+
+    missing.extend(missing_history_enable_confirmation_guards(history_source))
 
     try:
         budget = rust_function_body(security_source, "set_cloud_budget_limit")

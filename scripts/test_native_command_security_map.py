@@ -10,6 +10,7 @@ from check_native_command_security_map import (
     missing_history_listing_receipt_guards,
     missing_history_delete_input_guards,
     missing_history_key_recovery_guards,
+    missing_history_enable_confirmation_guards,
     missing_chat_ipc_preflight_guards,
     registered_commands,
     manifest_mapping_errors,
@@ -455,6 +456,59 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
             missing_local_state_mutation_receipt_guards(cache, without_consent, security),
             ["set_task_history_enabled"],
         )
+
+class HistoryEnableConditionalConsentTests(unittest.TestCase):
+    GUARDED_SOURCE = """
+        fn set_task_history_enabled() {
+            if enabled_value {
+                native_consent::confirm_native().await;
+                if !approved {
+                    return Err("declined".into());
+                }
+            }
+            with_local_state_receipt(|| {
+                migrate_plaintext_rows();
+                UPDATE history_settings;
+            });
+        }
+    """
+
+    def test_native_confirmation_is_inside_enable_branch_before_receipt(self):
+        self.assertEqual(
+            missing_history_enable_confirmation_guards(self.GUARDED_SOURCE),
+            [],
+        )
+
+    def test_unconditional_confirmation_does_not_satisfy_enable_branch(self):
+        source = self.GUARDED_SOURCE.replace(
+            "            if enabled_value {\n                native_consent::confirm_native().await;\n                if !approved {\n                    return Err(\"declined\".into());\n                }\n            }",
+            "            native_consent::confirm_native().await;\n            if enabled_value {\n                if !approved { return Err(\"declined\".into()); }\n            }",
+        )
+        self.assertEqual(
+            missing_history_enable_confirmation_guards(source),
+            ["set_task_history_enabled"],
+        )
+
+    def test_receipt_inside_enable_branch_before_consent_is_rejected(self):
+        source = self.GUARDED_SOURCE.replace(
+            "                native_consent::confirm_native().await;",
+            "                with_local_state_receipt();\n                native_consent::confirm_native().await;",
+        )
+        self.assertEqual(
+            missing_history_enable_confirmation_guards(source),
+            ["set_task_history_enabled"],
+        )
+
+    def test_missing_decline_path_is_rejected(self):
+        source = self.GUARDED_SOURCE.replace(
+            '                if !approved {\n                    return Err("declined".into());\n                }',
+            "",
+        )
+        self.assertEqual(
+            missing_history_enable_confirmation_guards(source),
+            ["set_task_history_enabled"],
+        )
+
 
 class NativeCommandSecurityMapParserTests(unittest.TestCase):
     def test_square_bracket_in_line_comment_does_not_truncate_handler(self):
