@@ -549,16 +549,23 @@ fn build_ollama_status(input: OllamaStatusInput) -> OllamaStatus {
 /// Advisory fit estimate over installed models whose local runtime explicitly reports chat support.
 #[tauri::command]
 async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
-    let mut system = System::new();
-    system.refresh_memory();
-    let total_memory_bytes = system.total_memory();
-    let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
-    let reported_available_memory_mb =
-        memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
-    let (_, available_memory_mb) = model_inventory::normalize_memory_readings(
-        memory_total_mb,
-        reported_available_memory_mb,
-    );
+    // Host memory probes are synchronous and can stall the async command executor.
+    // Keep the model recommendation path consistent with the other resource snapshots.
+    let available_memory_mb = tauri::async_runtime::spawn_blocking(|| {
+        let mut system = System::new();
+        system.refresh_memory();
+        let total_memory_bytes = system.total_memory();
+        let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
+        let reported_available_memory_mb =
+            memory_total_mb.map(|_| system.available_memory() / (1024 * 1024));
+        let (_, available_memory_mb) = model_inventory::normalize_memory_readings(
+            memory_total_mb,
+            reported_available_memory_mb,
+        );
+        available_memory_mb
+    })
+    .await
+    .map_err(|error| format!("Model recommendation memory probe failed: {error}"))?;
     let models = if ollama::is_available().await {
         let installed = ollama::list_models().await?;
         let metadata = ollama::inspect_models(&installed).await;
