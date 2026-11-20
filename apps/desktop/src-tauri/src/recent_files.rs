@@ -170,9 +170,9 @@ mod tests {
         fs::write(root.join("new.txt"), b"new").unwrap();
         fs::write(root.join("nested").join("newer.txt"), b"newer").unwrap();
         let now = SystemTime::now();
-        fs::File::open(root.join("old.txt")).unwrap().set_modified(now - Duration::from_secs(120)).unwrap();
-        fs::File::open(root.join("new.txt")).unwrap().set_modified(now - Duration::from_secs(5)).unwrap();
-        fs::File::open(root.join("nested").join("newer.txt")).unwrap().set_modified(now - Duration::from_secs(1)).unwrap();
+        fs::File::options().write(true).open(root.join("old.txt")).unwrap().set_modified(now - Duration::from_secs(120)).unwrap();
+        fs::File::options().write(true).open(root.join("new.txt")).unwrap().set_modified(now - Duration::from_secs(5)).unwrap();
+        fs::File::options().write(true).open(root.join("nested").join("newer.txt")).unwrap().set_modified(now - Duration::from_secs(1)).unwrap();
         let cutoff = now.duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 - 60_000;
         let result = scan_recent_files(&root, cutoff, &CancellationToken::new()).unwrap();
         assert_eq!(result.recent_files.len(), 2);
