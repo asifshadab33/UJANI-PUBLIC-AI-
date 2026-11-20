@@ -26,7 +26,7 @@ Batches run concurrently when independent; dependencies and release gates remain
 
 - Public #397 JPEG header dimensions: merged as `a102ed0552decd46801173c46b8538b0972319b9`; exact-head CI, CodeQL, Android check and installer audit passed before merge; main-branch workflow evidence has not yet been returned by the connector.
 - Public #395 recent-file preview: merged as `e22a31fc7912d7d4db72327e7e95a964b6e8381f`; exact-head CI, CodeQL, Android compatibility and installer audit passed before merge.
-- Public #396 empty-folder preview: draft; hosted CI passed, but a verified selected-root TOCTOU redirection risk remains (symlink swap between root check and canonicalization); cancellation checks also need tightening. Not mergeable from a safety perspective.
+- Public #396 empty-folder preview: draft; hosted CI passed, but selected-root identity is not pinned during traversal (TOCTOU replacement risk), and cancellation checks need tightening. Tracked in Public issue #408; not mergeable from a safety perspective.
 - Public #407 async host-probe offloading: recreated on current main; CI, CodeQL, Android, security-watch and installer checks are pending.
 - Public #401 model-runtime v2 capability boundary: merged as `669a98b79eff3340e77f19efdb450ace88e5a83f`; exact-head CI, CodeQL and Android checks passed before merge. Post-merge main workflow evidence remains pending.
 - Public dependency PRs #384, #391, #388–#390, #385–#387: assess independently; do not batch blindly. Failed platform/native checks are blockers.
