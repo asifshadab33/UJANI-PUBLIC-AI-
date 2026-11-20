@@ -504,7 +504,7 @@ def missing_history_enable_confirmation_guards(source: str) -> list[str]:
         return ["set_task_history_enabled"]
 
     executable = strip_rust_noncode(body)
-    enable_match = re.search(r"\\bif\\s+enabled_value\\s*\\{", executable)
+    enable_match = re.search(r"\bif\s+enabled_value\s*\{", executable)
     if not enable_match:
         return ["set_task_history_enabled"]
 
