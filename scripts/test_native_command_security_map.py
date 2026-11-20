@@ -264,7 +264,10 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         self.assertEqual(missing_local_state_mutation_receipt_guards(cache, history, security), [])
         unsafe_cache = cache.replace("confirm_native().await;", "skip_confirmation();", 1)
         self.assertIn("clear_local_search_cache", missing_local_state_mutation_receipt_guards(unsafe_cache, history, security))
-        unsafe_history = history.replace("confirm_native().await;", "skip_confirmation();", 1)
+        unsafe_history = history.replace(
+            "fn delete_task_history() { confirm_native().await;",
+            "fn delete_task_history() { skip_confirmation();",
+        )
         self.assertIn("delete_task_history", missing_local_state_mutation_receipt_guards(cache, unsafe_history, security))
         unsafe_clear = history.replace("fn clear_task_history() { confirm_native().await;", "fn clear_task_history() { skip_confirmation();")
         self.assertIn("clear_task_history", missing_local_state_mutation_receipt_guards(cache, unsafe_clear, security))
@@ -299,12 +302,13 @@ class LocalStateMutationReceiptOrderingTests(unittest.TestCase):
         consent_after_receipt = history.replace(
             "confirm_native().await;",
             "with_local_state_receipt(); confirm_native().await;",
+            1,
         )
         self.assertEqual(
             missing_local_state_mutation_receipt_guards(cache, consent_after_receipt, security),
             ["set_task_history_enabled"],
         )
-        without_consent = history.replace("confirm_native().await;", "skip_confirmation();")
+        without_consent = history.replace("confirm_native().await;", "skip_confirmation();", 1)
         self.assertEqual(
             missing_local_state_mutation_receipt_guards(cache, without_consent, security),
             ["set_task_history_enabled"],
