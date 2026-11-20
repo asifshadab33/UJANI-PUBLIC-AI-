@@ -574,9 +574,6 @@ where
     Ok(output)
 }
 
-pub async fn generate(model: &str, prompt: &str) -> Result<String, String> {
-    chat(model, None, &[Turn { role: "user", content: prompt }]).await
-}
 
 const MAX_PULL_EVENT_BYTES: usize = 16 * 1024;
 const MAX_PULL_STREAM_BYTES: usize = 8 * 1024 * 1024;
