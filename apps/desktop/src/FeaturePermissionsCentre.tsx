@@ -187,14 +187,14 @@ export default function FeaturePermissionsCentre() {
       <div className="feature-centre-disclaimer" role="note">
         <b>Read-only capability register.</b> This screen does not grant permissions or enable hidden functionality. A feature is configurable only when its native enforcement, consent and recovery controls are implemented and verified.
       </div>
-      <div className="feature-centre-grid">
+      <div className="feature-centre-grid" role="region" aria-label="Feature capability entries">
         {featureEntries.map((feature) => (
-          <article className="feature-centre-card" key={feature.id}>
+          <article className="feature-centre-card" key={feature.id} aria-labelledby={"feature-title-" + feature.id} aria-describedby={"feature-summary-" + feature.id}>
             <div className="feature-centre-card-heading">
-              <h3>{feature.title}</h3>
-              <span className={"feature-centre-status feature-centre-status--" + feature.tone}>{feature.status}</span>
+              <h3 id={"feature-title-" + feature.id}>{feature.title}</h3>
+              <span role="status" className={"feature-centre-status feature-centre-status--" + feature.tone}>{feature.status}</span>
             </div>
-            <p className="feature-centre-summary">{feature.summary}</p>
+            <p id={"feature-summary-" + feature.id} className="feature-centre-summary">{feature.summary}</p>
             <div className="feature-centre-risk">Risk: <b>{feature.risk}</b></div>
             <details>
               <summary>Permissions, data and limitations</summary>
