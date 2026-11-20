@@ -323,6 +323,7 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
         resource_probe = rust_function_body(task_engine_source, "read_local_resource_snapshot")
         model_admission = rust_function_body(task_engine_source, "ensure_local_model_ready")
         capability_probe = rust_function_body(native_source, "get_capability_snapshot")
+        ollama_status = rust_function_body(native_source, "get_ollama_status")
         device_info_command = rust_function_body(native_source, "get_device_info")
         device_info_collector = rust_function_body(native_source, "collect_device_info")
     except ValueError as error:
@@ -344,6 +345,10 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
     capability_tokens = command_tokens(capability_probe)
     if not all(has_suffix(capability_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_memory", "available_memory")):
         missing.append("get_capability_snapshot must offload sysinfo probes")
+
+    status_tokens = command_tokens(ollama_status)
+    if not all(has_suffix(status_tokens, token) for token in ("spawn_blocking", "System::new", "refresh_cpu", "refresh_memory")):
+        missing.append("get_ollama_status must offload sysinfo CPU and memory probes")
 
     device_command_tokens = command_tokens(device_info_command)
     collector_tokens = command_tokens(device_info_collector)
