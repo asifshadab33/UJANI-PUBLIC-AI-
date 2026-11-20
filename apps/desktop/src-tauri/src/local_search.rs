@@ -118,7 +118,7 @@ pub struct LocalSearchResult {
     cache_hit: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Candidate {
     path: PathBuf,
     name: String,
@@ -224,8 +224,28 @@ pub async fn find_local_files(
             }).await.ok().and_then(Result::ok).flatten();
             if let Some(cached_json) = cached {
                 if let Ok(cached) = serde_json::from_str::<CachedSearchPayload>(&cached_json) {
-                    if validate_cached_matches(&root, &candidates, &cached.result, &cached.file_identities) {
-                        let mut cached_result = cached.result;
+                    // Reopening cached result paths and validating up to 250 matches
+                    // against a 5,000-entry inventory performs filesystem I/O and can
+                    // be CPU-heavy. Keep it off the async executor so the UI/task
+                    // runtime remains responsive while cache provenance is checked.
+                    let validation_root = root.clone();
+                    let validation_candidates = candidates.clone();
+                    let validation_result = cached.result;
+                    let validation_identities = cached.file_identities;
+                    let validation = tauri::async_runtime::spawn_blocking(move || {
+                        let valid = validate_cached_matches(
+                            &validation_root,
+                            &validation_candidates,
+                            &validation_result,
+                            &validation_identities,
+                        );
+                        (valid, validation_result)
+                    })
+                    .await;
+                    if token.is_cancelled() {
+                        return Err("File search cancelled by user.".into());
+                    }
+                    if let Ok((true, mut cached_result)) = validation {
                         cached_result.scanned_files = scanned_files;
                         cached_result.cache_hit = true;
                         cached_result.note = format!("{} Cached metadata was revalidated against the selected folder just now; no document contents were retained.", cached_result.note);
