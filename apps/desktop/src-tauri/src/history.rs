@@ -1,7 +1,7 @@
 //! Optional local SQLite task history. Recording is disabled by default.
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager}; 
 use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -384,13 +384,8 @@ fn settings_from_optional_db(db: Option<&Connection>) -> Result<HistorySettings,
     })
 }
 
-/// Read existing history settings without creating a database or running migrations.
-/// A settings read must not silently initialise persistent storage.
-fn settings_read_only(app: &AppHandle) -> Result<HistorySettings, String> {
-    let mut path = app.path().app_data_dir()
-        .map_err(|error| format!("Could not locate app data directory: {error}"))?;
-    path.push("task-history.sqlite3");
-
+/// Read an existing history database without creating storage or running migrations.
+fn settings_read_only_at_path(path: &Path) -> Result<HistorySettings, String> {
     let exists = path.try_exists()
         .map_err(|error| format!("Could not inspect local history settings: {error}"))?;
     if !exists {
@@ -398,12 +393,19 @@ fn settings_read_only(app: &AppHandle) -> Result<HistorySettings, String> {
     }
 
     let db = Connection::open_with_flags(
-        &path,
+        path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     ).map_err(|error| format!("Could not read local history settings: {error}"))?;
     db.busy_timeout(std::time::Duration::from_secs(3))
         .map_err(|error| error.to_string())?;
     settings_from_optional_db(Some(&db))
+}
+
+fn settings_read_only(app: &AppHandle) -> Result<HistorySettings, String> {
+    let mut path = app.path().app_data_dir()
+        .map_err(|error| format!("Could not locate app data directory: {error}"))?;
+    path.push("task-history.sqlite3");
+    settings_read_only_at_path(&path)
 }
 
 #[cfg(test)]
@@ -611,6 +613,26 @@ pub async fn clear_task_history(app: AppHandle) -> Result<(), String> {
   assert!(!settings_from_optional_db(Some(&db)).unwrap().enabled);
   db.execute("UPDATE history_settings SET value='true' WHERE key='enabled'", []).unwrap();
   assert!(settings_from_optional_db(Some(&db)).unwrap().enabled);
+ }
+
+ #[test]
+ fn read_only_settings_path_does_not_create_missing_storage() {
+  let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+  let directory = std::env::temp_dir().join(format!("ujani-history-settings-{nonce}"));
+  fs::create_dir_all(&directory).unwrap();
+  let path = directory.join("task-history.sqlite3");
+
+  let missing = settings_read_only_at_path(&path).unwrap();
+  assert!(!missing.enabled);
+  assert!(!path.exists(), "a settings read must not create the history database");
+
+  let db = Connection::open(&path).unwrap();
+  initialize(&db).unwrap();
+  db.execute("UPDATE history_settings SET value='true' WHERE key='enabled'", []).unwrap();
+  drop(db);
+
+  assert!(settings_read_only_at_path(&path).unwrap().enabled);
+  fs::remove_dir_all(directory).unwrap();
  }
  fn test_key()->[u8;32]{Aes256Gcm::generate_key(&mut OsRng).into()}
  fn metadata<'a>(mode:&'a str,model:&'a str,kind:&'a str,created_at:i64)->HistoryMetadata<'a>{
