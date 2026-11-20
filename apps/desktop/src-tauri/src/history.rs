@@ -368,6 +368,10 @@ fn is_enabled(db:&Connection)->Result<bool,String>{
  let value:Option<String>=db.query_row("SELECT value FROM history_settings WHERE key='enabled'",[],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
  Ok(value.as_deref()==Some("true"))
 }
+fn settings(db: &Connection) -> Result<HistorySettings, String> {
+    settings_from_optional_db(Some(db))
+}
+
 fn settings_from_optional_db(db: Option<&Connection>) -> Result<HistorySettings, String> {
     let enabled = match db {
         Some(db) => is_enabled(db)?,
@@ -387,7 +391,9 @@ fn settings_read_only(app: &AppHandle) -> Result<HistorySettings, String> {
         .map_err(|error| format!("Could not locate app data directory: {error}"))?;
     path.push("task-history.sqlite3");
 
-    if !path.exists() {
+    let exists = path.try_exists()
+        .map_err(|error| format!("Could not inspect local history settings: {error}"))?;
+    if !exists {
         return settings_from_optional_db(None);
     }
 
