@@ -418,6 +418,22 @@
       "resource_limits": "Bounded traversal is implemented; exact depth, entry, byte, result and time limits are maintained in source and require per-command review.",
       "failure_mode": "Reject invalid scope, traversal errors or exhausted budgets without modifying user files; verify cache writes separately where applicable."
     },
+    "recent_files::find_recent_files": {
+      "classification": "selected_folder_metadata_read",
+      "capability": "file.recent.preview",
+      "scope": "Only folder explicitly selected through native picker",
+      "effects": "Read-only filesystem metadata; file contents are not read",
+      "boundary": "registered local-policy/capability preflight before the native picker, then bounded selected-folder traversal, cancellation and timeout",
+      "receipt": "none-read-only",
+      "tests": "selected-folder preflight, cutoff/order, bounded traversal and symlink exclusion",
+      "status": "native local-policy preflight wired; full command review pending",
+      "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
+      "data_classification": "Treat caller-supplied task identifiers and arguments as untrusted; no file contents are collected.",
+      "consent": "Native OS folder picker limits scope to the user's explicit selection; selection is not a blanket grant for other folders or future operations.",
+      "cancellation": "Task cancellation token, bounded traversal and 60-second time budget are implemented; confirm platform-specific cancellation and timeout behaviour.",
+      "resource_limits": "Maximum depth 6, 5,000 entries, 100 results and 60 seconds. Symlinks/reparse points are skipped.",
+      "failure_mode": "Reject invalid scope or exhausted budgets without modifying user files; inaccessible entries are skipped and result completeness is marked."
+    },
     "everyday_tools::get_local_clock": {
       "classification": "read_only_os_info",
       "capability": "os.clock.read",
