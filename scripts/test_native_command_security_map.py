@@ -53,8 +53,8 @@ class ReminderDestructiveConfirmationTests(unittest.TestCase):
 
     def test_each_destructive_action_must_be_covered(self):
         source = self.GUARDED_SOURCE.replace(
-            "ReminderRequest::Delete { .. }",
-            "ReminderRequest::Create { .. }",
+            "ReminderRequest::Delete { id }",
+            "ReminderRequest::Create { id }",
         )
         self.assertEqual(missing_reminder_destructive_confirmation_guards(source), ["delete"])
 
