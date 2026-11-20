@@ -224,6 +224,11 @@ mod additional_format_tests {
         let jpeg = [0xff, 0xd8, 0xff, 0xc0, 0x00, 0x04, 8, 0, 0];
         let info = inspect_image("photo.jpg", &jpeg, jpeg.len() as u64).unwrap();
         assert_eq!(info.dimensions, None);
+
+        let mut short_components = vec![0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 8, 0, 1, 0, 1, 3];
+        short_components.extend_from_slice(&[1, 0x11, 0, 2, 0x11, 0]);
+        let info = inspect_image("photo.jpg", &short_components, short_components.len() as u64).unwrap();
+        assert_eq!(info.dimensions, None);
     }
 
     #[test]
