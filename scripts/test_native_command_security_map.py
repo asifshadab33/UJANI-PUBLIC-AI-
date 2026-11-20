@@ -339,6 +339,19 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
             missing_async_os_probe_offload_guards(native, task_engine),
         )
 
+        valid_closure_with_direct_probes = native.replace(
+            "tauri::async_runtime::spawn_blocking(|| ()).await;",
+            """tauri::async_runtime::spawn_blocking(|| {
+                let mut system = System::new();
+                system.refresh_cpu();
+                system.refresh_memory();
+            }).await;""",
+        )
+        self.assertIn(
+            "get_ollama_status must not perform synchronous sysinfo probes outside spawn_blocking",
+            missing_async_os_probe_offload_guards(valid_closure_with_direct_probes, task_engine),
+        )
+
     def test_direct_ollama_status_sysinfo_probes_are_rejected(self):
         native = """
         async fn get_capability_snapshot() {
