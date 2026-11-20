@@ -237,7 +237,7 @@ export default function EverydayTools() {
         <b>{file.file_name} · {formatSize(file.size_bytes)}</b>
         <small>{file.path}</small>
         <small>Modified: {new Date(file.modified_unix_ms).toLocaleString()}</small>
-      </div>) : <p>No files were modified within the selected time window.</p>}
+      </div>) : <p>No matching files were found within the scan limits.</p>}
       <small>{recentResult.note}</small>
     </div>}
     <p className="muted"><ShieldCheck size={14}/> These tools only create previews. They never delete, move, rename, overwrite or upload your files.</p>
