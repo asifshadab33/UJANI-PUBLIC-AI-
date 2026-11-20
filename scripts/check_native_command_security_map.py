@@ -527,13 +527,13 @@ def missing_reminder_destructive_confirmation_guards(source: str) -> list[str]:
     except ValueError:
         return ["delete", "clear_all"]
 
-    if "ReminderRequest::Delete" not in helper:
+    if "ReminderRequest::Delete" not in helper or "valid_id(id)?" not in helper:
         missing.append("delete")
     if "ReminderRequest::ClearAll" not in helper:
         missing.append("clear_all")
 
     ordered = (
-        "destructive_confirmation",
+        "destructive_confirmation(&request)?",
         "native_consent::confirm_native",
         "CancellationToken::new()",
         "Duration::from_secs(120)",
