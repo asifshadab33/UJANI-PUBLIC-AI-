@@ -354,6 +354,15 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
     return missing
 
 
+
+def token_index(tokens: list[str], suffix: str) -> int:
+    """Find a Rust identifier by its final path component."""
+    return next(
+        (index for index, token in enumerate(tokens)
+         if token == suffix or token.endswith("." + suffix) or token.endswith("::" + suffix)),
+        -1,
+    )
+
 def missing_model_recommendation_probe_offload_guards(source: str) -> list[str]:
     """Keep synchronous host memory discovery off the async model-recommendation command."""
     try:
@@ -362,17 +371,17 @@ def missing_model_recommendation_probe_offload_guards(source: str) -> list[str]:
         return ["get_model_recommendation"]
 
     tokens = command_tokens(body)
-    try:
-        blocking_at = tokens.index("spawn_blocking")
-        system_at = tokens.index("System::new")
-        refresh_at = tokens.index("refresh_memory")
-        total_at = tokens.index("total_memory")
-        available_at = tokens.index("available_memory")
-        await_at = tokens.index("await")
-    except ValueError:
+    positions = [
+        token_index(tokens, "spawn_blocking"),
+        token_index(tokens, "System::new"),
+        token_index(tokens, "refresh_memory"),
+        token_index(tokens, "total_memory"),
+        token_index(tokens, "available_memory"),
+        token_index(tokens, "await"),
+    ]
+    if any(position < 0 for position in positions):
         return ["get_model_recommendation must offload bounded memory probes"]
-
-    if not blocking_at < system_at < refresh_at < total_at < available_at < await_at:
+    if positions != sorted(positions):
         return ["get_model_recommendation must run all sysinfo memory probes inside spawn_blocking"]
     return []
 
@@ -388,7 +397,7 @@ def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
     required = ("spawn_blocking", "System::new", "refresh_cpu", "refresh_memory",
                 "available_parallelism", "total_memory", "available_memory",
                 "System::name", "System::os_version", "await")
-    positions = [tokens.index(token) if token in tokens else -1 for token in required]
+    positions = [token_index(tokens, token) for token in required]
     if any(position < 0 for position in positions) or positions != sorted(positions):
         return ["get_ollama_status must offload all host inventory probes before awaiting the worker"]
     return []
