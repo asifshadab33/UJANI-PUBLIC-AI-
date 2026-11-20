@@ -4,7 +4,7 @@
 
 ## Current main
 
-- Public AI: `main` at `2081a36cd6f21e28777fa9733cd9808f6bf45519` (nested duplicate-key contract regression PR #402 merged).
+- Public AI: `main` at `a102ed0552decd46801173c46b8538b0972319b9` (nested duplicate-key contract regression PR #402 merged).
 - Enterprise AI: `main` at `6f37092b4e184eab1405b6cc19fce44ba4247fb4` (Model Intelligence v2 boundary clarification PR #310 merged).
 - Shared task contract, consent vector, model-runtime inventory v2 schema and validator are mirrored; parity must be checked by exact blob SHA or equivalent schema/fixture comparison each integration pass.
 
@@ -24,9 +24,9 @@ Batches run concurrently when independent; dependencies and release gates remain
 
 ## PRs currently requiring follow-up
 
+- Public #397 JPEG header dimensions: merged as `a102ed0552decd46801173c46b8538b0972319b9`; exact-head CI, CodeQL, Android check and installer audit passed before merge; main-branch workflow evidence has not yet been returned by the connector.
 - Public #395 recent-file preview: draft; review metadata-only traversal/open behavior and current-base compatibility.
 - Public #396 empty-folder preview: draft; root/descendant race and Windows path boundary are blockers.
-- Public #397 bounded JPEG-header dimensions: draft; update base and verify exact-head/current-base CI.
 - Public #400 async host-probe offloading: draft; exact-head checks are reported successful, but review base freshness and revalidate before merge.
 - Public #401 model-runtime v2 capability boundary: draft; verify current-head checks, merge-base and mirrored Enterprise change.
 - Public dependency PRs #384, #391, #388–#390, #385–#387: assess independently; do not batch blindly. Failed platform/native checks are blockers.
