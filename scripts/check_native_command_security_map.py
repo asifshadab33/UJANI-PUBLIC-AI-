@@ -394,10 +394,17 @@ def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
         return ["get_ollama_status"]
 
     tokens = command_tokens(body)
-    required = ("spawn_blocking", "System::new", "refresh_cpu", "refresh_memory",
+    blocking_at = token_index(tokens, "spawn_blocking")
+    if blocking_at < 0:
+        return ["get_ollama_status must offload all host inventory probes before awaiting the worker"]
+
+    # The command legitimately awaits Ollama network calls before collecting host
+    # inventory. Validate only the blocking closure and its own join await.
+    worker_tokens = tokens[blocking_at + 1:]
+    required = ("System::new", "refresh_cpu", "refresh_memory",
                 "available_parallelism", "total_memory", "available_memory",
                 "System::name", "System::os_version", "await")
-    positions = [token_index(tokens, token) for token in required]
+    positions = [token_index(worker_tokens, token) for token in required]
     if any(position < 0 for position in positions) or positions != sorted(positions):
         return ["get_ollama_status must offload all host inventory probes before awaiting the worker"]
     return []
