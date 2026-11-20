@@ -277,6 +277,44 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn cancellation_is_observed_before_traversal() {
+        let root = temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+        assert!(scan_empty_folders(&root, &token).unwrap_err().contains("cancelled"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_root_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let real_root = temp_dir();
+        let link_root = temp_dir();
+        fs::create_dir_all(&real_root).unwrap();
+        symlink(&real_root, &link_root).unwrap();
+        assert!(scan_empty_folders(&link_root, &CancellationToken::new()).is_err());
+        fs::remove_file(link_root).unwrap();
+        fs::remove_dir_all(real_root).unwrap();
+    }
+
+    #[test]
+    fn marks_results_incomplete_when_depth_limit_is_reached() {
+        let root = temp_dir();
+        let mut current = root.clone();
+        fs::create_dir_all(&current).unwrap();
+        for _ in 0..=MAX_DEPTH {
+            current = current.join("nested");
+            fs::create_dir_all(&current).unwrap();
+        }
+        let result = scan_empty_folders(&root, &CancellationToken::new()).unwrap();
+        assert!(result.truncated);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn skips_directory_symlinks() {
