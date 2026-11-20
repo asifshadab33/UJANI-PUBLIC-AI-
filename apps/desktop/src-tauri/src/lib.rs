@@ -2554,8 +2554,8 @@ struct RunResult {
     execution: String,
 }
 
-#[tauri::command]
-fn get_device_info() -> DeviceInfo {
+/// Collects OS device information on a blocking worker thread.
+fn collect_device_info() -> DeviceInfo {
     let mut system = System::new();
     system.refresh_cpu();
     system.refresh_memory();
@@ -2566,6 +2566,25 @@ fn get_device_info() -> DeviceInfo {
         total_memory_mb: system.total_memory() / (1024 * 1024),
         available_memory_mb: system.available_memory() / (1024 * 1024),
         system_locale: sys_locale::get_locale().unwrap_or_else(|| "Unknown".into()),
+    }
+}
+
+/// Keep synchronous OS inventory probes off the async command executor.
+#[tauri::command]
+async fn get_device_info() -> Result<DeviceInfo, String> {
+    tauri::async_runtime::spawn_blocking(collect_device_info)
+        .await
+        .map_err(|error| format!("Device information probe worker failed: {error}"))
+}
+
+#[cfg(test)]
+mod device_info_probe_tests {
+    #[test]
+    fn device_inventory_probe_returns_basic_os_identity() {
+        let info = super::collect_device_info();
+        assert!(!info.os.trim().is_empty());
+        assert!(!info.architecture.trim().is_empty());
+        assert!(!info.system_locale.trim().is_empty());
     }
 }
 
