@@ -143,7 +143,7 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
         }
         fn collect_device_info() {
             let mut system = System::new();
-            system.refresh_cpu();
+            system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
             system.refresh_memory();
         }
         """
@@ -176,7 +176,7 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
         }
         fn collect_device_info() {
             let mut system = System::new();
-            system.refresh_cpu();
+            system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
             system.refresh_memory();
         }
         """
@@ -214,7 +214,7 @@ class AsyncOsProbeOffloadRegressionTests(unittest.TestCase):
         }
         fn collect_device_info() {
             let mut system = System::new();
-            system.refresh_cpu();
+            system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
             system.refresh_memory();
         }
         """
@@ -271,7 +271,7 @@ class OllamaStatusProbeOffloadTests(unittest.TestCase):
         async fn get_ollama_status() {
             let inventory = tauri::async_runtime::spawn_blocking(|| {
                 let mut system = System::new();
-                system.refresh_cpu();
+                system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
                 system.refresh_memory();
                 let cores = std::thread::available_parallelism();
                 let total = system.total_memory();
@@ -290,7 +290,7 @@ class OllamaStatusProbeOffloadTests(unittest.TestCase):
         async fn get_ollama_status() {
             let inventory = tauri::async_runtime::spawn_blocking(|| {
                 let mut system = System::new();
-                system.refresh_cpu();
+                system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
                 system.refresh_memory();
                 let cores = std::thread::available_parallelism();
                 let total = system.total_memory();
@@ -300,7 +300,7 @@ class OllamaStatusProbeOffloadTests(unittest.TestCase):
                 (cores, total, available, name, version)
             }).await?;
             let mut system = System::new();
-            system.refresh_cpu();
+            system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
             system.refresh_memory();
             build_status(inventory)
         }
@@ -314,7 +314,7 @@ class OllamaStatusProbeOffloadTests(unittest.TestCase):
         source = """
         async fn get_ollama_status() {
             let mut system = System::new();
-            system.refresh_cpu();
+            system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
             system.refresh_memory();
             let cores = std::thread::available_parallelism();
             let total = system.total_memory();
