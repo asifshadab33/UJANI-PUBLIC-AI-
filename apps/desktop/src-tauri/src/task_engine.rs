@@ -96,15 +96,16 @@ fn plan_with_runtime_capabilities(
 /// advisory and does not reserve memory or guarantee runtime fit.
 async fn read_local_resource_snapshot() -> Result<(bool, u64), String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let mut system = sysinfo::System::new();
+        let mut system = sysinfo::System::new()
+            .map_err(|error| format!("Local resource probe unavailable: {error}"))?;
         system.refresh_memory();
-        (
+        Ok::<_, String>((
             std::thread::available_parallelism().is_ok(),
             system.available_memory() / (1024 * 1024),
-        )
+        ))
     })
     .await
-    .map_err(|error| format!("Local resource probe worker failed: {error}"))
+    .map_err(|error| format!("Local resource probe worker failed: {error}"))?
 }
 
 /// Re-check runtime availability and confirm that the requested model is installed
