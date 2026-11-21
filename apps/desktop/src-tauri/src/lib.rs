@@ -129,15 +129,17 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
     // sysinfo probes are synchronous and may block on the host OS. Keep them off
     // the async executor so cancellation and the task deadline can return.
     let (logical_cpu_threads, available_memory_bytes) = tauri::async_runtime::spawn_blocking(|| {
-        let mut system = System::new();
+        let mut system = System::new()
+            .map_err(|error| format!("System capability probe unavailable: {error}"))?;
         system.refresh_memory();
         let logical_cpu_threads = std::thread::available_parallelism()
             .map(|count| count.get())
             .unwrap_or(0);
-        (logical_cpu_threads, system.available_memory())
+        Ok::<_, String>((logical_cpu_threads, system.available_memory()))
     })
     .await
-    .map_err(|error| format!("System capability probe worker failed: {error}"))?;
+    .map_err(|error| format!("System capability probe worker failed: {error}"))?
+    .map_err(|error| format!("System capability probe failed: {error}"))?;
     let cpu_available = logical_cpu_threads > 0;
     let available_memory_mb = available_memory_bytes / (1024 * 1024);
     let ollama_available = ollama::is_available().await;
@@ -553,7 +555,7 @@ async fn get_model_recommendation() -> Result<ModelRecommendation, String> {
     // Host memory probes are synchronous and can stall the async command executor.
     // Keep the model recommendation path consistent with the other resource snapshots.
     let available_memory_mb = tauri::async_runtime::spawn_blocking(|| {
-        let mut system = System::new();
+        let mut system = System::new().ok()?;
         system.refresh_memory();
         let total_memory_bytes = system.total_memory();
         let memory_total_mb = (total_memory_bytes > 0).then_some(total_memory_bytes / (1024 * 1024));
@@ -960,22 +962,31 @@ async fn get_ollama_status() -> Result<OllamaStatus, String> {
     // Keep synchronous host inventory calls off the async command executor.
     let (cpu_logical_cores, total_memory_bytes, available_memory_bytes, os_name, os_version) =
         tauri::async_runtime::spawn_blocking(|| {
-            let mut system = System::new();
-            system.refresh_cpu();
-            system.refresh_memory();
+            // Memory remains unknown if sysinfo cannot initialise; do not invent a
+            // zero-sized or default hardware reading. std can still report CPU count.
+            let mut system = System::new().ok();
+            if let Some(system) = system.as_mut() {
+                system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+                system.refresh_memory();
+            }
             let cpu_logical_cores = std::thread::available_parallelism()
                 .ok()
                 .map(|count| count.get().min(65_535) as u32)
                 .or_else(|| {
-                    let count = system.cpus().len();
-                    (count > 0).then_some(count.min(65_535) as u32)
+                    system.as_ref().and_then(|system| {
+                        let count = system.cpus().len();
+                        (count > 0).then_some(count.min(65_535) as u32)
+                    })
                 });
+            let (total_memory_bytes, available_memory_bytes) = system
+                .map(|system| (system.total_memory(), system.available_memory()))
+                .unwrap_or((0, 0));
             (
                 cpu_logical_cores,
-                system.total_memory(),
-                system.available_memory(),
-                System::name(),
-                System::os_version(),
+                total_memory_bytes,
+                available_memory_bytes,
+                System::name().ok(),
+                System::os_version().ok(),
             )
         })
         .await
@@ -1608,9 +1619,10 @@ pub(crate) async fn get_selected_folder_capability_snapshot_for_task(
 ) -> Result<CapabilitySnapshot, String> {
     ensure_task_not_cancelled(token)?;
     let probe = tauri::async_runtime::spawn_blocking(|| {
-        let mut system = System::new();
+        let mut system = System::new()
+            .map_err(|error| format!("Local file capability memory probe unavailable: {error}"))?;
         system.refresh_memory();
-        Ok(selected_folder_capability_snapshot(
+        Ok::<_, String>(selected_folder_capability_snapshot(
             system.available_memory() / (1024 * 1024),
             std::thread::available_parallelism().is_ok(),
             !cfg!(target_os = "android"),
@@ -2574,18 +2586,22 @@ struct RunResult {
 }
 
 /// Collects OS device information on a blocking worker thread.
-fn collect_device_info() -> DeviceInfo {
-    let mut system = System::new();
-    system.refresh_cpu();
+fn collect_device_info() -> Result<DeviceInfo, String> {
+    let mut system = System::new()
+        .map_err(|error| format!("OS hardware inventory is unavailable: {error}"))?;
+    system.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
     system.refresh_memory();
-    DeviceInfo {
-        os: System::name().unwrap_or_else(|| std::env::consts::OS.to_string()),
+    let logical_cpus = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or_else(|_| system.cpus().len());
+    Ok(DeviceInfo {
+        os: System::name().unwrap_or_else(|_| std::env::consts::OS.to_string()),
         architecture: std::env::consts::ARCH.to_string(),
-        logical_cpus: system.cpus().len(),
+        logical_cpus,
         total_memory_mb: system.total_memory() / (1024 * 1024),
         available_memory_mb: system.available_memory() / (1024 * 1024),
         system_locale: sys_locale::get_locale().unwrap_or_else(|| "Unknown".into()),
-    }
+    })
 }
 
 /// Keep synchronous OS inventory probes off the async command executor.
@@ -2593,14 +2609,14 @@ fn collect_device_info() -> DeviceInfo {
 async fn get_device_info() -> Result<DeviceInfo, String> {
     tauri::async_runtime::spawn_blocking(collect_device_info)
         .await
-        .map_err(|error| format!("Device information probe worker failed: {error}"))
+        .map_err(|error| format!("Device information probe worker failed: {error}"))?
 }
 
 #[cfg(test)]
 mod device_info_probe_tests {
     #[test]
     fn device_inventory_probe_returns_basic_os_identity() {
-        let info = super::collect_device_info();
+        let info = super::collect_device_info().expect("host OS inventory should be available in CI");
         assert!(!info.os.trim().is_empty());
         assert!(!info.architecture.trim().is_empty());
         assert!(!info.system_locale.trim().is_empty());
@@ -2626,9 +2642,7 @@ fn list_local_models() -> Vec<ModelInfo> {
     if !debug_demo_commands_enabled() {
         return Vec::new();
     }
-    let mut system = System::new();
-    system.refresh_cpu();
-    discover_models(!system.cpus().is_empty())
+    discover_models(std::thread::available_parallelism().is_ok())
 }
 
 /// Runs an explicitly selected local adapter. No network or cloud fallback exists.
@@ -2638,9 +2652,12 @@ fn run_local_model_task(model_id: String, prompt: String) -> Result<InferenceRes
         return Err("The deterministic mock model adapter is disabled in release builds.".into());
     }
     let _reservation = resource_runtime::MemoryReservation::acquire("registered-local-model")?;
-    let mut system = System::new();
-    system.refresh_cpu();
-    run_local_model(&model_id, &prompt, !system.cpus().is_empty()).map_err(|error| error.to_string())
+    run_local_model(
+        &model_id,
+        &prompt,
+        std::thread::available_parallelism().is_ok(),
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// Narrow demonstration operation: no shell, scripts, filesystem or network access.

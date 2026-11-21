@@ -349,7 +349,7 @@ def missing_async_os_probe_offload_guards(native_source: str, task_engine_source
     collector_tokens = command_tokens(device_info_collector)
     if not has_suffix(device_command_tokens, "spawn_blocking") or not has_suffix(device_command_tokens, "collect_device_info"):
         missing.append("get_device_info must call its collector through spawn_blocking")
-    if not all(has_suffix(collector_tokens, token) for token in ("System::new", "refresh_cpu", "refresh_memory")):
+    if not all(has_suffix(collector_tokens, token) for token in ("System::new", "refresh_cpu_list", "refresh_memory")):
         missing.append("collect_device_info must keep OS reads in the blocking collector")
     return missing
 
@@ -405,7 +405,7 @@ def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
     outside_tokens = command_tokens(body[:opening] + body[closing + 1:])
     required = (
         "System::new",
-        "refresh_cpu",
+        "refresh_cpu_list",
         "refresh_memory",
         "available_parallelism",
         "total_memory",
