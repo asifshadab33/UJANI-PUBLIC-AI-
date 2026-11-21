@@ -1165,14 +1165,18 @@ mod tests {
     fn cache_settings_and_recent_search_commands_are_read_only() {
         let source = include_str!("search_cache.rs");
         let settings_start = source.find("async fn get_local_search_cache_settings").unwrap();
-        let settings_end = source[settings_start..].find("/// Returns recent encrypted search phrases")
+        let settings_end = source[settings_start..].find("fn load_recent_searches_read_only")
             .map(|offset| settings_start + offset).unwrap();
         let settings_command = &source[settings_start..settings_end];
         assert!(settings_command.contains("cache_settings_read_only"));
         assert!(!settings_command.contains("open(&app)"));
         assert!(!settings_command.contains("trim_cache"));
 
+        let helper_start = source.find("fn load_recent_searches_read_only").unwrap();
+        assert!(!source[helper_start - 32..helper_start].contains("#[tauri::command]"));
+
         let recent_start = source.find("pub async fn list_recent_local_searches").unwrap();
+        assert!(source[recent_start - 32..recent_start].contains("#[tauri::command]"));
         let recent_end = source[recent_start..].find("/// Persists user cache preferences")
             .map(|offset| recent_start + offset).unwrap();
         let recent_command = &source[recent_start..recent_end];
