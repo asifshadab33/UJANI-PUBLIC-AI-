@@ -91,6 +91,10 @@ Recent Public main changes include host-probe offloading (#407), duplicate-key i
 7. Security Centre and provider orchestration [#50](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/50), tenant cache [#26](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/26), planner [#53](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/53), Infrastructure Shield [#65](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/65), and notifications [#95](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/95): defer until trust and service foundations support them.
 8. Collective Defence [#35](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/35), dual opt-in [#39](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/39), and event ingestion [#38](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/38): separate opt-in by organisation and participant; no autonomous containment or destructive response.
 
+## Cross-repository integration backlog (P1)
+
+- **[Public #412](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/412) — shared task-contract v1 compatibility and receipt integration. Status: schema/blob parity verified; integration blocked.** Day 7 target (27 Nov). No new schema is planned unless tests demonstrate a gap. The task is to cross-test strict parsers and JCS/Ed25519 vectors, exact payload digest/length, legacy Public peer v2 versus Enterprise WorkloadManifest v1 (explicit mapping or rejection), identity/audience binding, user/admin/worker-owner consent and revocation, resource/classification/expiry/replay bounds, monotonic status/cancel acknowledgement, and signed output-bound receipts/ledger ingestion. The consent vector is a placeholder and does not test Ed25519. Dependencies: Public #120 and Enterprise #20/#90. Keep transport/remote dispatch disabled.
+
 ## Coordinated 14-day sequence and next owner
 
 | Day | Date | Workstream target | Gate / owner |
@@ -110,7 +114,7 @@ Recent Public main changes include host-probe offloading (#407), duplicate-key i
 | 13 | 3 Dec | Cross-platform regression, recovery and security tests | Integration + both product owners |
 | 14 | 4 Dec | Strict release-readiness and user-testing decision | All streams; no release unless evidence supports it |
 
-Dates are targets, not permission to bypass prerequisites. The next Public code target remains #408 handle-relative selected-root traversal and deterministic cross-platform tests; #120 remains the next scheduled authorization-matrix batch. The sysinfo 0.40.4, Tauri API 2.12.5 and rusqlite 0.43.0 dependency updates are merged. The Public Rust audit still reports seven allowed advisories; do not treat the passing workflow as a clean dependency posture.
+Dates are targets, not permission to bypass prerequisites. The next Public code target remains #408 handle-relative selected-root traversal and deterministic cross-platform tests; #120 remains the next scheduled authorization-matrix batch. Cross-repository contract work is tracked in #412 for Day 7. The sysinfo 0.40.4, Tauri API 2.12.5 and rusqlite 0.43.0 dependency updates are merged. The Public Rust audit still reports seven allowed advisories; do not treat the passing workflow as a clean dependency posture.
 
 ## Release posture
 
