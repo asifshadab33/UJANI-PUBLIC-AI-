@@ -28,17 +28,20 @@ pub fn validate_task_id(task_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_available_memory(task_id: &str, available_mb: u64) -> Result<(), String> {
+fn validate_available_memory(task_id: &str, available_mb: Option<u64>) -> Result<(), String> {
+    let available_mb = available_mb.ok_or_else(|| {
+        "Local inference cannot start because available memory could not be measured.".to_string()
+    })?;
     if available_mb < MIN_FREE_MEMORY_MB {
         return Err(format!("Local inference requires at least {MIN_FREE_MEMORY_MB} MiB of currently available RAM; only {available_mb} MiB is available for task {task_id}."));
     }
     Ok(())
 }
 
-fn current_available_memory_mb() -> u64 {
-    let mut system = System::new();
+fn current_available_memory_mb() -> Option<u64> {
+    let mut system = System::new().ok()?;
     system.refresh_memory();
-    system.available_memory() / (1024 * 1024)
+    Some(system.available_memory() / (1024 * 1024))
 }
 
 struct QueueTicket<'a> { counter: &'a AtomicUsize }
@@ -106,10 +109,11 @@ mod tests {
 
     #[test]
     fn admission_rejects_low_memory_and_invalid_identifiers() {
-        assert!(validate_available_memory("task-1", MIN_FREE_MEMORY_MB - 1).is_err());
+        assert!(validate_available_memory("task-1", Some(MIN_FREE_MEMORY_MB - 1)).is_err());
+        assert!(validate_available_memory("task-1", None).is_err());
         assert!(validate_task_id("../escape").is_err());
         assert!(validate_task_id("").is_err());
-        assert!(validate_available_memory("task-1", MIN_FREE_MEMORY_MB).is_ok());
+        assert!(validate_available_memory("task-1", Some(MIN_FREE_MEMORY_MB)).is_ok());
     }
 
     #[tokio::test]
