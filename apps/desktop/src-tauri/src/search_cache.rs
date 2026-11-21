@@ -208,10 +208,23 @@ fn default_cache_settings() -> CacheSettings {
     }
 }
 
+/// Avoid treating legacy version-1 cache enablement as user consent.
+fn read_only_settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
+    let schema_version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
+    if schema_version < 2 {
+        return Ok(default_cache_settings());
+    }
+    if schema_version > 2 {
+        return Err("Local search cache schema is newer than this UJANI build.".into());
+    }
+    settings_from_db(db)
+}
+
 /// Read settings without creating, migrating, repairing, trimming or writing cache storage.
 fn cache_settings_from_path(path: &Path) -> Result<Option<CacheSettings>, String> {
     let Some(db) = open_existing_cache_read_only(path)? else { return Ok(None); };
-    settings_from_db(&db).map(Some)
+    read_only_settings_from_db(&db).map(Some)
 }
 
 fn cache_settings_read_only(app: &AppHandle) -> Result<CacheSettings, String> {
@@ -625,7 +638,7 @@ pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSear
             .map_err(|error| format!("Could not locate UJANI app data directory: {error}"))?;
         path.push("local-search-cache.sqlite3");
         let Some(db) = open_existing_cache_read_only(&path)? else { return Ok(Vec::new()); };
-        let settings = settings_from_db(&db)?;
+        let settings = read_only_settings_from_db(&db)?;
         if !settings.enabled { return Ok(Vec::new()); }
         let now = now_seconds()?;
         let has_rows: bool = db.query_row(
@@ -1114,6 +1127,21 @@ mod tests {
         drop(read_only);
         assert!(cache_settings_from_path(&path).unwrap().unwrap().enabled);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn read_only_cache_settings_do_not_infer_consent_from_legacy_schema() {
+        let db = memory_db();
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        db.execute_batch("PRAGMA user_version=1;").unwrap();
+
+        let settings = read_only_settings_from_db(&db).unwrap();
+        assert!(!settings.enabled, "legacy implicit opt-in must not be exposed as consent");
+        assert_eq!(settings.retention_days, 30);
+        let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        let enabled: String = db.query_row("SELECT value FROM cache_settings WHERE key='enabled'", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, 1, "read-only inspection must not run the migration");
+        assert_eq!(enabled, "true", "legacy data/settings are left untouched until a mutating operation");
     }
 
     #[test]
