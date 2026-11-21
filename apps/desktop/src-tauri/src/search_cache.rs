@@ -577,7 +577,7 @@ pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSett
         .await.map_err(|error| format!("Cache settings worker failed: {error}"))?
 }
 
-/// Returns recent encrypted search phrases only for scopes that still exist, off the UI thread.
+/// Filters recent encrypted phrases by retention and negative-result TTL without pruning storage.
 fn load_recent_searches_read_only(
     db: &Connection,
     settings: &CacheSettings,
@@ -1109,6 +1109,10 @@ mod tests {
         assert_eq!(observed.retention_days, 7);
         assert_eq!(observed.max_entries, MAX_CACHE_ENTRIES);
         assert_eq!(observed.max_bytes, MAX_CACHE_BYTES);
+        let read_only = open_existing_cache_read_only(&path).unwrap().unwrap();
+        assert!(read_only.execute("UPDATE cache_settings SET value='false' WHERE key='enabled'", []).is_err());
+        drop(read_only);
+        assert!(cache_settings_from_path(&path).unwrap().unwrap().enabled);
         fs::remove_dir_all(directory).unwrap();
     }
 
