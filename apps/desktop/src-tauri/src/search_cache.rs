@@ -578,7 +578,6 @@ pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSett
 }
 
 /// Returns recent encrypted search phrases only for scopes that still exist, off the UI thread.
-#[tauri::command]
 fn load_recent_searches_read_only(
     db: &Connection,
     settings: &CacheSettings,
@@ -619,6 +618,7 @@ fn load_recent_searches_read_only(
 }
 
 /// Read-only UI history query. Retention is enforced by filtering, not by deleting on read.
+#[tauri::command]
 pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut path: PathBuf = app.path().app_data_dir()
