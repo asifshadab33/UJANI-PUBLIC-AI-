@@ -84,7 +84,7 @@ Merged Public PRs #378 and #379 added native confirmation for specific destructi
 
 4. **Evidence-qualified model-to-task matching — [Enterprise #257](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/257). Status: Implemented (partial); Unit-tested; CI-verified on main; not Integration-verified.** Model-inventory v2 schema/intake validation and advisory matching tests exist; no live authenticated operator inventory feed or production service projection is proven.
 5. **Read-only operator workflows — [Enterprise #23](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/23) and [#21](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/21). Status: Implemented (partial); production integration blocked.** Continue trusted-device, CPU/RAM/GPU/NPU, freshness, thermal/power/participation, reservations, leases and audit visibility. Label all synthetic/demo data; do not present a prototype as a live fleet.
-6. **Privacy-minimised endpoint telemetry — [Enterprise #38](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/issues/38). Status: Partial / blocked on authenticated service integration.** No prompts, file contents, personal paths, credentials, history or employee activity. Show source, confidence, freshness and unknown values.
+6. **Privacy-minimised resource inventory. Status: Implemented (partial); production service integration blocked.** Keep device capability/resource telemetry limited to enrolled devices and necessary fields. No prompts, file contents, personal paths, credentials, history or employee activity. Show source, confidence, freshness and unknown values.
 
 ### P2 — optional customer capabilities
 
