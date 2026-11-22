@@ -456,6 +456,16 @@ def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
         if position < 0:
             return ["execute_cloud_ai_task"]
         cursor = position + len(token)
+
+    consent_position = body.find("native_consent::confirm_native")
+    budget_position = body.find("reserve_cloud_tokens")
+    dispatch_position = body.find("cloud_gateway::execute")
+    if (
+        consent_position < 0
+        or budget_position < consent_position
+        or dispatch_position < consent_position
+    ):
+        return ["execute_cloud_ai_task"]
     return []
 
 
