@@ -344,7 +344,7 @@
       "scope": "Exact user prompt, configured endpoint, model and ephemeral API key",
       "effects": "External provider request only after explicit native approval; local metadata receipt for each valid attempt; local cloud-token budget reservation",
       "boundary": "Reserve local receipt capacity before policy and request preflight; fail closed if unavailable. Parse the caller-declared classification, evaluate the registered external-transfer policy, validate HTTPS endpoint/model/key/prompt/mode/host, then require native one-task approval. Only dispatch after approval. Non-dispatch attempts receive a local preflight receipt with unknown network activity and an empty-payload digest; an ExternalProvider receipt is written only after the provider dispatch boundary.",
-      "receipt": "metadata-outcome-receipt; local preflight receipt for policy denial, validation failure, declined/cancelled/timed-out approval, budget failure and approved non-dispatch outcomes; ExternalProvider receipt only after dispatch",
+      "receipt": "metadata-outcome-receipt",
       "tests": "policy classification and endpoint validation; native confirmation fail-closed tests; preflight receipt schema/privacy tests; source-order guard; bounded HTTP adapter tests; complete command denial matrix remains pending",
       "status": "local preflight denial/cancellation/failure receipts and dispatch-boundary-specific provider receipts implemented; full command-level denial matrix pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
