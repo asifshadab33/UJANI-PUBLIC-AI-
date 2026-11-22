@@ -10,6 +10,14 @@ const MAX_ENTRIES: usize = 5_000;
 const MAX_RESULTS: usize = 100;
 const SCAN_TIMEOUT_SECS: u64 = 60;
 
+/// Validate caller-controlled scope before task registration or native OS interaction.
+fn validate_recent_file_window(days: u32) -> Result<Duration, String> {
+    if !(1..=365).contains(&days) {
+        return Err("Choose a recent-file window between 1 and 365 days.".into());
+    }
+    Ok(Duration::from_secs(u64::from(days) * 24 * 60 * 60))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RecentFileEntry {
     pub file_name: String,
@@ -36,9 +44,7 @@ pub async fn find_recent_files(
     task_id: String,
     days: u32,
 ) -> Result<RecentFileScanResult, String> {
-    if !(1..=365).contains(&days) {
-        return Err("Choose a recent-file window between 1 and 365 days.".into());
-    }
+    let recent_window = validate_recent_file_window(days)?;
     let registration = super::register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     super::ensure_task_not_cancelled(&token)?;
@@ -67,7 +73,7 @@ pub async fn find_recent_files(
     }
     super::emit_task_progress(&app, &task_id, "scanning", "Reading file metadata in the selected folder.", 10);
     let cutoff = SystemTime::now()
-        .checked_sub(Duration::from_secs(u64::from(days) * 24 * 60 * 60))
+        .checked_sub(recent_window)
         .ok_or_else(|| "Requested recent-file window is outside the supported time range.".to_string())?
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "System clock is before the Unix epoch.".to_string())?
@@ -166,6 +172,73 @@ mod tests {
     }
 
     #[test]
+    fn recent_file_window_accepts_only_one_through_365_days() {
+        assert_eq!(
+            validate_recent_file_window(1).unwrap(),
+            Duration::from_secs(24 * 60 * 60),
+        );
+        assert_eq!(
+            validate_recent_file_window(365).unwrap(),
+            Duration::from_secs(365 * 24 * 60 * 60),
+        );
+        assert!(validate_recent_file_window(0).is_err());
+        assert!(validate_recent_file_window(366).is_err());
+    }
+
+    #[test]
+    fn ipc_validates_window_and_authorizes_before_opening_the_native_picker() {
+        let source = include_str!("recent_files.rs");
+        let command_start = source.find("pub async fn find_recent_files(")
+            .expect("desktop recent-file IPC command exists");
+        let command_end = source[command_start..]
+            .find("\nfn scan_recent_files(")
+            .expect("desktop recent-file command has a bounded end");
+        let command = &source[command_start..command_start + command_end];
+        let signature_end = command.find(") -> Result")
+            .expect("recent-file command signature exists");
+        let signature = &command[..signature_end];
+        assert!(!signature.contains("Path"), "IPC must not accept a caller-supplied filesystem path");
+
+        let validation = command.find("validate_recent_file_window(days)?")
+            .expect("untrusted day window must be validated");
+        let registration = command.find("register_active_task")
+            .expect("task registration must be present");
+        let initial_cancel_check = command.find("ensure_task_not_cancelled(&token)?")
+            .expect("cancellation must be checked after task registration");
+        let capability = command.find("get_selected_folder_capability_snapshot_for_task")
+            .expect("fresh local capability snapshot must be present");
+        let preflight = command.find("run_selected_folder_preflight")
+            .expect("native local policy preflight must be present");
+        let picker = command.find("blocking_pick_folder")
+            .expect("native folder picker must be present");
+        assert!(
+            command[preflight..picker].contains("\"file.recent.preview\""),
+            "recent-file IPC must request its own registered capability",
+        );
+        let picker_cancel_check = command.find("_ = token.cancelled()")
+            .expect("cancellation must be observed while the native picker is pending");
+        let selected_scope = command.find("require_selected_folder")
+            .expect("selected folder must be required before scanning");
+        let post_selection_cancel_check = command.find("if token.is_cancelled()")
+            .expect("cancellation must be rechecked before traversal");
+        let scan = command.find("scan_recent_files(&folder")
+            .expect("bounded scanner must run only after selection");
+
+        assert!(
+            validation < registration
+                && registration < initial_cancel_check
+                && initial_cancel_check < capability
+                && capability < preflight
+                && preflight < picker
+                && picker < picker_cancel_check
+                && picker_cancel_check < selected_scope
+                && selected_scope < post_selection_cancel_check
+                && post_selection_cancel_check < scan,
+            "recent-file IPC must validate input, register and observe cancellation, authorize its exact selected-folder operation, obtain native selection, and only then scan",
+        );
+    }
+
+    #[test]
     fn returns_recent_files_sorted_newest_first_and_excludes_old_files() {
         let root = temp_dir("recent-files");
         fs::create_dir_all(root.join("nested")).unwrap();
@@ -181,6 +254,26 @@ mod tests {
         assert_eq!(result.recent_files.len(), 2);
         assert_eq!(result.recent_files[0].file_name, "newer.txt");
         assert_eq!(result.recent_files[1].file_name, "new.txt");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn caps_recent_file_results_and_marks_the_scan_truncated() {
+        let root = temp_dir("recent-files-result-cap");
+        fs::create_dir_all(&root).unwrap();
+        let cutoff = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            - 24 * 60 * 60 * 1000;
+        for index in 0..(MAX_RESULTS + 10) {
+            fs::write(root.join(format!("file-{index:03}.txt")), b"metadata-only").unwrap();
+        }
+
+        let result = scan_recent_files(&root, cutoff, &CancellationToken::new()).unwrap();
+        assert_eq!(result.recent_files.len(), MAX_RESULTS);
+        assert!(result.truncated, "dropping results above the user-visible cap must be disclosed");
+        assert!(result.scanned_files <= MAX_ENTRIES);
         fs::remove_dir_all(root).unwrap();
     }
 
