@@ -10,6 +10,14 @@ const MAX_ENTRIES: usize = 5_000;
 const MAX_RESULTS: usize = 100;
 const SCAN_TIMEOUT_SECS: u64 = 60;
 
+/// Validate caller-controlled scope before task registration or native OS interaction.
+fn validate_recent_file_window(days: u32) -> Result<Duration, String> {
+    if !(1..=365).contains(&days) {
+        return Err("Choose a recent-file window between 1 and 365 days.".into());
+    }
+    Ok(Duration::from_secs(u64::from(days) * 24 * 60 * 60))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RecentFileEntry {
     pub file_name: String,
@@ -36,9 +44,7 @@ pub async fn find_recent_files(
     task_id: String,
     days: u32,
 ) -> Result<RecentFileScanResult, String> {
-    if !(1..=365).contains(&days) {
-        return Err("Choose a recent-file window between 1 and 365 days.".into());
-    }
+    let recent_window = validate_recent_file_window(days)?;
     let registration = super::register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
     super::ensure_task_not_cancelled(&token)?;
@@ -67,7 +73,7 @@ pub async fn find_recent_files(
     }
     super::emit_task_progress(&app, &task_id, "scanning", "Reading file metadata in the selected folder.", 10);
     let cutoff = SystemTime::now()
-        .checked_sub(Duration::from_secs(u64::from(days) * 24 * 60 * 60))
+        .checked_sub(recent_window)
         .ok_or_else(|| "Requested recent-file window is outside the supported time range.".to_string())?
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "System clock is before the Unix epoch.".to_string())?
@@ -163,6 +169,60 @@ mod tests {
     fn temp_dir(label: &str) -> PathBuf {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         std::env::temp_dir().join(format!("ujani-{label}-{unique}"))
+    }
+
+    #[test]
+    fn recent_file_window_accepts_only_one_through_365_days() {
+        assert_eq!(
+            validate_recent_file_window(1).unwrap(),
+            Duration::from_secs(24 * 60 * 60),
+        );
+        assert_eq!(
+            validate_recent_file_window(365).unwrap(),
+            Duration::from_secs(365 * 24 * 60 * 60),
+        );
+        assert!(validate_recent_file_window(0).is_err());
+        assert!(validate_recent_file_window(366).is_err());
+    }
+
+    #[test]
+    fn ipc_validates_window_and_authorizes_before_opening_the_native_picker() {
+        let source = include_str!("recent_files.rs");
+        let command_start = source.find("pub async fn find_recent_files(")
+            .expect("desktop recent-file IPC command exists");
+        let command_end = source[command_start..]
+            .find("\n}\n\nfn scan_recent_files")
+            .expect("desktop recent-file command has a bounded end");
+        let command = &source[command_start..command_start + command_end];
+        let signature_end = command.find(") -> Result")
+            .expect("recent-file command signature exists");
+        let signature = &command[..signature_end];
+        assert!(!signature.contains("Path"), "IPC must not accept a caller-supplied filesystem path");
+
+        let validation = command.find("validate_recent_file_window(days)?")
+            .expect("untrusted day window must be validated");
+        let registration = command.find("register_active_task")
+            .expect("task registration must be present");
+        let capability = command.find("get_selected_folder_capability_snapshot_for_task")
+            .expect("fresh local capability snapshot must be present");
+        let preflight = command.find("run_selected_folder_preflight")
+            .expect("native local policy preflight must be present");
+        let picker = command.find("blocking_pick_folder")
+            .expect("native folder picker must be present");
+        let selected_scope = command.find("require_selected_folder")
+            .expect("selected folder must be required before scanning");
+        let scan = command.find("scan_recent_files(&folder")
+            .expect("bounded scanner must run only after selection");
+
+        assert!(
+            validation < registration
+                && registration < capability
+                && capability < preflight
+                && preflight < picker
+                && picker < selected_scope
+                && selected_scope < scan,
+            "recent-file IPC must validate input, register cancellation, authorize the selected-folder operation, obtain native selection, and only then scan",
+        );
     }
 
     #[test]
