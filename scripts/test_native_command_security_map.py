@@ -327,16 +327,26 @@ class OllamaStatusProbeOffloadTests(unittest.TestCase):
         self.assertTrue(missing_ollama_status_probe_offload_guards(source))
 
 class NativeCommandSideEffectOrderingTests(unittest.TestCase):
-    def test_cloud_policy_and_native_approval_precede_receipt_budget_and_network(self):
+    def test_cloud_receipt_reservation_precedes_policy_but_dispatch_requires_native_approval(self):
         source = """
         async fn execute_cloud_ai_task() {
-            ujani_core::policy_gate::parse_data_class();
-            ujani_core::policy_gate::evaluate_registered_external_transfer();
-            cloud_gateway::validate_request();
-            native_consent::confirm_native().await;
             reserve_execution_receipt_slot();
+            ujani_core::policy_gate::parse_data_class();
+            record_cloud_preflight_outcome();
+            ujani_core::policy_gate::evaluate_registered_external_transfer();
+            record_cloud_preflight_outcome();
+            cloud_gateway::validate_request();
+            record_cloud_preflight_outcome();
+            cloud_gateway::endpoint_host();
+            record_cloud_preflight_outcome();
+            validate_model_identifier();
+            record_cloud_preflight_outcome();
+            native_consent::confirm_native().await;
+            record_cloud_preflight_outcome();
             reserve_cloud_tokens();
+            record_cloud_preflight_outcome();
             cloud_gateway::execute().await;
+            if dispatch_started { persist_external_receipt(); } else { record_cloud_preflight_outcome(); }
         }
         """
         self.assertEqual(missing_cloud_transfer_preflight_guards(source), [])
