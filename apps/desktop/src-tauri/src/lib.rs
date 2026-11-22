@@ -685,16 +685,35 @@ async fn execute_cloud_ai_task(
  if task_id.is_empty() || task_id.len() > 96 || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) {
   return Err("Invalid task identifier.".into());
  }
- let data_class = ujani_core::policy_gate::parse_data_class(&data_classification)
-  .map_err(str::to_owned)?;
- let transfer_decision = ujani_core::policy_gate::evaluate_registered_external_transfer("cloud.ai.generate", data_class, external_data_approved);
+ let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+  .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
+  .as_millis().min(u64::MAX as u128) as u64;
+ flush_pending_receipts(&app).await;
+ // Reserve provenance capacity before policy/consent checks. If local audit storage
+ // is unavailable, fail closed before asking the user or attempting any transfer.
+ let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+ let data_class = match ujani_core::policy_gate::parse_data_class(&data_classification) {
+  Ok(value) => value,
+  Err(error) => return Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed, error.to_string(),
+  )),
+ };
+ let transfer_decision = ujani_core::policy_gate::evaluate_registered_external_transfer(
+  "cloud.ai.generate", data_class, external_data_approved,
+ );
  match transfer_decision {
   ujani_core::policy_gate::GateDecision::Allow => {}
   ujani_core::policy_gate::GateDecision::RequireReview => {
-   return Err("Cloud transfer requires explicit approval for this exact task. No request was sent.".into());
+   return Err(record_cloud_preflight_outcome(
+    receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed,
+    "Cloud transfer requires explicit approval for this exact task. No request was sent.".into(),
+   ));
   }
   ujani_core::policy_gate::GateDecision::Deny => {
-   return Err("Confidential or restricted data cannot be sent through the generic cloud gateway. No request was sent.".into());
+   return Err(record_cloud_preflight_outcome(
+    receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed,
+    "Confidential or restricted data cannot be sent through the generic cloud gateway. No request was sent.".into(),
+   ));
   }
  }
  let data_class_label = match data_class {
@@ -703,20 +722,45 @@ async fn execute_cloud_ai_task(
   ujani_core::policy_gate::DataClass::Confidential => "Confidential",
   ujani_core::policy_gate::DataClass::Restricted => "Restricted",
  };
- cloud_gateway::validate_request(&endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter)?;
- let provider_host = cloud_gateway::endpoint_host(&endpoint)
-  .ok_or_else(|| "Cloud endpoint host could not be validated. No request was sent.".to_string())?;
+ if let Err(error) = cloud_gateway::validate_request(
+  &endpoint, &model, &api_key, &prompt, &mode, external_data_approved, &token_parameter,
+ ) {
+  return Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed, error,
+  ));
+ }
+ let provider_host = match cloud_gateway::endpoint_host(&endpoint) {
+  Some(host) => host,
+  None => return Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed,
+   "Cloud endpoint host could not be validated. No request was sent.".into(),
+  )),
+ };
+ if !validate_model_identifier(&model) {
+  return Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed,
+   "Model identifier cannot be recorded safely in execution provenance.".into(),
+  ));
+ }
  let preview: String = prompt.chars().take(600).collect();
  let truncated = prompt.chars().count() > 600;
  let consent_message = format!(
-  "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nDeclared data classification: {data_class_label}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThis classification is your declaration, not an automatic content scan. The provider will receive the prompt and may process it under its own privacy and retention terms. Continue?",
+  "UJANI is about to send this single request to an external provider.\n\nProvider host: {provider_host}\nModel: {model}\nDeclared data classification: {data_class_label}\nPrompt size: {} characters\n\nPrompt preview:\n{}{}\n\nThis classification is your declaration, not an automatic content scan. The provider will receive the prompt and may process it under its own privacy and retention terms. Continue?\n\nUJANI stores a local metadata-only outcome receipt for this attempt whether you approve or decline. If no provider request is dispatched, it records only the operation, outcome and timestamps (no prompt, API key, provider hostname or prompt digest). If the approved request is dispatched, it records the provider hostname, model and one-way prompt/output digests; it never stores prompt text or the API key.",
   prompt.chars().count(), preview, if truncated { "\n[preview truncated]" } else { "" }
  );
  // Register before showing consent so the user can cancel while the native dialog is pending.
  let token = CancellationToken::new();
  {
-  let mut active = control.active.lock().map_err(|_| "Task registry unavailable.".to_string())?;
-  if active.contains_key(&task_id) { return Err("Task identifier is already active.".into()); }
+  let mut active = match control.active.lock() {
+   Ok(active) => active,
+   Err(_) => return Err(record_cloud_preflight_outcome(
+    receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed,
+    "Task registry unavailable; no provider request was sent.".into(),
+   )),
+  };
+  if active.contains_key(&task_id) {
+   return Err("Task identifier is already active.".into());
+  }
   active.insert(task_id.clone(), token.clone());
  }
  let _active_task_guard = ActiveTaskGuard { control: &control, task_id: task_id.clone() };
@@ -727,29 +771,38 @@ async fn execute_cloud_ai_task(
   token.clone(),
   Duration::from_secs(120),
  ).await {
-  return Err("Cloud transfer consent was declined, cancelled, or timed out. No request was sent.".into());
+  return Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Cancelled,
+   "Cloud transfer consent was declined, cancelled or timed out. No provider request was dispatched.".into(),
+  ));
  }
- if !validate_model_identifier(&model) {
-  return Err("Model identifier cannot be recorded safely in execution provenance.".into());
- }
- let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-  .map_err(|e| e.to_string())?.as_millis() as u64;
- let network_activity = NetworkActivity::inferred(vec![provider_host]);
  let input_digest = sha256_hex(prompt.as_bytes());
  let receipt_model_id = model.clone();
  // This reference binds the native approval to this task, endpoint, model and exact prompt digest.
- let approval_id = sha256_hex(format!("{task_id}:{endpoint}:{model}:{data_class_label}:{input_digest}:{started_at_unix_ms}").as_bytes());
- flush_pending_receipts(&app).await;
- let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
- if let Some(warning) = receipt_slot.archive_warning() {
-  emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
- }
- let mut budget = security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192)?;
- emit_task_progress(&app, &task_id, "cloud_starting", &format!("Cloud budget reserved; {} tokens remain in today's local allowance.", budget.status().remaining_tokens), 5);
- emit_task_progress(&app, &task_id, "cloud_sending", "Sending the approved prompt to your configured provider.", 25);
- let request = cloud_gateway::execute(endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter, || budget.mark_dispatched());
-  let result = tokio::select! {
-  // If cancellation is already pending, do not poll the gateway or mark the budget dispatched.
+ let approval_id = sha256_hex(format!(
+  "{task_id}:{endpoint}:{model}:{data_class_label}:{input_digest}:{started_at_unix_ms}"
+ ).as_bytes());
+ let mut budget = match security_store::reserve_cloud_tokens(&app, prompt.len(), 8_192) {
+  Ok(budget) => budget,
+  Err(error) => return Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, ExecutionOutcome::Failed,
+   format!("Cloud budget reservation failed before provider dispatch: {error}"),
+  )),
+ };
+ emit_task_progress(&app, &task_id, "cloud_starting", &format!(
+  "Cloud budget reserved; {} tokens remain in today's local allowance.", budget.status().remaining_tokens
+ ), 5);
+ emit_task_progress(&app, &task_id, "cloud_sending", "Preparing the approved provider request.", 25);
+ let mut dispatch_started = false;
+ let request = cloud_gateway::execute(
+  endpoint, model, api_key, prompt, mode, external_data_approved, token_parameter,
+  || {
+   dispatch_started = true;
+   budget.mark_dispatched();
+  },
+ );
+ let mut result = tokio::select! {
+  // If cancellation is already pending, do not poll the gateway or cross its dispatch boundary.
   biased;
   _ = token.cancelled() => Err("Cloud task cancelled by user.".to_string()),
   outcome = tokio::time::timeout(Duration::from_secs(95), request) => {
@@ -759,32 +812,49 @@ async fn execute_cloud_ai_task(
    }
   }
  };
+ let receipt_warning = if dispatch_started {
+  let outcome = execution_outcome(&result, "95-second");
+  let output_sha256 = match &result {
+   Ok(output) => sha256_hex(output.text.as_bytes()),
+   Err(_) => outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", outcome),
+  };
+  let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
+   .unwrap_or_default().as_millis().max(started_at_unix_ms as u128)
+   .min(u64::MAX as u128) as u64;
+  let receipt = ExecutionReceipt {
+   schema_version: 3,
+   task_id: task_id.clone(),
+   operation_id: "cloud.ai.generate".into(),
+   location: ReceiptExecutionLocation::ExternalProvider,
+   adapter_id: "byok.cloud-gateway".into(),
+   adapter_version: env!("CARGO_PKG_VERSION").into(),
+   model_id: Some(receipt_model_id),
+   model_version: Some("provider-reported-unverified".into()),
+   input_sha256: input_digest,
+   output_sha256,
+   started_at_unix_ms,
+   completed_at_unix_ms,
+   user_approval_id: Some(approval_id),
+   network_activity: NetworkActivity::inferred(vec![provider_host]),
+   outcome: Some(outcome),
+  };
+  let archive_warning = receipt_slot.archive_warning().map(str::to_owned);
+  combine_receipt_warnings(
+   archive_warning,
+   persist_receipt_or_warn("Cloud inference", receipt_slot, receipt),
+  )
+ } else {
+  let error = result.as_ref().err().cloned().unwrap_or_else(|| {
+   "Cloud adapter completed without reaching the provider dispatch boundary.".into()
+  });
+  let failure: Result<(), String> = Err(error.clone());
+  let outcome = execution_outcome(&failure, "95-second");
+  result = Err(record_cloud_preflight_outcome(
+   receipt_slot, &task_id, started_at_unix_ms, outcome, error,
+  ));
+  None
+ };
  let outcome = execution_outcome(&result, "95-second");
- let output_sha256 = match &result {
-  Ok(output) => sha256_hex(output.text.as_bytes()),
-  Err(_) => outcome_receipt_digest("UJANI-CLOUD-TASK-OUTCOME-V1", outcome),
- };
- let completed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-  .unwrap_or_default().as_millis().max(started_at_unix_ms as u128)
-  .min(u64::MAX as u128) as u64;
- let receipt = ExecutionReceipt {
-  schema_version: 3,
-  task_id: task_id.clone(),
-  operation_id: "cloud.ai.generate".into(),
-  location: ReceiptExecutionLocation::ExternalProvider,
-  adapter_id: "byok.cloud-gateway".into(),
-  adapter_version: env!("CARGO_PKG_VERSION").into(),
-  model_id: Some(receipt_model_id),
-  model_version: Some("provider-reported-unverified".into()),
-  input_sha256: input_digest,
-  output_sha256,
-  started_at_unix_ms,
-  completed_at_unix_ms,
-  user_approval_id: Some(approval_id),
-  network_activity: network_activity.clone(),
-  outcome: Some(outcome),
- };
- let receipt_warning = persist_receipt_or_warn("Cloud inference", receipt_slot, receipt);
  match &result {
   Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
@@ -1311,6 +1381,75 @@ fn outcome_receipt_digest(domain: &str, outcome: ExecutionOutcome) -> String {
     sha256_hex(format!("{domain}:{outcome:?}").as_bytes())
 }
 
+/// A pre-dispatch receipt records only that a cloud-transfer attempt did not
+/// reach the provider request boundary. Its input digest is SHA-256(empty),
+/// and network activity stays Unknown; no prompt, key, model or endpoint is stored.
+fn cloud_preflight_receipt(
+    task_id: &str,
+    started_at_unix_ms: u64,
+    completed_at_unix_ms: u64,
+    outcome: ExecutionOutcome,
+) -> ExecutionReceipt {
+    ExecutionReceipt {
+        schema_version: 3,
+        task_id: task_id.to_string(),
+        operation_id: "cloud.ai.generate".into(),
+        location: ReceiptExecutionLocation::DeterministicTool,
+        adapter_id: "ujani.cloud-transfer-preflight".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: None,
+        model_version: None,
+        input_sha256: sha256_hex(b""),
+        output_sha256: outcome_receipt_digest("UJANI-CLOUD-TRANSFER-PREFLIGHT-V1", outcome),
+        started_at_unix_ms,
+        completed_at_unix_ms: completed_at_unix_ms.max(started_at_unix_ms),
+        user_approval_id: None,
+        network_activity: NetworkActivity::unknown(),
+        outcome: Some(outcome),
+    }
+}
+
+fn combine_receipt_warnings(
+    first: Option<String>,
+    second: Option<String>,
+) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first} {second}")),
+        (Some(warning), None) | (None, Some(warning)) => Some(warning),
+        (None, None) => None,
+    }
+}
+
+/// Persist a bounded local receipt for a cloud attempt that never reached provider dispatch.
+/// The schema has no separate Denied outcome, so explicit user non-approval is recorded as Cancelled.
+fn record_cloud_preflight_outcome(
+    slot: security_store::ReceiptSlotReservation,
+    task_id: &str,
+    started_at_unix_ms: u64,
+    outcome: ExecutionOutcome,
+    error: String,
+) -> String {
+    let archive_warning = slot.archive_warning().map(str::to_owned);
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let receipt = cloud_preflight_receipt(
+        task_id,
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        outcome,
+    );
+    let persistence_warning = persist_receipt_or_warn("Cloud transfer preflight", slot, receipt);
+    match combine_receipt_warnings(archive_warning, persistence_warning) {
+        Some(warning) => format!("{error} {warning}"),
+        None => format!("{error} A minimal local outcome receipt was recorded locally."),
+    }
+}
+
+
 /// Hash successful local output bytes or a stable outcome label for failures.
 /// Error text is deliberately excluded because it may contain paths or provider details.
 fn local_ai_output_digest(output: Option<&str>, outcome: ExecutionOutcome) -> String {
@@ -1399,6 +1538,60 @@ mod receipt_outcome_tests {
                 outcome: Some(outcome),
             };
             ujani_core::validate_receipt(&receipt).unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod cloud_preflight_receipt_tests {
+    use super::cloud_preflight_receipt;
+    use ujani_core::{
+        sha256_hex, validate_receipt, ExecutionOutcome, NetworkActivity,
+        ReceiptExecutionLocation,
+    };
+
+    #[test]
+    fn cloud_preflight_receipt_omits_payload_and_provider_details() {
+        let receipt = cloud_preflight_receipt(
+            "cloud-preflight-test",
+            100,
+            101,
+            ExecutionOutcome::Cancelled,
+        );
+        validate_receipt(&receipt).unwrap();
+        assert_eq!(receipt.location, ReceiptExecutionLocation::DeterministicTool);
+        assert_eq!(receipt.input_sha256, sha256_hex(b""));
+        assert_eq!(receipt.network_activity, NetworkActivity::unknown());
+        assert_eq!(receipt.model_id, None);
+        assert_eq!(receipt.model_version, None);
+        assert_eq!(receipt.user_approval_id, None);
+
+        let encoded = serde_json::to_string(&receipt).unwrap();
+        for sensitive in [
+            "private prompt text",
+            "sk-test-secret",
+            "api.example.com",
+            "/v1/chat/completions",
+        ] {
+            assert!(!encoded.contains(sensitive));
+        }
+    }
+
+    #[test]
+    fn cloud_preflight_receipts_validate_denied_cancelled_and_timed_out_attempts() {
+        for outcome in [
+            ExecutionOutcome::Failed,
+            ExecutionOutcome::Cancelled,
+            ExecutionOutcome::TimedOut,
+        ] {
+            let receipt = cloud_preflight_receipt(
+                "cloud-preflight-outcome",
+                200,
+                201,
+                outcome,
+            );
+            validate_receipt(&receipt).unwrap();
+            assert_eq!(receipt.outcome, Some(outcome));
         }
     }
 }
