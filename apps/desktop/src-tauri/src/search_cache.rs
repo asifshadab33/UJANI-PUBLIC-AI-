@@ -183,30 +183,60 @@ fn settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
     })
 }
 
-/// Read the current opt-in state without creating, migrating, repairing or writing the cache DB.
-fn cache_enabled_from_path(path: &Path) -> Result<bool, String> {
+/// Open an existing cache file read-only. Missing cache storage is a normal empty state.
+fn open_existing_cache_read_only(path: &Path) -> Result<Option<Connection>, String> {
     match fs::symlink_metadata(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(format!(
-                "Could not inspect local search-cache settings: {error}"
-            ));
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not inspect local search-cache settings: {error}")),
         Ok(metadata) if !metadata.file_type().is_file() => {
-            return Err(
-                "Local search-cache settings are not stored in a regular file.".into(),
-            );
+            return Err("Local search-cache settings are not stored in a regular file.".into());
         }
         Ok(_) => {}
     }
-
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|error| {
-            format!(
-                "Could not inspect local search-cache settings without modifying them: {error}"
-            )
-        })?;
-    settings_from_db(&db).map(|settings| settings.enabled)
+        .map_err(|error| format!("Could not open local search cache read-only: {error}"))?;
+    db.busy_timeout(Duration::from_secs(3)).map_err(|error| error.to_string())?;
+    Ok(Some(db))
+}
+
+fn default_cache_settings() -> CacheSettings {
+    CacheSettings {
+        enabled: false,
+        retention_days: 30,
+        max_entries: MAX_CACHE_ENTRIES,
+        max_bytes: MAX_CACHE_BYTES,
+    }
+}
+
+/// Avoid treating legacy version-1 cache enablement as user consent.
+fn read_only_settings_from_db(db: &Connection) -> Result<CacheSettings, String> {
+    let schema_version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|error| format!("Could not read search-cache schema version: {error}"))?;
+    if schema_version < 2 {
+        return Ok(default_cache_settings());
+    }
+    if schema_version > 2 {
+        return Err("Local search cache schema is newer than this UJANI build.".into());
+    }
+    settings_from_db(db)
+}
+
+/// Read settings without creating, migrating, repairing, trimming or writing cache storage.
+fn cache_settings_from_path(path: &Path) -> Result<Option<CacheSettings>, String> {
+    let Some(db) = open_existing_cache_read_only(path)? else { return Ok(None); };
+    read_only_settings_from_db(&db).map(Some)
+}
+
+fn cache_settings_read_only(app: &AppHandle) -> Result<CacheSettings, String> {
+    let mut path: PathBuf = app.path().app_data_dir()
+        .map_err(|error| format!("Could not locate UJANI app data directory: {error}"))?;
+    path.push("local-search-cache.sqlite3");
+    Ok(cache_settings_from_path(&path)?.unwrap_or_else(default_cache_settings))
+}
+
+/// Read the current opt-in state without creating, migrating, repairing or writing the cache DB.
+fn cache_enabled_from_path(path: &Path) -> Result<bool, String> {
+    Ok(cache_settings_from_path(path)?.map(|settings| settings.enabled).unwrap_or(false))
 }
 
 fn cache_enabled_without_mutation(app: &AppHandle) -> Result<bool, String> {
@@ -235,21 +265,34 @@ fn cache_enable_confirmation_message(retention_days: i64) -> String {
     )
 }
 
+fn decode_cache_key(encoded: String) -> Result<Zeroizing<[u8; 32]>, String> {
+    let encoded = Zeroizing::new(encoded);
+    let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
+    let length = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
+        .map_err(|_| "Stored search-cache key is invalid.".to_string())?;
+    decoded.truncate(length);
+    let key: [u8; 32] = decoded.as_slice().try_into()
+        .map_err(|_| "Stored search-cache key has an invalid length.".to_string())?;
+    Ok(Zeroizing::new(key))
+}
+
+/// Reads the existing cache key without creating one; read-only commands must not mutate the vault.
+fn cache_key_existing() -> Result<Zeroizing<[u8; 32]>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
+    match entry.get_password() {
+        Ok(encoded) => decode_cache_key(encoded),
+        Err(keyring::Error::NoEntry) => Err("Local search-cache key is missing; recent searches cannot be decrypted.".into()),
+        Err(error) => Err(format!("Could not read search-cache key from the OS credential vault: {error}")),
+    }
+}
+
 /// Loads or creates the cache encryption key in the operating-system credential vault.
 fn cache_key() -> Result<Zeroizing<[u8; 32]>, String> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
     match entry.get_password() {
-        Ok(encoded) => {
-            let encoded = Zeroizing::new(encoded);
-            let mut decoded = Zeroizing::new(vec![0_u8; encoded.len()]);
-            let length = B64.decode_slice(encoded.as_bytes(), &mut decoded[..])
-                .map_err(|_| "Stored search-cache key is invalid.".to_string())?;
-            decoded.truncate(length);
-            let key: [u8; 32] = decoded.as_slice().try_into()
-                .map_err(|_| "Stored search-cache key has an invalid length.".to_string())?;
-            Ok(Zeroizing::new(key))
-        }
+        Ok(encoded) => decode_cache_key(encoded),
         Err(keyring::Error::NoEntry) => {
             let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
             let encoded = Zeroizing::new(B64.encode(*key));
@@ -543,49 +586,67 @@ pub fn store(
 /// Returns cache preferences without blocking Tauri's main thread.
 #[tauri::command]
 pub async fn get_local_search_cache_settings(app: AppHandle) -> Result<CacheSettings, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
-        let settings = settings_from_db(&db)?;
-        trim_cache(&db, &settings, now_seconds()?)?;
-        Ok(settings)
-    }).await.map_err(|error| format!("Cache settings worker failed: {error}"))?
+    tauri::async_runtime::spawn_blocking(move || cache_settings_read_only(&app))
+        .await.map_err(|error| format!("Cache settings worker failed: {error}"))?
 }
 
-/// Returns recent encrypted search phrases only for scopes that still exist, off the UI thread.
+/// Filters recent encrypted phrases by retention and negative-result TTL without pruning storage.
+fn load_recent_searches_read_only(
+    db: &Connection,
+    settings: &CacheSettings,
+    key: &[u8; 32],
+    now: i64,
+) -> Result<Vec<RecentSearch>, String> {
+    let retention_cutoff = if settings.retention_days > 0 {
+        now.saturating_sub(settings.retention_days.saturating_mul(86_400))
+    } else {
+        i64::MIN
+    };
+    let negative_cutoff = now.saturating_sub(NEGATIVE_TTL_SECONDS);
+    let mut statement = db.prepare(
+        "SELECT r.scope_id,r.request_key,r.encrypted_query,r.created_at,s.encrypted_path
+         FROM recent_searches r JOIN approved_scopes s ON s.scope_id=r.scope_id
+         WHERE r.created_at >= ?1 AND (r.is_negative=0 OR r.created_at >= ?2)
+         ORDER BY r.created_at DESC,r.id DESC LIMIT 20"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map(params![retention_cutoff, negative_cutoff], |row| Ok((
+        row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?,
+        row.get::<_,i64>(3)?, row.get::<_,String>(4)?
+    ))).map_err(|error| error.to_string())?;
+    let mut recent = Vec::new();
+    for row in rows {
+        let (scope_id, request_key, encrypted_query, created_at, encrypted_path) =
+            row.map_err(|error| error.to_string())?;
+        let Some(path) = decrypt(key, &encrypted_path, &scope_aad(&scope_id)).ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok()) else { continue; };
+        let path = PathBuf::from(path);
+        if !path.is_dir() || fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) {
+            continue;
+        }
+        let query = decrypt(key, &encrypted_query, &entry_aad(&scope_id, &request_key, "query"))
+            .ok().and_then(|bytes| String::from_utf8(bytes).ok());
+        if let Some(query) = query { recent.push(RecentSearch { query, created_at }); }
+    }
+    Ok(recent)
+}
+
+/// Read-only UI history query. Retention is enforced by filtering, not by deleting on read.
 #[tauri::command]
 pub async fn list_recent_local_searches(app: AppHandle) -> Result<Vec<RecentSearch>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db = open(&app)?;
-        let settings = settings_from_db(&db)?;
+        let mut path: PathBuf = app.path().app_data_dir()
+            .map_err(|error| format!("Could not locate UJANI app data directory: {error}"))?;
+        path.push("local-search-cache.sqlite3");
+        let Some(db) = open_existing_cache_read_only(&path)? else { return Ok(Vec::new()); };
+        let settings = read_only_settings_from_db(&db)?;
         if !settings.enabled { return Ok(Vec::new()); }
-        trim_cache(&db, &settings, now_seconds()?)?;
-        // Do not prompt for or create a credential-vault key when no query needs decrypting.
+        let now = now_seconds()?;
         let has_rows: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM recent_searches)", [], |row| row.get(0)
         ).map_err(|error| error.to_string())?;
         if !has_rows { return Ok(Vec::new()); }
-        let key = cache_key()?;
-        let mut statement = db.prepare(
-            "SELECT r.scope_id,r.request_key,r.encrypted_query,r.created_at,s.encrypted_path
-             FROM recent_searches r JOIN approved_scopes s ON s.scope_id=r.scope_id
-             ORDER BY r.created_at DESC,r.id DESC LIMIT 20"
-        ).map_err(|error| error.to_string())?;
-        let rows = statement.query_map([], |row| Ok((
-            row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?,
-            row.get::<_,i64>(3)?, row.get::<_,String>(4)?
-        ))).map_err(|error| error.to_string())?;
-        let mut recent = Vec::new();
-        for row in rows {
-            let (scope_id, request_key, encrypted_query, created_at, encrypted_path) = row.map_err(|error| error.to_string())?;
-            let Some(path) = decrypt(&key, &encrypted_path, &scope_aad(&scope_id)).ok()
-                .and_then(|bytes| String::from_utf8(bytes).ok()) else { continue; };
-            let path = PathBuf::from(path);
-            if !path.is_dir() || fs::canonicalize(&path).ok().as_deref() != Some(path.as_path()) { continue; }
-            let query = decrypt(&key, &encrypted_query, &entry_aad(&scope_id, &request_key, "query"))
-                .ok().and_then(|bytes| String::from_utf8(bytes).ok());
-            if let Some(query) = query { recent.push(RecentSearch { query, created_at }); }
-        }
-        Ok(recent)
+        let key = cache_key_existing()?;
+        load_recent_searches_read_only(&db, &settings, &key, now)
     }).await.map_err(|error| format!("Recent-search worker failed: {error}"))?
 }
 
@@ -1035,6 +1096,123 @@ mod tests {
         drop(db);
         assert!(cache_enabled_from_path(&path).unwrap());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cache_settings_read_only_path_does_not_create_missing_storage_and_reads_values() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("ujani-cache-readonly-settings-{unique}"));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("local-search-cache.sqlite3");
+
+        let defaults = cache_settings_from_path(&path).unwrap().unwrap_or_else(default_cache_settings);
+        assert!(!defaults.enabled);
+        assert_eq!(defaults.retention_days, 30);
+        assert_eq!(defaults.max_entries, MAX_CACHE_ENTRIES);
+        assert_eq!(defaults.max_bytes, MAX_CACHE_BYTES);
+        assert!(!path.exists(), "read-only settings inspection must not create the DB");
+
+        let db = open_database(&path).unwrap();
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        db.execute("UPDATE cache_settings SET value='7' WHERE key='retention_days'", []).unwrap();
+        drop(db);
+
+        let observed = cache_settings_from_path(&path).unwrap().unwrap();
+        assert!(observed.enabled);
+        assert_eq!(observed.retention_days, 7);
+        assert_eq!(observed.max_entries, MAX_CACHE_ENTRIES);
+        assert_eq!(observed.max_bytes, MAX_CACHE_BYTES);
+        let read_only = open_existing_cache_read_only(&path).unwrap().unwrap();
+        assert!(read_only.execute("UPDATE cache_settings SET value='false' WHERE key='enabled'", []).is_err());
+        drop(read_only);
+        assert!(cache_settings_from_path(&path).unwrap().unwrap().enabled);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn read_only_cache_settings_do_not_infer_consent_from_legacy_schema() {
+        let db = memory_db();
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        db.execute_batch("PRAGMA user_version=1;").unwrap();
+
+        let settings = read_only_settings_from_db(&db).unwrap();
+        assert!(!settings.enabled, "legacy implicit opt-in must not be exposed as consent");
+        assert_eq!(settings.retention_days, 30);
+        let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        let enabled: String = db.query_row("SELECT value FROM cache_settings WHERE key='enabled'", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, 1, "read-only inspection must not run the migration");
+        assert_eq!(enabled, "true", "legacy data/settings are left untouched until a mutating operation");
+    }
+
+    #[test]
+    fn recent_search_read_only_query_filters_expired_entries_without_pruning() {
+        let db = memory_db();
+        db.execute("UPDATE cache_settings SET value='true' WHERE key='enabled'", []).unwrap();
+        db.execute("UPDATE cache_settings SET value='7' WHERE key='retention_days'", []).unwrap();
+        let key = key();
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("ujani-cache-recent-readonly-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let scope_id = "scope-readonly";
+        let encrypted_path = encrypt(&key, canonical_root.to_string_lossy().as_bytes(), &scope_aad(scope_id)).unwrap();
+        db.execute(
+            "INSERT INTO approved_scopes(scope_id,encrypted_path,created_at) VALUES(?1,?2,1)",
+            params![scope_id, encrypted_path],
+        ).unwrap();
+        let now = 100 * 86_400_i64;
+        let add_recent = |request_key: &str, query: &str, created_at: i64, is_negative: bool| {
+            let encrypted_query = encrypt(&key, query.as_bytes(), &entry_aad(scope_id, request_key, "query")).unwrap();
+            db.execute(
+                "INSERT INTO recent_searches(scope_id,request_key,encrypted_query,is_negative,created_at,last_access)
+                 VALUES(?1,?2,?3,?4,?5,?5)",
+                params![scope_id, request_key, encrypted_query, if is_negative {1} else {0}, created_at],
+            ).unwrap();
+        };
+        add_recent("fresh-positive", "fresh positive", now - 2 * 86_400, false);
+        add_recent("old-positive", "old positive", now - 8 * 86_400, false);
+        add_recent("stale-negative", "stale negative", now - 2 * 86_400, true);
+        add_recent("fresh-negative", "fresh negative", now - 3_600, true);
+
+        let settings = settings_from_db(&db).unwrap();
+        let before: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        let results = load_recent_searches_read_only(&db, &settings, &key, now).unwrap();
+        assert_eq!(results.iter().map(|item| item.query.as_str()).collect::<Vec<_>>(),
+            vec!["fresh negative", "fresh positive"]);
+        let after: i64 = db.query_row("SELECT COUNT(*) FROM recent_searches", [], |row| row.get(0)).unwrap();
+        assert_eq!(before, after, "read-only recent-search query must not prune rows");
+
+        let until_cleared = test_settings(0);
+        let all_positive = load_recent_searches_read_only(&db, &until_cleared, &key, now).unwrap();
+        assert!(all_positive.iter().any(|item| item.query == "old positive"));
+        assert!(!all_positive.iter().any(|item| item.query == "stale negative"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cache_settings_and_recent_search_commands_are_read_only() {
+        let source = include_str!("search_cache.rs");
+        let settings_start = source.find("async fn get_local_search_cache_settings").unwrap();
+        let settings_end = source[settings_start..].find("fn load_recent_searches_read_only")
+            .map(|offset| settings_start + offset).unwrap();
+        let settings_command = &source[settings_start..settings_end];
+        assert!(settings_command.contains("cache_settings_read_only"));
+        assert!(!settings_command.contains("open(&app)"));
+        assert!(!settings_command.contains("trim_cache"));
+
+        let helper_start = source.find("fn load_recent_searches_read_only").unwrap();
+        assert!(!source[helper_start - 32..helper_start].contains("#[tauri::command]"));
+
+        let recent_start = source.find("pub async fn list_recent_local_searches").unwrap();
+        assert!(source[recent_start - 32..recent_start].contains("#[tauri::command]"));
+        let recent_end = source[recent_start..].find("/// Persists user cache preferences")
+            .map(|offset| recent_start + offset).unwrap();
+        let recent_command = &source[recent_start..recent_end];
+        assert!(recent_command.contains("open_existing_cache_read_only"));
+        assert!(recent_command.contains("cache_key_existing"));
+        assert!(!recent_command.contains("open(&app)"));
+        assert!(!recent_command.contains("trim_cache"));
+        assert!(!recent_command.contains("cache_key()?"));
     }
 
     #[test]
