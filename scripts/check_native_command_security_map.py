@@ -450,9 +450,12 @@ def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
         "if dispatch_started",
         "record_cloud_preflight_outcome",
     )
-    positions = [body.find(token) for token in ordered]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
-        return ["execute_cloud_ai_task"]
+    cursor = 0
+    for token in ordered:
+        position = body.find(token, cursor)
+        if position < 0:
+            return ["execute_cloud_ai_task"]
+        cursor = position + len(token)
     return []
 
 
