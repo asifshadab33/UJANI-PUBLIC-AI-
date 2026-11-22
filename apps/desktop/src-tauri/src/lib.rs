@@ -854,7 +854,6 @@ async fn execute_cloud_ai_task(
   ));
   None
  };
- let outcome = execution_outcome(&result, "95-second");
  match &result {
   Ok(_) => emit_task_progress(&app, &task_id, "completed", "Cloud task completed.", 100),
   Err(error) if error.contains("cancelled") => emit_task_progress(&app, &task_id, "cancelled", "Cloud request cancelled.", 0),
