@@ -44,11 +44,13 @@ REQUIRED_POLICY_MARKERS = {
         "plan_task_graph(&graph, &mode, snapshot.available_memory_mb, &snapshot.capabilities)",
     ),
     ("lib.rs", "execute_cloud_ai_task"): (
+        "security_store::reserve_execution_receipt_slot",
         "ujani_core::policy_gate::parse_data_class",
         "ujani_core::policy_gate::evaluate_registered_external_transfer",
         "cloud_gateway::validate_request",
         "native_consent::confirm_native",
         "reserve_cloud_tokens",
+        "record_cloud_preflight_outcome",
     ),
     ("lib.rs", "pull_ollama_model"): (
         'mode == "fortress"',
@@ -119,12 +121,22 @@ REQUIRED_POLICY_MARKERS = {
 
 REQUIRED_ORDERED_MARKERS = {
     ("lib.rs", "execute_cloud_ai_task"): (
+        "security_store::reserve_execution_receipt_slot",
         "ujani_core::policy_gate::parse_data_class",
+        "record_cloud_preflight_outcome",
         "ujani_core::policy_gate::evaluate_registered_external_transfer",
+        "record_cloud_preflight_outcome",
         "cloud_gateway::validate_request",
+        "record_cloud_preflight_outcome",
+        "cloud_gateway::endpoint_host",
+        "record_cloud_preflight_outcome",
         "native_consent::confirm_native",
+        "record_cloud_preflight_outcome",
         "reserve_cloud_tokens",
+        "record_cloud_preflight_outcome",
         "cloud_gateway::execute(",
+        "if dispatch_started",
+        "record_cloud_preflight_outcome",
     ),
     ("lib.rs", "execute_local_ai_task"): (
         "let registration = register_active_task(&control, &task_id)?;",
@@ -320,6 +332,7 @@ def main() -> None:
         "lib.rs": (
             "managed_task_outcomes_are_classified_for_receipts",
             "failed_receipt_digest_does_not_include_error_text",
+            "cloud_preflight_receipt_omits_payload_and_provider_details",
             "schema_three_failure_and_cancellation_receipts_validate",
             "summary_and_translation_fail_closed_without_local_ollama",
             "pdf_pipeline_requires_parser_and_local_model_capabilities",

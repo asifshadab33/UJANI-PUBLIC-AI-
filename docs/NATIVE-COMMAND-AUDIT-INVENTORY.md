@@ -140,3 +140,14 @@ This inventory is a starting point, **not completion of issue #120**. Do not clo
 - The native `manage_local_reminders` IPC boundary now validates a Delete identifier before prompting, then requires native Yes/No confirmation for deleting one reminder or clearing all reminders. A decline, timeout or closed confirmation channel fails closed before the blocking storage worker, receipt reservation or database access.
 - The reminder centre no longer uses a webview `window.confirm` for clear-all; the native command owns the destructive-action decision, so direct IPC callers receive the same guard.
 - Static source-order regressions and a Rust action-classification test cover Delete and ClearAll. This is a targeted destructive-action safeguard, not completion of the full per-command authorization matrix.
+
+
+## 2026-11-22 external cloud-transfer preflight receipts
+
+- `execute_cloud_ai_task` now reserves local receipt capacity before classification/policy and request validation. If receipt storage is unavailable, it fails closed before native approval or provider dispatch.
+- Policy denial/require-review, invalid request or endpoint/model metadata, native non-approval, cloud-budget reservation failure, and approved attempts that never reach the provider dispatch boundary receive a local schema-v3 preflight receipt. It stores task/operation identifiers, the preflight adapter version, bounded outcome/time, fixed empty-payload/outcome digests and Unknown network activity; prompt, API key, model, provider hostname and approval fields are absent.
+- The native consent prompt explains the local receipt behavior. Decline/cancel/timeout is normalized to `cancelled` because schema v3 has no distinct Denied outcome.
+- Only after `cloud_gateway::execute` crosses its `on_dispatch` callback does the command persist an ExternalProvider receipt with provider hostname/model and one-way prompt/output digests. Raw prompt text and API keys are never persisted.
+- The static receipt guard checks the reservation/preflight/consent/budget/dispatch order, and unit tests validate preflight receipt shape and privacy minimisation.
+
+This is a targeted improvement to the external-transfer path, not completion of issue #120. The full per-command authorization matrix, alternate IPC surfaces and platform-level evidence remain open.

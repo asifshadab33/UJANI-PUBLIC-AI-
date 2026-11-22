@@ -424,23 +424,47 @@ def missing_ollama_status_probe_offload_guards(source: str) -> list[str]:
     return []
 
 def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
-    """Require classification, transfer policy and native approval before cloud side effects."""
+    """Reserve audit capacity first, but keep budget and network dispatch behind native approval."""
     try:
         body = rust_function_body(source, "execute_cloud_ai_task")
     except ValueError:
         return ["execute_cloud_ai_task"]
 
     ordered = (
-        "policy_gate::parse_data_class",
-        "evaluate_registered_external_transfer",
-        "cloud_gateway::validate_request",
-        "native_consent::confirm_native",
         "reserve_execution_receipt_slot",
+        "policy_gate::parse_data_class",
+        "record_cloud_preflight_outcome",
+        "evaluate_registered_external_transfer",
+        "record_cloud_preflight_outcome",
+        "cloud_gateway::validate_request",
+        "record_cloud_preflight_outcome",
+        "cloud_gateway::endpoint_host",
+        "record_cloud_preflight_outcome",
+        "validate_model_identifier",
+        "record_cloud_preflight_outcome",
+        "native_consent::confirm_native",
+        "record_cloud_preflight_outcome",
         "reserve_cloud_tokens",
+        "record_cloud_preflight_outcome",
         "cloud_gateway::execute",
+        "if dispatch_started",
+        "record_cloud_preflight_outcome",
     )
-    positions = [body.find(token) for token in ordered]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
+    cursor = 0
+    for token in ordered:
+        position = body.find(token, cursor)
+        if position < 0:
+            return ["execute_cloud_ai_task"]
+        cursor = position + len(token)
+
+    consent_position = body.find("native_consent::confirm_native")
+    budget_position = body.find("reserve_cloud_tokens")
+    dispatch_position = body.find("cloud_gateway::execute")
+    if (
+        consent_position < 0
+        or budget_position < consent_position
+        or dispatch_position < consent_position
+    ):
         return ["execute_cloud_ai_task"]
     return []
 
@@ -944,8 +968,7 @@ def main() -> int:
     missing_cloud_guards = missing_cloud_transfer_preflight_guards(source)
     if missing_cloud_guards:
         errors.append(
-            "cloud dispatch: classification, registered transfer policy and native approval "
-            "must precede receipt/budget reservation and network execution in "
+            "cloud dispatch: reserve audit capacity before policy checks; require classification, registered transfer policy and native approval before budget/network dispatch, with local preflight receipts on non-dispatch paths in "
             + ", ".join(missing_cloud_guards)
         )
 
