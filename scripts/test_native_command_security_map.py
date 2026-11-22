@@ -355,6 +355,14 @@ class NativeCommandSideEffectOrderingTests(unittest.TestCase):
             "cloud_gateway::execute().await; native_consent::confirm_native().await;",
         )
         self.assertEqual(missing_cloud_transfer_preflight_guards(unsafe), ["execute_cloud_ai_task"])
+        early_budget = source.replace(
+            "native_consent::confirm_native().await;",
+            "reserve_cloud_tokens(); native_consent::confirm_native().await;",
+        )
+        self.assertEqual(
+            missing_cloud_transfer_preflight_guards(early_budget),
+            ["execute_cloud_ai_task"],
+        )
         missing_preflight_receipt = source.replace(
             "record_cloud_preflight_outcome();\n            ujani_core::policy_gate::evaluate_registered_external_transfer();",
             "ujani_core::policy_gate::evaluate_registered_external_transfer();",
