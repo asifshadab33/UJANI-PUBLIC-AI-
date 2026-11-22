@@ -1,6 +1,6 @@
 # UJANI shared implementation backlog and evidence register
 
-**Evidence snapshot: 21 November 2026 (integration audit, post-merge).** Canonical cross-repository priority order for the coordinated 14-day programme. This register consolidates the live open issues, open PRs, current main-branch evidence and the existing Public/Enterprise master plans. It is a planning and evidence ledger, not a security certification or release approval.
+**Evidence snapshot: 22 November 2026 (integration refresh).** Canonical cross-repository priority order for the coordinated 14-day programme. This register consolidates the live open issues, open PRs, current main-branch evidence and the existing Public/Enterprise master plans. It is a planning and evidence ledger, not a security certification or release approval.
 
 ## Product boundaries and non-negotiable rules
 
@@ -23,6 +23,18 @@
 - **Release-ready** — all applicable automated, integration, device, security, packaging and operational gates are satisfied.
 
 Unknown is not Available. In-progress, skipped, stale, cancelled or partial checks are not passes. No item in this snapshot is marked Release-ready.
+
+## Live refresh — 22 November 2026 (supersedes stale PR/main rows below)
+
+- **Public main:** `d4567ee6843799dae118a64e2b417d59bac1b4f2` (PR #413 merge). **Enterprise main:** `5b99a290468938661f69bc6444010550e6b147c5` (PR #315 merge).
+- Public PR #413, head `173d18a3490c02111c9b78d013eb0a82488abccd`, is merged. Exact-head CI, CodeQL, Android compatibility, security-sensitive change watch and installer-size audit all passed; preview installers were skipped. The merged read-only cache settings/history fix is present on main. No post-merge workflow runs or combined statuses were returned for merge SHA `d4567ee...`; therefore post-merge CI is **not verified** and no physical-device test is claimed.
+- PR #411 (documentation evidence correction) is merged at `0696251e73764c8966be4e8828fb4b35852873af`; Enterprise PR #315 (status pointer) is merged at `5b99a290468938661f69bc6444010550e6b147c5`. Both are documentation-only.
+- **Current open Public PRs:** #396 only; draft, stale base (current main is ahead), `mergeable=false`, and blocked by selected-folder root/descendant TOCTOU #408. Do not merge or delete its branch before the root-handle fix and exact-head revalidation. Enterprise has no open PRs.
+- The shared-contract blob parity result remains the latest independent verification from 21 Nov. The intervening PRs #411, #315 and #413 changed status documentation or the Public cache file only; no contract/schema artifacts were changed. This is not a new 22-Nov parity run and does not prove service interoperability.
+- Day 2 Public IPC inventory audit: existing `docs/native-command-security-map.json` reconciles 45 default commands and 7 feature-gated peer-preview commands against the invoke-handler registration. No unmatched commands were found. This map/parity guard is an inventory check only; runtime denial-before-side-effect coverage remains incomplete in #120. Latest audit prioritized selected-folder reads (#408), external cloud transfer denial/receipt paths, document/PDF paths, persistent-state/history/cache/reminder mutations, and the disabled model-download path.
+
+**Release state:** neither product is Release-ready. Enterprise remote worker execution remains disabled. Public remains blocked by outstanding P0 security/privacy/reliability, cross-platform packaging/device checks, filesystem root identity and full native IPC audit.
+
 
 ## Live repository baseline
 
