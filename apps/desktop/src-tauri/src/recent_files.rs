@@ -257,6 +257,26 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn caps_recent_file_results_and_marks_the_scan_truncated() {
+        let root = temp_dir("recent-files-result-cap");
+        fs::create_dir_all(&root).unwrap();
+        let cutoff = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            - 24 * 60 * 60 * 1000;
+        for index in 0..(MAX_RESULTS + 10) {
+            fs::write(root.join(format!("file-{index:03}.txt")), b"metadata-only").unwrap();
+        }
+
+        let result = scan_recent_files(&root, cutoff, &CancellationToken::new()).unwrap();
+        assert_eq!(result.recent_files.len(), MAX_RESULTS);
+        assert!(result.truncated, "dropping results above the user-visible cap must be disclosed");
+        assert!(result.scanned_files <= MAX_ENTRIES);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn skips_symbolic_links() {
