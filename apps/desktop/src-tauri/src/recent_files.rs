@@ -203,25 +203,38 @@ mod tests {
             .expect("untrusted day window must be validated");
         let registration = command.find("register_active_task")
             .expect("task registration must be present");
+        let initial_cancel_check = command.find("ensure_task_not_cancelled(&token)?")
+            .expect("cancellation must be checked after task registration");
         let capability = command.find("get_selected_folder_capability_snapshot_for_task")
             .expect("fresh local capability snapshot must be present");
         let preflight = command.find("run_selected_folder_preflight")
             .expect("native local policy preflight must be present");
         let picker = command.find("blocking_pick_folder")
             .expect("native folder picker must be present");
+        assert!(
+            command[preflight..picker].contains("\"file.recent.preview\""),
+            "recent-file IPC must request its own registered capability",
+        );
+        let picker_cancel_check = command.find("_ = token.cancelled()")
+            .expect("cancellation must be observed while the native picker is pending");
         let selected_scope = command.find("require_selected_folder")
             .expect("selected folder must be required before scanning");
+        let post_selection_cancel_check = command.find("if token.is_cancelled()")
+            .expect("cancellation must be rechecked before traversal");
         let scan = command.find("scan_recent_files(&folder")
             .expect("bounded scanner must run only after selection");
 
         assert!(
             validation < registration
-                && registration < capability
+                && registration < initial_cancel_check
+                && initial_cancel_check < capability
                 && capability < preflight
                 && preflight < picker
-                && picker < selected_scope
-                && selected_scope < scan,
-            "recent-file IPC must validate input, register cancellation, authorize the selected-folder operation, obtain native selection, and only then scan",
+                && picker < picker_cancel_check
+                && picker_cancel_check < selected_scope
+                && selected_scope < post_selection_cancel_check
+                && post_selection_cancel_check < scan,
+            "recent-file IPC must validate input, register and observe cancellation, authorize its exact selected-folder operation, obtain native selection, and only then scan",
         );
     }
 
