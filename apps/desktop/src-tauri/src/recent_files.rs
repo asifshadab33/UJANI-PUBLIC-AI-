@@ -191,7 +191,7 @@ mod tests {
         let command_start = source.find("pub async fn find_recent_files(")
             .expect("desktop recent-file IPC command exists");
         let command_end = source[command_start..]
-            .find("\n}\n\nfn scan_recent_files")
+            .find("\n#[cfg(target_os = \"android\")]\n#[tauri::command]")
             .expect("desktop recent-file command has a bounded end");
         let command = &source[command_start..command_start + command_end];
         let signature_end = command.find(") -> Result")
