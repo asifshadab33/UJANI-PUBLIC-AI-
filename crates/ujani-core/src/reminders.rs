@@ -58,7 +58,12 @@ impl LocalReminder {
         if self.created_at_unix_ms <= 0 || self.updated_at_unix_ms < self.created_at_unix_ms {
             return Err(ReminderValidationError::InvalidTimestamps);
         }
-        if self.snoozed_until_unix_ms.is_some_and(|v| v <= 0) {
+        // A snooze must move the effective due instant forward. An earlier
+        // timestamp could otherwise make a future reminder notify prematurely.
+        if self
+            .snoozed_until_unix_ms
+            .is_some_and(|v| v <= self.due_at_unix_ms)
+        {
             return Err(ReminderValidationError::InvalidSnooze);
         }
         Ok(())
@@ -69,7 +74,9 @@ impl LocalReminder {
     }
 
     pub fn should_notify_at(&self, now_unix_ms: i64) -> bool {
-        self.state == ReminderState::Active
+        // Invalid persisted/deserialised records must never become notification work.
+        self.validate().is_ok()
+            && self.state == ReminderState::Active
             && self.effective_due_at_unix_ms() <= now_unix_ms
             && self.last_notified_due_at_unix_ms != Some(self.effective_due_at_unix_ms())
     }
@@ -119,9 +126,21 @@ mod tests {
         item.last_notified_due_at_unix_ms = Some(100); assert!(!item.should_notify_at(200));
         item.snoozed_until_unix_ms = Some(300); assert!(item.should_notify_at(300));
     }
-    #[test] fn snooze_and_completed_state_are_respected() {
-        let mut item = reminder("r1", 100); item.snoozed_until_unix_ms = Some(500);
-        assert!(!item.should_notify_at(400)); assert!(item.should_notify_at(500));
-        item.state = ReminderState::Completed; assert!(!item.should_notify_at(600));
+    #[test]
+    fn snooze_must_move_due_time_forward_and_completed_state_is_respected() {
+        let mut item = reminder("r1", 100);
+        item.snoozed_until_unix_ms = Some(50);
+        assert_eq!(item.validate(), Err(ReminderValidationError::InvalidSnooze));
+        assert!(!item.should_notify_at(50));
+
+        item.snoozed_until_unix_ms = Some(100);
+        assert_eq!(item.validate(), Err(ReminderValidationError::InvalidSnooze));
+
+        item.snoozed_until_unix_ms = Some(500);
+        assert!(item.validate().is_ok());
+        assert!(!item.should_notify_at(400));
+        assert!(item.should_notify_at(500));
+        item.state = ReminderState::Completed;
+        assert!(!item.should_notify_at(600));
     }
 }
