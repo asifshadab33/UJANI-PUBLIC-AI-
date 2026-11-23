@@ -74,7 +74,9 @@ impl LocalReminder {
     }
 
     pub fn should_notify_at(&self, now_unix_ms: i64) -> bool {
-        self.state == ReminderState::Active
+        // Invalid persisted/deserialised records must never become notification work.
+        self.validate().is_ok()
+            && self.state == ReminderState::Active
             && self.effective_due_at_unix_ms() <= now_unix_ms
             && self.last_notified_due_at_unix_ms != Some(self.effective_due_at_unix_ms())
     }
