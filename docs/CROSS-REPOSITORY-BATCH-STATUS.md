@@ -131,3 +131,27 @@ Dates are targets, not permission to bypass prerequisites. The next Public code 
 - **Integration:** contract/schema compatibility is testable; no end-to-end Public-to-Enterprise production workload path is verified.
 
 **Completion rule:** update this register from live main/PR SHAs and exact workflow runs on each coordinated pass. Do not call an item Integration-verified, Device-verified or Release-ready without the corresponding evidence.
+
+## Pending-but-not-lost product roadmap (23 Nov 2026)
+
+This backlog is intentionally tracked separately from urgent security work so it is not silently dropped. Items below are not represented as completed merely because adjacent foundations or documentation exist.
+
+### Public AI — parallel product batches after/alongside security gates
+
+- **P1 model onboarding:** preserve explicit model choice (or explicit opt-in Automatic); fresh install has no selected model; show verified download/storage size, RAM/hardware fit, task capabilities, licence/provenance and limitations; never silently install, download or switch. Catalogue parity/provenance and runtime-specific compatibility remain.
+- **P1 OS-powered Everyday Tools:** reuse OS APIs and narrow adapters for file/folder/content search, PDF search, media location, duplicate detection, sorting and basic local utilities; avoid duplicating OS features. Keep results local, bounded, cancellable, permission-scoped and disclose unsupported formats. The filesystem identity fix (#408) is a prerequisite for path-sensitive features.
+- **P1 stability/document workflows:** finish PDF worker confinement, upload/decoder limits, cancellation and permit-release correctness, cache invalidation/incomplete-result handling, freeze/hang navigation regressions, persistence/restart and cross-platform tests.
+- **P1 local cache/history privacy:** document cache purpose, TTL/expiry and user control; distinguish negative/incomplete results; test deletion, encryption/AAD, key rotation/recovery and restart/crash behavior. No sensitive content in receipts or logs.
+- **P1 integrations/planner:** consent-only OS/app connectors through narrow, revocable adapters; no broad account access, background scheduling or external transmission by default. Exclude GDELT.
+- **Release/testing:** installer and updater/rollback, signing configuration, clean-install, supported-OS/device matrix, Android real-device handoff and first-use UX. Hosted CI is not device validation.
+
+### Parallel work that is safe now
+
+1. Inventory/requirements and UX acceptance criteria; docs/test design that does not duplicate canonical registries.
+2. Non-sensitive UI accessibility, error/progress/cancellation affordances and test coverage, after checking current implementation.
+3. Catalogue/source provenance validation and parity tooling; do not add a second canonical catalogue.
+4. Local-only test fixtures and bounded OS-adapter tests; do not weaken #408 or bypass authorization.
+
+### Gate ordering
+
+#418 dependency remediation; #408 pinned-handle traversal before #396/path-dependent work; #120 native-command authorization matrix; PDF/stability; model onboarding; OS tools/connectors; platform/release validation. Work may be parallelized only when it has no unsafe dependency and tests are run on exact heads.
