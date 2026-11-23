@@ -12,6 +12,17 @@
 - A schema, test, demo, merged PR or green CI run does not prove a complete user workflow.
 - Enterprise worker dispatch and automated containment remain disabled. Public Worker/Partner pathways remain gated until their end-to-end trust and consent controls are proven.
 
+
+
+## Live validation update — 23 November 2026 (supersedes the 22-Nov status above)
+
+- **Public main SHA:** `bc31ddbf5c874dd651ff4303a595424de398c1c5`. Scheduled CodeQL and parser-fuzz smoke passed. The latest main CI run [#45043277205](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45043277205) reports Rust core tests, React build, frontend audit, Ubuntu/Windows/macOS native tests, Rust lint and workflow lint passed; **Rust dependency security audit failed at the desktop-lockfile audit step** (workspace audit passed). Advisory details have not yet been retrieved; no cause is asserted. Installer-preview workflow was skipped, so this is not installer validation.
+- **Enterprise main SHA:** `6d9305f6e671ab15c21acfa3ced10829adf625c2`. Scheduled Enterprise CI [#45069580827](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45069580827) and CodeQL [#45084528996](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45084528996) passed on that exact SHA.
+- **#408 remains an unresolved P0:** the shared walker still enumerates via path-based operations after root canonicalization. Fix requires pinned root/child directory handles and handle-relative enumeration; keep #395/#396 dependent callers from treating canonical paths as security identity. No fix or native race test is claimed yet.
+- **#396 review coverage:** existing tests include pre-cancel, symlink rejection and depth-limit reporting; root/descendant replacement races, cancellation during active traversal, and entry/directory/runtime/result-cap behavior still need dedicated validation. Keep draft and blocked by #408. A previous review note mistakenly questioned the cancellation guard; that was corrected and withdrawn—the guard itself was not a defect.
+- **Dependency audit:** investigate the desktop audit failure using the job log/advisory output before proposing upgrades or exceptions. Do not suppress advisories or claim clean status.
+- **Release state:** both products remain not release-ready. These hosted CI results do not prove device testing, signed installers, production deployments or end-to-end interoperability.
+
 ## Evidence vocabulary
 
 - **Implemented** — source exists on the named main branch or PR head; partial implementation is labelled explicitly.
