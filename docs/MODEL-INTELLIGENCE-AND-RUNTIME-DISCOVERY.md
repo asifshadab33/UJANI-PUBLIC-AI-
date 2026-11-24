@@ -36,3 +36,9 @@ The first Public AI implementation slice now serializes this v1 contract from th
 - The inventory contains no prompts, file contents, local paths, credentials or conversation history. Discovery does not start runtimes, download models, change the user's selection or expose an endpoint.
 
 This is an initial Ollama adapter, not a runtime-independent multi-provider catalogue. llama.cpp/other runtimes, trustworthy reasoning/coding/language claims, total GPU/VRAM and storage inventory, per-task matching beyond verified chat capability, performance benchmarking and hardware-specific fit remain unfinished. A schema or passing unit test is not proof of cross-platform hardware accuracy; Windows, Linux and macOS device verification is still required.
+
+## Catalogue provenance update (2026-11-24)
+
+The Public desktop catalogue now links each curated candidate to its upstream publisher model card and licence source. Standard SPDX identifiers are recorded for Apache-2.0 and MIT entries; Llama 3.2 and Gemma are explicitly identified as custom terms rather than being presented as permissive SPDX licences. The desktop UI exposes both source links and the metadata review date.
+
+This review covers upstream publisher metadata only. It does not prove that an Ollama tag resolves to the same upstream weights, quantization, digest or licence obligations. Exact Ollama manifests and installed artifact digests remain unpinned; managed pulls and redistribution approval remain disabled. Before enabling either, UJANI must resolve the exact runtime artifact, verify its immutable digest and size, and review the applicable derivative/redistribution terms.
