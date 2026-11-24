@@ -189,6 +189,9 @@ jobs:
       - name: Test hardware-aware model recommendation boundaries
         working-directory: apps/desktop
         run: npm run test:model-recommendation
+      - name: Test model catalogue publisher and licence provenance
+        working-directory: apps/desktop
+        run: npm run test:model-catalogue
       - name: Test operating-system clock jump detection
         working-directory: apps/desktop
         run: npm run test:clock-monitor
