@@ -143,4 +143,42 @@ mod tests {
         item.state = ReminderState::Completed;
         assert!(!item.should_notify_at(600));
     }
+
+    #[test]
+    fn agenda_includes_exact_boundaries_and_snoozed_effective_due_time() {
+        let mut at_now = reminder("at-now", 100);
+        let mut snoozed = reminder("snoozed-original", 80);
+        snoozed.snoozed_until_unix_ms = Some(120);
+        let at_end = reminder("at-end", 200);
+        let before = reminder("before", 99);
+        let after = reminder("after", 201);
+        let records = [after, at_end, snoozed, before, at_now.clone()];
+        let agenda = upcoming_reminders(&records, 100, 100);
+        assert_eq!(
+            agenda.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            vec!["at-now", "snoozed-original", "at-end"]
+        );
+        assert_eq!(agenda[1].effective_due_at_unix_ms(), 120);
+        at_now.snoozed_until_unix_ms = Some(101);
+        assert_eq!(upcoming_reminders(&[at_now], 101, 0).len(), 1);
+    }
+
+    #[test]
+    fn agenda_tie_breaking_is_stable_and_horizon_addition_saturates() {
+        let records = [
+            reminder("z", i64::MAX),
+            reminder("b", 150),
+            reminder("a", 150),
+        ];
+        let sorted = upcoming_reminders(&records, 100, 100);
+        assert_eq!(sorted.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+        let max_due_records = [reminder("max", i64::MAX)];
+        let overflow_window = upcoming_reminders(
+            &max_due_records,
+            i64::MAX - 1,
+            100,
+        );
+        assert_eq!(overflow_window.len(), 1);
+        assert_eq!(overflow_window[0].due_at_unix_ms, i64::MAX);
+    }
 }
