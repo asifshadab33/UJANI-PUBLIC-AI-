@@ -105,6 +105,15 @@ fn pdf_worker_resource_limits_state() -> CapabilityState {
     CapabilityState::Unknown
 }
 
+/// PDF extraction is not offered until worker isolation is verified on this device.
+fn pdf_text_extraction_state() -> CapabilityState {
+    if cfg!(target_os = "android") {
+        CapabilityState::Unavailable
+    } else {
+        CapabilityState::Unknown
+    }
+}
+
 fn pdf_worker_filesystem_isolation_state() -> CapabilityState {
     if cfg!(target_os = "linux") {
         // A post-loader seccomp boundary is configured, but this build has not
@@ -165,7 +174,7 @@ async fn get_capability_snapshot() -> Result<CapabilitySnapshot, String> {
         },
         CapabilityRecord {
             id: "pdf.text_extraction".into(), category: "document".into(),
-            state: if cfg!(target_os = "android") { CapabilityState::Unavailable } else { CapabilityState::Available },
+            state: pdf_text_extraction_state(),
             source: if cfg!(target_os = "android") { "Android preview capability gate".into() } else { "Bundled PDF text parser".into() },
             detail: if cfg!(target_os = "android") {
                 "PDF extraction is not available in the Android preview; the desktop sidecar is not bundled".into()
@@ -3111,6 +3120,13 @@ mod model_capability_selection_tests {
 
     #[test]
     fn pdf_worker_isolation_is_not_claimed_available_without_device_verification() {
+        let expected_pdf_state = if cfg!(target_os = "android") {
+            super::CapabilityState::Unavailable
+        } else {
+            super::CapabilityState::Unknown
+        };
+        assert_eq!(super::pdf_text_extraction_state(), expected_pdf_state);
+        assert_ne!(super::pdf_text_extraction_state(), super::CapabilityState::Available);
         assert_eq!(super::pdf_worker_resource_limits_state(), super::CapabilityState::Unknown);
         let expected_filesystem_state = if cfg!(target_os = "linux") {
             super::CapabilityState::Unknown
