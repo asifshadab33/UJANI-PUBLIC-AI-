@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { BellOff, CalendarClock, Check, Clock3, Pencil, Plus, Trash2 } from "lucide-react";
+import { BellOff, CalendarClock, Check, Clock3, FileDown, Pencil, Plus, Trash2 } from "lucide-react";
 
 type ReminderSettings = { enabled: boolean; notifications_enabled: boolean };
 type LocalReminder = {
@@ -204,6 +204,38 @@ export default function ReminderCentre() {
     });
   }
 
+  function exportReminders() {
+    try {
+      const exportData = {
+        format: "ujani-local-reminders",
+        version: 1,
+        exported_at: new Date().toISOString(),
+        reminders: reminders.map((item) => ({
+          id: item.id,
+          title: item.title,
+          notes: item.notes,
+          due_at: new Date(item.due_at_unix_ms).toISOString(),
+          timezone: item.timezone,
+          state: item.state,
+          snoozed_until: item.snoozed_until_unix_ms === null
+            ? null
+            : new Date(item.snoozed_until_unix_ms).toISOString(),
+          created_at: new Date(item.created_at_unix_ms).toISOString(),
+          updated_at: new Date(item.updated_at_unix_ms).toISOString(),
+        })),
+      };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "ujani-reminders-" + new Date().toISOString().slice(0, 10) + ".json";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (reason) {
+      setError("Could not export local reminders: " + String(reason));
+    }
+  }
+
   return (
     <section className="task-panel reminder-centre" aria-labelledby="reminder-centre-title">
       <div className="section-heading">
@@ -233,6 +265,7 @@ export default function ReminderCentre() {
       {settings && (
         <div className="reminder-maintenance">
           <small>Saved reminders remain encrypted until deleted, even when the feature is disabled.</small>
+          <button type="button" disabled={busy || loading || reminders.length === 0} onClick={exportReminders}><FileDown size={13}/> Export JSON</button>
           <button type="button" disabled={busy || loading} onClick={() => void clearAllReminders()}><Trash2 size={13}/> Clear all</button>
         </div>
       )}
