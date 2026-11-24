@@ -1,7 +1,72 @@
 # UJANI shared implementation backlog and evidence register
 
-**Evidence snapshot: 22 November 2026 (integration refresh).** Canonical cross-repository priority order for the coordinated 14-day programme. This register consolidates the live open issues, open PRs, current main-branch evidence and the existing Public/Enterprise master plans. It is a planning and evidence ledger, not a security certification or release approval.
+**Current evidence snapshot: 24 November 2026.** This top section supersedes older dated snapshots below. Exact commit and PR heads were checked live. This register is evidence, not a certification or release approval.
 
+## Live 24 November status
+
+### Default branches
+- **Public main:** `ef25a24174281038db58404baa26cfc0e05f2185` — includes Public PR #420 (agenda boundary regression tests) and #424 (shared Ed25519 vector). Post-merge main CI is not independently confirmed by the available PR-only workflow lookup.
+- **Enterprise main:** `9f7f59ed4b2866cb61b7ea6c0060887a406f3cf1` — includes Enterprise PR #330 (shared Ed25519 vector) and #331 (resource-request boundary tests). Post-merge main CI is not independently confirmed.
+- No release was published; Enterprise remote execution remains disabled.
+
+### Open PRs and exact heads
+- **Public #423** this evidence register: rebased onto Public main `ef25a24174281038db58404baa26cfc0e05f2185`; updated snapshot is this commit. Fresh CI pending.
+- **Public #425** explicit local reminder JSON export: rebased onto Public main; current head `5f961f641e535dee58a390349a3cd9c83b605568`. The prior head passed UJANI CI, CodeQL, security watch and installer-size audit; those results do not transfer to the new head. Fresh exact-head CI pending.
+- **Enterprise #330:** merged as `9f7f59ed4b2866cb61b7ea6c0060887a406f3cf1`.
+- **Public #420:** merged as `ef25a24174281038db58404baa26cfc0e05f2185`.
+- Branches retained; no stale branch deleted.
+
+### Integration evidence
+- The shared task-contract fixture, manifest, schemas and consent vector remain test-only compatibility artifacts; no transport or remote dispatch is activated.
+- Public #424 and Enterprise #330 carried the shared Ed25519 vector; exact-head checks passed before their merges.
+- Public peer TaskEnvelope v2 and Enterprise WorkloadManifest v1 remain incompatible. No relabelling or implicit translation.
+- Production principal/device/tenant key binding, live dual consent, revocation, durable replay admission, atomic leases, cancellation acknowledgement and signed receipt/ledger integration remain unproven.
+- Model/runtime descriptors are planning/schema artifacts only. Public local discovery/selection-to-real-inference and Enterprise enrolled-device inventory remain incomplete.
+
+### Ordered master backlog (deduplicated)
+1. **Public P0:** #408 handle-pinned relative directory traversal and deterministic race/symlink/reparse/cancellation/resource-limit tests; #70 PDF worker isolation plus installed-package B-01–B-10/D-01–D-07; #120 native IPC capability/consent/denial-before-side-effect matrix.
+2. **Enterprise P0:** #20 trusted enrollment, protected key custody, rotation/revocation, owner+admin consent and replay-resistant authenticated leases; #90 real authenticated tenant-scoped control plane and durable fail-closed audit. Keep remote dispatch disabled.
+3. **Integration P1:** #412 negative/edge vectors and verified admission/receipt semantics; no production bridge until trust/consent/replay/lease/receipt-ledger workflow passes.
+4. **Model intelligence:** Public explicit user model choice with verified size/storage/RAM/capabilities/licence/provenance and real inference; Enterprise privacy-minimised inventory from enrolled devices only.
+5. **External/manual gates:** physical cross-platform installs, PDF confinement/device probes, Ollama inference, signed installers/updater rollback, production key custody, backup/restore and deployment validation.
+
+Neither product is Release-ready. Manual/device tests, production signing/credentials and deployment tests remain external gates.
+
+
+**Evidence snapshot: 23 November 2026 (cross-repository integration refresh).** Canonical cross-repository priority order for the coordinated 14-day programme. This register consolidates the live open issues, open PRs, current main-branch evidence and the existing Public/Enterprise master plans. It is a planning and evidence ledger, not a security certification or release approval.
+
+
+
+## Live refresh — 23 November 2026 (verified integration snapshot)
+
+### Default branches and post-merge checks
+- **Public main:** `67f0cb892143266269e714d56d1f190e27f4cf04` (#422 merged). CI [#45223945028](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45223945028) is in progress; CodeQL [#45223945031](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45223945031) passed. Prior main `050b53b...` after #421 had CI [#45213094072](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45213094072) and CodeQL [#45213093801](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45213093801) passed.
+- **Enterprise main:** `ad1046ab454badf0a568c2e7e9557dfc9e49ac1f` (#326 zeroize 1.9.2 merged after #329). Post-#326 CI [#45225901856](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45225901856), CodeQL [#45225901595](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45225901595) and RustSec [#45225901810](https://github.com/asifshadab33/UJANI-ENTERPRISE-AI/actions/runs/45225901810) are queued. The prior main SHA `ffe8b1c...` after #329 had all policy/PostgreSQL CI jobs pass, CodeQL and RustSec pass.
+- **Merged today:** Public #418 (URL 2.5.9), #421 (cookie 0.18.3), #422 (forward-only reminder snooze and invalid-record notification guard). Enterprise #323/#324/#328/#329/#326 (fail-closed demo/live transition, bounded request tests, CodeQL action pins, duplicate-key validator, zeroize 1.9.2). #396 closed unmerged; remains blocked by #408.
+
+### Open PR inventory
+- **Public #420** — agenda boundary/tie-break/overflow tests only; head `6f8397ae23288d07a9f540502537f0a8ea6005f4`, one ahead/zero behind. CI [#45224170857](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45224170857): Rust core/lint/frontend/workflow/dependency audits and macOS/Windows native pass; Ubuntu native is in progress. CodeQL passed; Android passed; three-platform installer-size audit is in progress; security watch passed. No merge yet.
+- **Public #424** — fixed cross-language Ed25519 vector; rebased head `064d792f4a9f9a5ba63d43623ffc817d734c57bc`. Rust core, workflow lint, frontend build/audit and RustSec pass; lint/native/Android/CodeQL are in progress or queued; installer-size queued. The previous pre-rebase head passed all native tests, CodeQL, RustSec, Android and installer-size, but fresh exact-head checks are required. No approval.
+- **Public #423** — this evidence refresh; updated head checks are queued/in progress after its latest status update.
+- **Enterprise #330** — same vector, head `abe86ac5f5f9bc705526f27382e426b50bc0ecf8`. RustSec, CodeQL/security watch, Ubuntu/Windows policy tests and PostgreSQL tenant-isolation pass; macOS re-run is queued. No approval.
+- **Enterprise #326** — merged as `ad1046ab454badf0a568c2e7e9557dfc9e49ac1f`; exact-head CI (Ubuntu/Windows/macOS/PostgreSQL), CodeQL, RustSec and security watch passed before merge.
+- No branches deleted. #418/#421/#422 and #323/#324/#328/#329/#326 are merged; #325/#327 are closed as superseded.
+
+### Shared-artifact parity and integration boundary
+- Independently fetched from both PR #424/#330 heads: the shared manifest and all seven pinned artifacts are byte-identical. Manifest blob `67292834029efa2ca1b8ba9ef2c98152cece4bce`; catalogue `8f97eeb59d5c6cdf6c07df027eaf587a64184ba6`; inventory-v1 schema `8ff1a1db4700214ba687cd806c449bc1ea7dfdb4`; task-contract-v1 schema `566a0d72babd58636a3ef40e55b5c44168776522`; consent vector `593348db1bfc1d7d03844aa6e2de826f0852c39b`; inventory-v1 vector `543d645d0154c9263ff7784ba4e203f54e498c3c`; inventory-v2 schema `6f1d5a6dd3b70a4b5e78203a20a67b71ed35a489`; inventory-v2 vector `7d3bc7b6990d0572547e2312a97032f5486539a8`.
+- The consent vector now carries a real test-only Ed25519 signature. Independent local Python verification passed, and a resource-limit mutation failed verification. The previous Public #424 head passed native tests on Linux/Windows/macOS and both repositories' CI ran the task-contract validator; current rebased heads need fresh checks. This is fixed-vector proof only—not key enrollment, authenticated transport or admission.
+- **Legacy compatibility remains intentionally rejected:** Public peer `TaskEnvelope` v2 uses seconds, a 16-byte hex nonce, a bounded in-memory replay guard and a distinct length-prefixed signing profile. Enterprise `WorkloadManifest` v1 has different identity/consent semantics. Neither is wire-compatible with shared task-contract v1; no relabelling.
+- Shared v1 defines task/version, sender principal/device and audience org/service, payload digest/length/media type, data/privacy classification, separate scopes/capabilities, CPU/MiB/runtime/output/network bounds, expiry/nonce, signature/key ID, device-trust requirement, user consent and required admin/owner approvals. Status is signed/sequence-numbered with state/policy/consent/reason. Receipt is signed/sequence-numbered and binds input/output digest/length, worker org/device, location, times, outcome, resource usage, consent refs and policy. The schema does not prove approvals or trust: authenticated identity, live consent/revocation, durable replay claim, atomic lease, cancellation acknowledgement and receipt-to-ledger integration remain absent.
+- Model/runtime inventory v2 is byte-identical and evidence-qualified (runtime/model identity/version, task capabilities, context/tool/vision/embedding metadata, estimates, platform/accelerator compatibility, source/confidence/freshness and consent/privacy context). Public discovery remains local Ollama metadata; Enterprise has no authenticated live fleet inventory feed. No prompts/private content cross.
+
+### Ordered master backlog (deduplicated)
+1. **Public P0:** #408 handle-pinned, relative directory enumeration with root/descendant race, symlink/reparse, cancellation and budget tests; #70 PDF worker isolation plus installed-package B-01..B-10/D-01..D-07 (NOT RUN; Windows/macOS confinement unverified, Linux probe Unknown); #120 native IPC authorization/denial-before-side-effect matrix. #396 stays closed/blocked until #408 is fixed.
+2. **Enterprise P0:** #20 trusted enrollment, protected key custody/rotation/revocation, owner+admin consent and authenticated replay-resistant leases; #90 real HTTPS/OIDC host, tenant-scoped live API, durable audit fail-closed. No remote dispatch.
+3. **Integration P1 (#412):** finish strict vectors/legacy rejection, then authenticated identity/dual-consent, replay/expiry, atomic lease, cancellation and signed receipt/ledger workflow. Shared schema is not a runtime bridge.
+4. **Model intelligence (24 Nov target):** Public explicit model choice and verified size/storage/RAM/capability/licence/provenance to real inference; Enterprise enrolled-device-only metadata for operator planning. No silent installs/model switches or mock inference claims.
+5. **External gates:** physical Windows/macOS/Linux install and PDF/UI probes, Linux isolation device probe, Windows/macOS worker confinement, signed installers/updater rollback, real Ollama inference, KMS/HSM/TPM, production database backup/restore and deployment drills.
+
+Neither product is Release-ready. Remote execution/containment remains disabled; signing/credentials and a release publish are not authorised.
 ## Product boundaries and non-negotiable rules
 
 - **Public AI** is an independently usable, local-first personal desktop runtime. Local inference and OS-backed work are preferred; external processing requires explicit, task-scoped user consent and disclosure.
@@ -107,7 +172,7 @@ Recent Public main changes include host-probe offloading (#407), duplicate-key i
 
 ## Cross-repository integration backlog (P1)
 
-- **[Public #412](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/412) — shared task-contract v1 compatibility and receipt integration. Status: schema/blob parity verified; integration blocked.** Day 7 target (27 Nov). No new schema is planned unless tests demonstrate a gap. The task is to cross-test strict parsers and JCS/Ed25519 vectors, exact payload digest/length, legacy Public peer v2 versus Enterprise WorkloadManifest v1 (explicit mapping or rejection), identity/audience binding, user/admin/worker-owner consent and revocation, resource/classification/expiry/replay bounds, monotonic status/cancel acknowledgement, and signed output-bound receipts/ledger ingestion. The consent vector is a placeholder and does not test Ed25519. Dependencies: Public #120 and Enterprise #20/#90. Keep transport/remote dispatch disabled.
+- **[Public #412](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/412) — shared task-contract v1 compatibility and receipt integration. Status: schema/blob parity verified; integration blocked.** Day 7 target (27 Nov). No new schema is planned unless tests demonstrate a gap. The task is to cross-test strict parsers and JCS/Ed25519 vectors, exact payload digest/length, legacy Public peer v2 versus Enterprise WorkloadManifest v1 (explicit mapping or rejection), identity/audience binding, user/admin/worker-owner consent and revocation, resource/classification/expiry/replay bounds, monotonic status/cancel acknowledgement, and signed output-bound receipts/ledger ingestion. The shared consent vector now includes a deterministic test-only Ed25519 envelope signature; Public #424 and Enterprise #330 add Python and native Rust verification, with exact-head CI pending. Dependencies: Public #120 and Enterprise #20/#90. Keep transport/remote dispatch disabled.
 
 ## Coordinated 14-day sequence and next owner
 
@@ -137,3 +202,35 @@ Dates are targets, not permission to bypass prerequisites. The next Public code 
 - **Integration:** contract/schema compatibility is testable; no end-to-end Public-to-Enterprise production workload path is verified.
 
 **Completion rule:** update this register from live main/PR SHAs and exact workflow runs on each coordinated pass. Do not call an item Integration-verified, Device-verified or Release-ready without the corresponding evidence.
+
+### Dependency audit detail — 23 November 2026
+
+Public RustSec exact-head passes on #421 and #422 confirmed the patched `url 2.5.9` and `cookie 0.18.3` lock entries, but **seven allowed warnings remain**: `chrono` (RUSTSEC-2026-0543), `proc-macro-error 1.0.4` (RUSTSEC-2024-0370), `ttf-parser 0.25.1` (RUSTSEC-2026-0192), `zbus_names 3.0.0` (RUSTSEC-2026-0371), `zvariant 4.2.0` (RUSTSEC-2026-0370), `zvariant_derive 4.2.0` (RUSTSEC-2026-0372), and `glib 0.18.5` (RUSTSEC-2024-0429; patched glib >=0.20). The post-#422 main audit is still part of the in-progress push CI. No advisories are suppressed; Tauri/GTK/keyring/PDF dependency-path upgrades need cross-platform evidence. See [Public #73](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/73).
+
+## Latest integration verification — 23 November 2026
+
+This section is the current run's evidence and supersedes the older same-day snapshot rows above.
+
+- **Public main:** `67f0cb892143266269e714d56d1f190e27f4cf04`; CI [#45223945028](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45223945028) in progress, CodeQL [#45223945031](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45223945031) passed. #421 post-merge main checks were green on `050b53b...`; #422 exact-head checks were green before merge.
+- **Enterprise main:** `ffe8b1c50d8d9a9d655f9eeda1e960030c7b8952`; CodeQL/RustSec passed; CI queued with macOS re-run queued and Ubuntu/Windows/PostgreSQL successful.
+## Latest integration verification — 23 November 2026
+
+This section is the current run's evidence and supersedes the older same-day snapshot rows above.
+
+- **Public main:** `67f0cb892143266269e714d56d1f190e27f4cf04`; CI [#45223945028](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45223945028) in progress; CodeQL [#45223945031](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/actions/runs/45223945031) passed. #421 post-merge checks were green on `050b53b...`; #422 exact-head checks were green before merge.
+- **Enterprise main:** `ad1046ab454badf0a568c2e7e9557dfc9e49ac1f`; post-#326 CI/CodeQL/RustSec queued. Prior #329 main CI, CodeQL and RustSec all passed.
+- **Public #420:** head `6f8397ae23288d07a9f540502537f0a8ea6005f4`; Ubuntu native and installer-size in progress; CodeQL/Android pass; macOS/Windows native pass.
+- **Public #424:** head `064d792f4a9f9a5ba63d43623ffc817d734c57bc`; Rust core, frontend, workflow lint and RustSec pass; native/lint/Android/CodeQL/installer checks in progress or queued.
+- **Public #423:** this current evidence update; fresh CI/CodeQL/installer checks queued/in progress.
+- **Enterprise #330:** head `abe86ac5f5f9bc705526f27382e426b50bc0ecf8`; Linux/Windows/PostgreSQL, RustSec, CodeQL/security-watch pass; macOS queued.
+- **Enterprise #326:** merged at `ad1046ab454badf0a568c2e7e9557dfc9e49ac1f`; post-merge checks queued.
+- Reviews: comment reviews on Public #420, Public #424 and Enterprise #330; no approvals. Branches retained.
+
+### Integration boundary findings retained
+
+- Public peer `TaskEnvelope` v2 and Enterprise `WorkloadManifest` v1 remain incompatible; do not reinterpret either as shared v1. Shared v1 is not active transport/dispatch.
+- The shared envelope's required approvals are role labels, not verified admin/owner signatures. Production must authenticate the key-to-principal/device/tenant mapping and validate live consent, trust and policy before an atomic replay/lease admission.
+- Public local receipt v3 is hash-chained metadata, not a worker-signed execution receipt. Enterprise's durable ledger tracks leases/telemetry. The shared signed receipt schema is not wired to live task admission or ledger ingestion.
+- Model/runtime v2 parity is a descriptor compatibility result, not live inventory. Public's current discovery is Ollama-local; selected model-to-real inference and artifact provenance/size/licence verification remain pending. Enterprise needs authenticated enrolled-device inventory and privacy-minimised operator projection. No prompt/private content crosses.
+- Day 3 (23 Nov) work: merged reminder snooze safety and rebased boundary tests. Filesystem identity race #408 and PDF/device-validation #70 remain blocked on platform-native implementation/probes; no speculative Rust rewrite or manual device PASS is claimed.
+
