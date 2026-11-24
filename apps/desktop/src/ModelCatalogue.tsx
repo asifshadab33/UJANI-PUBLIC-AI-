@@ -41,6 +41,8 @@ export default function ModelCatalogue({ totalMemoryMb, availableMemoryMb, sampl
             <p><b>Limitations:</b> {model.limitations.join(" ")}</p>
             <p><b>Storage:</b> Exact download and installed sizes vary by registry artifact and quantisation. Check the current Ollama registry entry and local free disk space before installing directly through your trusted Ollama interface or CLI; the in-app pull is currently disabled and this catalogue does not yet provide a verified size estimate.</p>
             <p><b>Licence:</b> {model.license}</p>
+            <p><b>Publisher source:</b> <a href={model.provenance.publisher_model_card_url} target="_blank" rel="noopener noreferrer">Official model card</a> · <a href={model.provenance.license_source_url} target="_blank" rel="noopener noreferrer">Licence terms</a> · metadata checked {model.provenance.publisher_metadata_checked_at}</p>
+            <p><b>Exact runtime artifact:</b> Not pinned or verified. {model.provenance.artifact_note}</p>
             <small className="muted">Candidate only · {model.runtime_status.replace(/_/g, " ")} · RAM figures are advisory planning guidance, not a fit guarantee.</small>
           </details>
         ))}
