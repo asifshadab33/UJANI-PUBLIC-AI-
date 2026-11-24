@@ -1,7 +1,15 @@
 //! Shared hardened file-opening primitives for user-selected local workflows.
 //!
-//! This module centralizes bounded no-follow directory traversal and platform-specific
-//! file opening; callers retain extension, content, size and task-specific error policy.
+//! This module centralizes bounded no-follow file opening and directory traversal;
+//! callers retain extension, content, size and task-specific error policy.
+//!
+//! Security boundary: `open_regular_file_under_root` reopens a final file through
+//! pinned, no-follow handles, but `walk_directory` still enumerates directories and
+//! obtains some entry metadata by path. That walker is bounded and skips links, but
+//! it is not yet race-resistant against concurrent directory replacement. Do not
+//! treat walker results as authorization to read a file; reopen every candidate
+//! through `open_regular_file_under_root` and keep selected-root identity pinned.
+//! Full handle-relative enumeration is tracked separately before release.
 use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
 #[cfg(windows)]
 use std::fs::OpenOptions;
