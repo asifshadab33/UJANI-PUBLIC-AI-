@@ -13,6 +13,7 @@
     "build:pdf-worker": "node scripts/build-pdf-worker.mjs",
     "build:pdf-worker:dev": "node scripts/build-pdf-worker.mjs --debug",
     "test:model-recommendation": "node --test src/modelRecommendation.test.js",
+    "test:model-catalogue": "node --test src/modelCatalogue.test.js",
     "test:clock-monitor": "node --test src/clockMonitor.test.js"
   },
   "dependencies": {
