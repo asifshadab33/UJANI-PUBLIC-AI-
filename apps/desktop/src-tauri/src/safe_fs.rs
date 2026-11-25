@@ -707,7 +707,7 @@ fn open_selected_root_no_follow(path: &Path) -> io::Result<std::fs::File> {
     let parent_path = path.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "selected root has no parent directory")
     })?;
-    let root_name = match path.components().last() {
+    let root_name = match path.components().next_back() {
         Some(Component::Normal(name)) => name,
         _ => {
             return Err(io::Error::new(
