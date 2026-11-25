@@ -443,7 +443,7 @@ fn file_identity(_file: &File, metadata: &fs::Metadata) -> Option<String> {
 }
 
 #[cfg(windows)]
-/// Returns the volume and file-index identity from an opened Windows file handle.
+/// Returns the volume, file-index and creation-time identity from an opened Windows file handle.
 fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
@@ -454,7 +454,7 @@ fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
     if succeeded == 0 { return None; }
     let info = unsafe { info.assume_init() };
     Some(format!(
-        "windows:{}:{}:{}",
+        "windows:{}:{}:{}:{}:{}",
         info.dwVolumeSerialNumber,
         info.nFileIndexHigh,
         info.nFileIndexLow,
