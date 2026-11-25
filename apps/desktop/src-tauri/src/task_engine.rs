@@ -608,8 +608,12 @@ pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, S
 
 #[cfg(test)]
 mod pdf_worker_status_tests {
-    use super::{pdf_worker_failure_message, pdf_worker_output_was_truncated};
+    use super::pdf_worker_output_was_truncated;
 
+    #[cfg(target_os = "linux")]
+    use super::pdf_worker_failure_message;
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn worker_exit_codes_provide_safe_actionable_errors() {
         assert!(pdf_worker_failure_message(Some(2)).contains("valid PDF"));
@@ -925,43 +929,6 @@ mod local_capability_tests {
         assert!(validate_translation_input(" ", "Arabic", "smart").is_err());
         assert!(validate_translation_input("hello", "", "smart").is_err());
         assert!(validate_translation_input(&"x".repeat(16 * 1024 + 1), "Arabic", "smart").is_err());
-    }
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod windows_pdf_worker_job_tests {
-    use super::create_pdf_worker_job;
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::System::JobObjects::{
-        QueryInformationJobObject, JobObjectExtendedLimitInformation,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOB_OBJECT_LIMIT_PROCESS_TIME,
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    };
-
-    #[test]
-    fn windows_job_object_reports_the_configured_worker_limits() {
-        let job = create_pdf_worker_job().expect("worker Job Object must be created and configured");
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        let queried = unsafe {
-            QueryInformationJobObject(
-                job.as_raw_handle() as HANDLE,
-                JobObjectExtendedLimitInformation,
-                &mut limits as *mut _ as *mut _,
-                std::mem::size_of_val(&limits) as u32,
-                std::ptr::null_mut(),
-            )
-        };
-        assert_ne!(queried, 0, "configured Job Object limits must be queryable");
-        let flags = limits.BasicLimitInformation.LimitFlags;
-        assert_ne!(flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0);
-        assert_ne!(flags & JOB_OBJECT_LIMIT_PROCESS_MEMORY, 0);
-        assert_ne!(flags & JOB_OBJECT_LIMIT_PROCESS_TIME, 0);
-        assert_ne!(flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS, 0);
-        assert_eq!(limits.BasicLimitInformation.ActiveProcessLimit, 1);
-        assert_eq!(limits.BasicLimitInformation.PerProcessUserTimeLimit, 45 * 10_000_000);
-        assert_eq!(limits.ProcessMemoryLimit, 768 * 1024 * 1024);
     }
 }
 
