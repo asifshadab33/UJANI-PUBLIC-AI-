@@ -1115,6 +1115,117 @@ mod walk_tests {
         assert!(walk_directory(&folder, options(2, 20, LinkPolicy::Skip), &cancellation).is_err());
         fs::remove_dir_all(folder).unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn root_replacement_after_pin_does_not_redirect_directory_enumeration() {
+        use std::os::unix::fs::symlink;
+        let selected = root("root-race-selected");
+        let moved = selected.with_extension("pinned");
+        let outside = root("root-race-outside");
+        fs::write(selected.join("inside.txt"), b"inside").unwrap();
+        fs::write(outside.join("outside.txt"), b"outside").unwrap();
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(2, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative.as_os_str().is_empty() && selected.exists() {
+                    fs::rename(&selected, &moved).unwrap();
+                    symlink(&outside, &selected).unwrap();
+                }
+            },
+        ).unwrap();
+
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "inside.txt");
+        assert!(walked.files[0].identity.is_some());
+        fs::remove_file(&selected).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descendant_replacement_after_child_pin_does_not_redirect_descent() {
+        use std::os::unix::fs::symlink;
+        let selected = root("child-race-selected");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let moved = selected.join("nested-pinned");
+        let outside = root("child-race-outside");
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        fs::write(outside.join("outside.txt"), b"outside").unwrap();
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(3, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative == Path::new("nested") && nested.exists() {
+                    fs::rename(&nested, &moved).unwrap();
+                    symlink(&outside, &nested).unwrap();
+                }
+            },
+        ).unwrap();
+
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "inside.txt");
+        assert!(walked.files[0].identity.is_some());
+        fs::remove_file(&nested).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+        fs::remove_dir_all(selected).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pinned_windows_root_denies_replacement_while_enumerating() {
+        let selected = root("windows-root-race");
+        let moved = selected.with_extension("pinned");
+        fs::write(selected.join("inside.txt"), b"inside").unwrap();
+        let mut rename_blocked = false;
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(2, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative.as_os_str().is_empty() {
+                    rename_blocked = fs::rename(&selected, &moved).is_err();
+                }
+            },
+        ).unwrap();
+        assert!(rename_blocked, "root handle must deny FILE_SHARE_DELETE");
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "inside.txt");
+        fs::remove_dir_all(selected).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pinned_windows_child_denies_replacement_before_descent() {
+        let selected = root("windows-child-race");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let moved = selected.join("nested-pinned");
+        let mut rename_blocked = false;
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(3, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative == std::path::Path::new("nested") {
+                    rename_blocked = fs::rename(&nested, &moved).is_err();
+                }
+            },
+        ).unwrap();
+        assert!(rename_blocked, "child directory handle must deny FILE_SHARE_DELETE");
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "inside.txt");
+        fs::remove_dir_all(selected).unwrap();
+    }
+
 }
 
 
