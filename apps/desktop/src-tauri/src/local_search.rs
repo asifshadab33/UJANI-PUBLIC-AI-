@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
+    fs,
     io::Read,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
