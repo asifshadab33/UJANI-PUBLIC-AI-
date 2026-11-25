@@ -677,8 +677,9 @@ pub(crate) struct WalkResult {
     pub truncated: bool,
 }
 
-/// Open the selected root once, without following any path component. The returned
-/// directory handle remains pinned for the entire traversal.
+/// Resolve and pin the selected root's parent, then open the selected final
+/// directory component with O_NOFOLLOW. Ancestor aliases (for example macOS
+/// /var -> /private/var) may resolve before the parent handle is pinned.
 #[cfg(unix)]
 fn open_selected_root_no_follow(path: &Path) -> io::Result<std::fs::File> {
     use std::{
@@ -838,8 +839,9 @@ where
         return Err("Directory traversal cancelled by user.".into());
     }
 
-    // Open once from the filesystem root using no-follow component opens. On Windows
-    // the returned handle also denies FILE_SHARE_DELETE, preventing root replacement.
+    // Pin the selected root once. Unix opens its parent handle (allowing normal OS
+    // ancestor aliases) and opens the selected final component with O_NOFOLLOW;
+    // Windows also denies FILE_SHARE_DELETE to prevent root replacement.
     let root_handle = open_selected_root_no_follow(selected_root)
         .map_err(|error| format!("Cannot safely pin the selected folder: {error}"))?;
     let root_metadata = root_handle.metadata()
@@ -1069,7 +1071,9 @@ mod walk_tests {
     }
 
     use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
-    use std::{fs, path::Path, time::{SystemTime, UNIX_EPOCH}};
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    #[cfg(unix)]
+    use std::path::Path;
     use tokio_util::sync::CancellationToken;
 
     fn root(label: &str) -> std::path::PathBuf {
