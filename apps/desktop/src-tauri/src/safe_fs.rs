@@ -1022,7 +1022,7 @@ mod walk_tests {
     }
 
     use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{fs, path::Path, time::{SystemTime, UNIX_EPOCH}};
     use tokio_util::sync::CancellationToken;
 
     fn root(label: &str) -> std::path::PathBuf {
