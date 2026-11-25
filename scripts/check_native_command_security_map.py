@@ -185,7 +185,10 @@ def rust_function_body(source: str, function_name: str) -> str:
     # Preserve offsets/newlines while blanking comments and strings first. This
     # prevents a commented-out fake fn declaration from shadowing the real item.
     masked = strip_rust_noncode(source)
-    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\(", masked)
+    match = re.search(
+        rf"\bfn\s+{re.escape(function_name)}\s*(?:<[^()]*>)?\s*\(",
+        masked,
+    )
     if not match:
         raise ValueError(f"could not locate Rust function {function_name}")
     opening_paren = masked.find("(", match.start())
