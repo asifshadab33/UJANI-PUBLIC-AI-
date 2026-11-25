@@ -685,7 +685,7 @@
       "status": "Source-reviewed targeted boundary: provider scope is validated before consent and the OS query is invoked only after fresh native confirmation; alternate invocation review and the full command denial matrix remain pending",
       "caller": "Registered Tauri frontend IPC command; alternate/native invocation surfaces have not yet been independently audited.",
       "data_classification": "Treat caller-supplied content as untrusted. The shared DataClass policy field is not yet propagated as a trusted, user-selected classification across all native routes.",
-      "consent": "No per-call approval expected for this read-only operation; confirm that no hidden state mutation or external transfer is introduced.",
+      "consent": "Fresh native confirmation describes the exact selected Windows Security Center categories and fields; decline, cancellation or expiry prevents the query.",
       "cancellation": "Native confirmation denial, cancellation or timeout fails closed; the provider query closure is not invoked unless approval succeeds; provider query worker/timeout limits remain separately enforced",
       "resource_limits": "Read-only output and underlying OS/runtime calls must remain bounded; command-specific numeric limits require review.",
       "failure_mode": "Return a bounded error without mutating persistent state or initiating external transfer."
