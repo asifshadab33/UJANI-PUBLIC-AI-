@@ -1075,7 +1075,7 @@ mod walk_tests {
             )
             .unwrap_err();
             assert!(
-                error.contains("Cannot safely access the selected Windows folder"),
+                error.contains("local drive paths are supported for safe folder access"),
                 "unsupported root should be rejected before enumeration: {value}: {error}"
             );
         }
