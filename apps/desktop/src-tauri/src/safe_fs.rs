@@ -1147,12 +1147,9 @@ mod walk_tests {
     #[cfg(unix)]
     #[test]
     fn root_replacement_after_pin_does_not_redirect_directory_enumeration() {
-        use std::os::unix::fs::symlink;
         let selected = root("root-race-selected");
         let moved = selected.with_extension("pinned");
-        let outside = root("root-race-outside");
         fs::write(selected.join("inside.txt"), b"inside").unwrap();
-        fs::write(outside.join("outside.txt"), b"outside").unwrap();
 
         let walked = super::walk_directory_impl(
             &selected,
@@ -1161,29 +1158,26 @@ mod walk_tests {
             |relative| {
                 if relative.as_os_str().is_empty() && selected.exists() {
                     fs::rename(&selected, &moved).unwrap();
-                    symlink(&outside, &selected).unwrap();
+                    fs::create_dir(&selected).unwrap();
+                    fs::write(selected.join("replacement.txt"), b"replacement").unwrap();
                 }
             },
         );
 
         assert!(walked.is_err(), "a replaced root path must fail closed");
 
-        fs::remove_file(&selected).unwrap();
+        fs::remove_dir_all(selected).unwrap();
         fs::remove_dir_all(moved).unwrap();
-        fs::remove_dir_all(outside).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
     fn descendant_replacement_after_child_pin_does_not_redirect_descent() {
-        use std::os::unix::fs::symlink;
         let selected = root("child-race-selected");
         let nested = selected.join("nested");
         fs::create_dir_all(&nested).unwrap();
         let moved = selected.join("nested-pinned");
-        let outside = root("child-race-outside");
         fs::write(nested.join("inside.txt"), b"inside").unwrap();
-        fs::write(outside.join("outside.txt"), b"outside").unwrap();
 
         let walked = super::walk_directory_impl(
             &selected,
@@ -1192,17 +1186,17 @@ mod walk_tests {
             |relative| {
                 if relative == Path::new("nested") && nested.exists() {
                     fs::rename(&nested, &moved).unwrap();
-                    symlink(&outside, &nested).unwrap();
+                    fs::create_dir(&nested).unwrap();
+                    fs::write(nested.join("replacement.txt"), b"replacement").unwrap();
                 }
             },
         ).unwrap();
 
         assert!(walked.files.is_empty(), "a replaced descendant must not leak stale paths");
         assert!(walked.truncated, "replaced descendant paths must be reported as skipped");
-        fs::remove_file(&nested).unwrap();
+        fs::remove_dir_all(nested).unwrap();
         fs::remove_dir_all(moved).unwrap();
         fs::remove_dir_all(selected).unwrap();
-        fs::remove_dir_all(outside).unwrap();
     }
 
     #[cfg(windows)]
