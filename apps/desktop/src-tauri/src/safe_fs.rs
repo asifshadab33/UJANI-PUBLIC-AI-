@@ -16,9 +16,10 @@ use std::fs::OpenOptions;
 
 
 /// Opens a file beneath the selected root using handle-relative, no-follow
-/// traversal. On Unix every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the
-/// final component with O_NOFOLLOW, so replacing a path component with a symlink
-/// cannot redirect a later file read outside the selected directory.
+/// traversal. The selected root's parent is resolved and pinned once, the final
+/// root component is opened with O_NOFOLLOW, and every relative child component is
+/// opened from its pinned parent with O_NOFOLLOW. Windows uses handle-relative
+/// NtCreateFile with FILE_OPEN_REPARSE_POINT and denies delete sharing on directories.
 #[cfg(unix)]
 pub(crate) fn open_regular_file_under_root(
     root: &Path,
@@ -785,7 +786,7 @@ fn open_selected_root_no_follow(_path: &Path) -> io::Result<std::fs::File> {
     ))
 }
 
-/// Stable filesystem identity from an already-open regular-file handle.
+/// Stable filesystem identity from an already-open file or directory handle.
 pub(crate) fn file_identity(file: &std::fs::File) -> Option<String> {
     let _metadata = file.metadata().ok()?;
     #[cfg(unix)]
