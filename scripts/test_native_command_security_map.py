@@ -19,10 +19,90 @@ from check_native_command_security_map import (
     missing_local_state_mutation_receipt_guards,
     missing_reminder_destructive_confirmation_guards,
     missing_async_os_probe_offload_guards,
+    missing_defender_status_guards,
     missing_model_recommendation_probe_offload_guards,
     missing_ollama_status_probe_offload_guards,
     manifest_entry_errors,
 )
+
+
+
+
+class DefenderNativeConfirmationGuardTests(unittest.TestCase):
+    SOURCE = """
+        async fn run_after_native_confirmation<T, F, Fut>(
+            approved: bool,
+            denied_message: &'static str,
+            operation: F,
+        ) -> Result<T, String>
+        where
+            F: FnOnce() -> Fut,
+            Fut: std::future::Future<Output = Result<T, String>>,
+        {
+            if !approved {
+                return Err(denied_message.to_string());
+            }
+            operation().await
+        }
+
+        async fn get_security_provider_status() {
+            validate_security_provider_ids(&provider_ids)?;
+            let approved = confirm_native(&app, "security status", message, token, Duration::from_secs(120)).await;
+            run_after_native_confirmation(
+                approved,
+                "denied",
+                || security_providers::read_only_status(&provider_ids),
+            ).await
+        }
+
+        async fn get_defender_status() {
+            let approved = confirm_native(&app, "Defender status", message, token, Duration::from_secs(120)).await;
+            run_after_native_confirmation(
+                approved,
+                "denied",
+                security_providers::read_defender_status,
+            ).await
+        }
+    """
+    ADAPTER = """
+        const MAX_OUTPUT_BYTES: usize = 16 * 1024;
+        const QUERY_TIMEOUT: Duration = Duration::from_secs(8);
+        fn query() {
+            GetSystemDirectoryW();
+            Get-MpComputerStatus -ErrorAction Stop;
+            child.kill_on_drop(true);
+        }
+    """
+
+    def test_both_provider_queries_require_the_lazy_native_confirmation_gate(self):
+        self.assertEqual(missing_defender_status_guards(self.SOURCE, self.ADAPTER), [])
+
+    def test_helper_must_return_before_invoking_query_on_denial(self):
+        source = self.SOURCE.replace(
+            "if !approved {\n                return Err(denied_message.to_string());\n            }",
+            "",
+        )
+        self.assertIn(
+            "native confirmation helper must fail closed before invoking the query closure",
+            missing_defender_status_guards(source, self.ADAPTER),
+        )
+
+    def test_query_cannot_be_called_before_native_confirmation(self):
+        source = self.SOURCE.replace(
+            "run_after_native_confirmation(\n                approved,\n                \"denied\",\n                security_providers::read_defender_status,",
+            "security_providers::read_defender_status().await;\n            run_after_native_confirmation(\n                approved,\n                \"denied\",\n                security_providers::read_defender_status,",
+        )
+        self.assertIn(
+            "get_defender_status consent/order",
+            missing_defender_status_guards(source, self.ADAPTER),
+        )
+
+    def test_defender_adapter_limits_remain_required(self):
+        adapter = self.ADAPTER.replace("child.kill_on_drop(true);", "")
+        self.assertIn(
+            "Defender adapter .kill_on_drop(true)",
+            missing_defender_status_guards(self.SOURCE, adapter),
+        )
 
 
 class ReminderDestructiveConfirmationTests(unittest.TestCase):
