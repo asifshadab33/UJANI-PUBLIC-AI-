@@ -429,46 +429,6 @@ pub async fn find_local_files(
 
 /// Stable filesystem identity where the platform exposes it. Unsupported platforms
 /// deliberately return None; size, high-resolution mtime and canonical path remain required.
-#[cfg(unix)]
-/// Returns the device and inode identity for an opened Unix file handle.
-fn file_identity(_file: &File, metadata: &fs::Metadata) -> Option<String> {
-    use std::os::unix::fs::MetadataExt;
-    Some(format!(
-        "unix:{}:{}:{}:{}",
-        metadata.dev(),
-        metadata.ino(),
-        metadata.ctime(),
-        metadata.ctime_nsec()
-    ))
-}
-
-#[cfg(windows)]
-/// Returns the volume, file-index and creation-time identity from an opened Windows file handle.
-fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
-    let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
-    let succeeded = unsafe {
-        GetFileInformationByHandle(file.as_raw_handle() as _, info.as_mut_ptr())
-    };
-    if succeeded == 0 { return None; }
-    let info = unsafe { info.assume_init() };
-    Some(format!(
-        "windows:{}:{}:{}:{}:{}",
-        info.dwVolumeSerialNumber,
-        info.nFileIndexHigh,
-        info.nFileIndexLow,
-        info.ftCreationTime.dwHighDateTime,
-        info.ftCreationTime.dwLowDateTime
-    ))
-}
-
-#[cfg(not(any(unix, windows)))]
-/// Returns no stable file identity on platforms without a supported handle API.
-fn file_identity(_file: &File, _metadata: &fs::Metadata) -> Option<String> {
-    None
-}
-
 /// Returns a signed nanosecond modification timestamp, including pre-epoch files.
 fn modified_unix_ns(metadata: &fs::Metadata) -> Option<i64> {
     let time = metadata.modified().ok()?;
@@ -498,7 +458,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
         let Ok(metadata) = file.metadata() else { return false; };
         if !metadata.is_file() || metadata.len() != candidate.size
             || modified_unix_ns(&metadata) != candidate.modified_unix_ns
-            || file_identity(&file, &metadata) != candidate.identity {
+            || crate::safe_fs::file_identity(&file) != candidate.identity {
             return false;
         }
         #[cfg(windows)] {
@@ -556,7 +516,7 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
         let modified_unix_ns = modified_unix_ns(&metadata);
-        let identity = file_identity(&file, &metadata);
+        let identity = crate::safe_fs::file_identity(&file);
         if identity.is_none() || identity != entry.identity {
             truncated = true;
             continue;
@@ -587,7 +547,7 @@ fn read_bounded(
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() > limit
         || expected_identity.is_none()
-        || file_identity(&file, &metadata).as_deref() != expected_identity
+        || crate::safe_fs::file_identity(&file).as_deref() != expected_identity
     {
         return Err("File identity changed or the file is not eligible for bounded reading.".into());
     }
