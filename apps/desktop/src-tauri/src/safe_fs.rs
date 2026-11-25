@@ -260,7 +260,8 @@ mod windows_handle {
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const SYNCHRONIZE: u32 = 0x0010_0000;
-    const FILE_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
+    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
     const FILE_OPEN: u32 = 0x0000_0001;
     const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
     const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
@@ -289,6 +290,7 @@ mod windows_handle {
         parent: &std::fs::File,
         name: &OsStr,
         directory: bool,
+        list_directory: bool,
     ) -> io::Result<std::fs::File> {
         let mut wide: Vec<u16> = name.encode_wide().collect();
         if wide.is_empty()
@@ -326,6 +328,7 @@ mod windows_handle {
         let mut handle = ptr::null_mut::<c_void>();
         let access = if directory {
             FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+                | if list_directory { FILE_LIST_DIRECTORY } else { 0 }
         } else {
             FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE
         };
@@ -348,7 +351,7 @@ mod windows_handle {
                 &mut io_status,
                 ptr::null_mut(),
                 0,
-                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_SHARE_READ_WRITE,
                 FILE_OPEN,
                 options,
                 ptr::null_mut(),
@@ -373,16 +376,24 @@ mod windows_handle {
     /// ancestor by handle and rejecting any reparse point encountered on the way.
     /// UNC/network roots and non-drive device namespaces are rejected fail-closed.
     pub(super) fn open_directory_path_no_reparse(path: &Path) -> io::Result<std::fs::File> {
+        open_directory_path_internal(path, false)
+    }
+
+    /// Opens the selected root with list-directory access and no FILE_SHARE_DELETE,
+    /// so cap_std can enumerate the already-pinned handle without a path reopen.
+    pub(super) fn open_directory_path_for_enumeration(path: &Path) -> io::Result<std::fs::File> {
+        open_directory_path_internal(path, true)
+    }
+
+    fn open_directory_path_internal(path: &Path, enumerate: bool) -> io::Result<std::fs::File> {
         let mut components = path.components();
         let drive = match components.next() {
             Some(Component::Prefix(prefix)) => match prefix.kind() {
                 Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive,
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "Only local drive paths are supported for safe folder access.",
-                    ));
-                }
+                _ => return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Only local drive paths are supported for safe folder access.",
+                )),
             },
             _ => return Err(invalid_path("Selected root must be an absolute drive path.")),
         };
@@ -398,29 +409,35 @@ mod windows_handle {
             .collect();
         // SAFETY: drive_type_wide is NUL-terminated and remains alive for the call.
         let drive_type = unsafe { GetDriveTypeW(drive_type_wide.as_ptr()) };
-        if drive_type != DRIVE_FIXED
-            && drive_type != DRIVE_REMOVABLE
-            && drive_type != DRIVE_RAMDISK
-        {
+        if drive_type != DRIVE_FIXED && drive_type != DRIVE_REMOVABLE && drive_type != DRIVE_RAMDISK {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Safe folder access is limited to local fixed, removable or RAM drives.",
             ));
         }
 
+        let has_components = components.clone().next().is_some();
+        let drive_access = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+            | if enumerate && !has_components { FILE_LIST_DIRECTORY } else { 0 };
         let mut directory = OpenOptions::new()
-            .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
-            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+            .access_mode(drive_access)
+            .share_mode(FILE_SHARE_READ_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(drive_root)?;
         verify_directory_handle(&directory)?;
 
-        for component in components {
+        while let Some(component) = components.next() {
             let name = match component {
                 Component::Normal(name) => name,
                 _ => return Err(invalid_path("Non-normal Windows path component rejected.")),
             };
-            let child = open_relative_component(&directory, name, true)?;
+            let final_component = components.peek().is_none();
+            let child = open_relative_component(
+                &directory,
+                name,
+                true,
+                enumerate && final_component,
+            )?;
             verify_directory_handle(&child)?;
             directory = child;
         }
@@ -440,7 +457,7 @@ mod windows_handle {
                 _ => return Err(invalid_path("Non-normal relative path component rejected.")),
             };
             let final_component = components.peek().is_none();
-            let opened = open_relative_component(&directory, name, !final_component)?;
+            let opened = open_relative_component(&directory, name, !final_component, false)?;
             if final_component {
                 let metadata = opened.metadata()?;
                 if !metadata.is_file() || is_reparse_point(&metadata) {
