@@ -28,6 +28,7 @@ pub(crate) fn open_regular_file_under_root(
         ffi::CString,
         os::fd::{AsRawFd, FromRawFd},
         os::unix::ffi::OsStrExt,
+        path::Component,
     };
 
     fn open_at(
@@ -47,9 +48,6 @@ pub(crate) fn open_regular_file_under_root(
         Ok(unsafe { std::fs::File::from_raw_fd(fd) })
     }
 
-    // Linux O_PATH handles require search permission but not directory read
-    // permission. They remain valid dirfds for component-wise openat traversal.
-    // Other Unix targets retain O_RDONLY because O_PATH is Linux-specific.
     fn directory_open_flags() -> i32 {
         #[cfg(target_os = "linux")]
         {
@@ -61,54 +59,31 @@ pub(crate) fn open_regular_file_under_root(
         }
     }
 
-    fn open_root_directory() -> io::Result<std::fs::File> {
-        #[cfg(target_os = "linux")]
-        {
-            let name = CString::new("/").expect("static root path has no NUL");
-            // SAFETY: name is NUL-terminated and remains alive for the call.
-            let fd = unsafe { libc::open(name.as_ptr(), directory_open_flags()) };
-            if fd < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: fd is a fresh descriptor returned by open and ownership is transferred.
-            Ok(unsafe { std::fs::File::from_raw_fd(fd) })
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            std::fs::File::open("/")
-        }
-    }
-
     if !root.is_absolute() || !path.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "selected root and file path must be absolute",
         ));
     }
-    let relative = path.strip_prefix(root)
-        .map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "file path is outside selected root",
-            )
-        })?;
-    let mut components = root
-        .components()
-        .chain(relative.components())
-        .filter_map(|component| {
-        match component {
-            std::path::Component::RootDir => None,
-            std::path::Component::Normal(name) => Some(Ok(name)),
-            _ => Some(Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "non-normal path component rejected",
-            ))),
-        }
-    }).peekable();
+    let relative = path.strip_prefix(root).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file path is outside selected root",
+        )
+    })?;
+    let mut directory = open_selected_root_no_follow(root)?;
+    let mut components = relative.components().peekable();
 
-    let mut directory = open_root_directory()?;
     while let Some(component) = components.next() {
-        let name = component?;
+        let name = match component {
+            Component::Normal(name) => name,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "non-normal relative path component rejected",
+                ));
+            }
+        };
         let final_component = components.peek().is_none();
         let flags = if final_component {
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
@@ -713,45 +688,87 @@ fn open_selected_root_no_follow(path: &Path) -> io::Result<std::fs::File> {
         path::Component,
     };
 
-    if !path.is_absolute() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "selected root must be absolute"));
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected root must be an absolute normalized path",
+        ));
     }
-    fn open_at(parent: &std::fs::File, name: &std::ffi::OsStr, flags: i32) -> io::Result<std::fs::File> {
-        let name = CString::new(name.as_bytes())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path component contains NUL"))?;
-        // SAFETY: parent is a live directory descriptor and name is NUL-terminated.
-        let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags, 0) };
-        if fd < 0 { return Err(io::Error::last_os_error()); }
-        // SAFETY: openat returned a new owned descriptor.
-        Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    if path == Path::new("/") {
+        return std::fs::File::open("/");
     }
-    fn ancestor_flags() -> i32 {
-        #[cfg(target_os = "linux")]
-        { libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC }
-        #[cfg(not(target_os = "linux"))]
-        { libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC }
-    }
-    let mut directory = std::fs::File::open("/")?;
-    let mut components = path.components().peekable();
-    while let Some(component) = components.next() {
-        let name = match component {
-            Component::RootDir => continue,
-            Component::Normal(name) => name,
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "non-normal root path component rejected")),
+
+    let parent_path = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "selected root has no parent directory")
+    })?;
+    let root_name = match path.components().last() {
+        Some(Component::Normal(name)) => name,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "selected root must end in a normal path component",
+            ));
+        }
+    };
+
+    // Resolve and pin the parent in one open operation. This intentionally follows
+    // ancestor aliases such as macOS /var -> /private/var; only the user-selected
+    // final directory component is opened with O_NOFOLLOW below.
+    #[cfg(target_os = "linux")]
+    let parent = {
+        let parent_name = CString::new(parent_path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "parent path contains NUL"))?;
+        // SAFETY: parent_name is NUL-terminated and remains alive for the call.
+        let fd = unsafe {
+            libc::open(
+                parent_name.as_ptr(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
         };
-        let final_component = components.peek().is_none();
-        let flags = if final_component {
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC
-        } else {
-            ancestor_flags()
-        };
-        directory = open_at(&directory, name, flags)?;
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fd is a fresh descriptor returned by open and ownership is transferred.
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let parent = std::fs::File::open(parent_path)?;
+
+    if !parent.metadata()?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "selected root parent is not a directory",
+        ));
     }
-    let metadata = directory.metadata()?;
+
+    let root_name = CString::new(root_name.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "root component contains NUL"))?;
+    // SAFETY: parent is a live directory descriptor and root_name is NUL-terminated.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            root_name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is a fresh descriptor returned by openat and ownership is transferred.
+    let root = unsafe { std::fs::File::from_raw_fd(fd) };
+    let metadata = root.metadata()?;
     if !metadata.is_dir() || is_reparse_point(&metadata) {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "selected root is not a real directory"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "selected root is not a real directory",
+        ));
     }
-    Ok(directory)
+    Ok(root)
 }
 
 #[cfg(windows)]
@@ -769,11 +786,11 @@ fn open_selected_root_no_follow(_path: &Path) -> io::Result<std::fs::File> {
 
 /// Stable filesystem identity from an already-open regular-file handle.
 pub(crate) fn file_identity(file: &std::fs::File) -> Option<String> {
-    let metadata = file.metadata().ok()?;
+    let _metadata = file.metadata().ok()?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+        Some(format!("unix:{}:{}", _metadata.dev(), _metadata.ino()))
     }
     #[cfg(windows)]
     {
@@ -795,7 +812,7 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Option<String> {
         ))
     }
     #[cfg(not(any(unix, windows)))]
-    { let _ = metadata; None }
+    { let _ = _metadata; None }
 }
 
 fn walk_directory_impl<F>(
