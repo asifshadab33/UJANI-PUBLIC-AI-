@@ -346,6 +346,8 @@ mod tests {
         collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
         MAX_TOTAL_BYTES,
     };
+    #[cfg(unix)]
+    use super::MAX_REPORTED_SKIPPED_FILE_NAMES;
     use tokio_util::sync::CancellationToken;
     use std::{
         fs,
