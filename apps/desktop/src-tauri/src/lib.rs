@@ -2897,6 +2897,24 @@ fn validate_security_provider_ids(provider_ids: &[String]) -> Result<(), &'stati
     Ok(())
 }
 
+
+/// Run a sensitive read-only provider query only after native confirmation succeeds.
+/// Accept a closure rather than a future so the OS query is not even constructed on denial.
+async fn run_after_native_confirmation<T, F, Fut>(
+    approved: bool,
+    denied_message: &'static str,
+    operation: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    if !approved {
+        return Err(denied_message.to_string());
+    }
+    operation().await
+}
+
 /// Reads aggregate OS security-provider status only after a native confirmation.
 /// The React consent checkbox is a usability gate, not an authorization boundary:
 /// direct IPC callers must receive the same native, scope-specific confirmation.
@@ -2919,11 +2937,12 @@ async fn get_security_provider_status(
         CancellationToken::new(),
         Duration::from_secs(120),
     ).await;
-    if !approved {
-        return Err("The native confirmation was declined, cancelled or expired; no provider query was made.".into());
-    }
-
-    security_providers::read_only_status(&provider_ids).await
+    run_after_native_confirmation(
+        approved,
+        "The native confirmation was declined, cancelled or expired; no provider query was made.",
+        || security_providers::read_only_status(&provider_ids),
+    )
+    .await
 }
 
 /// Reads detailed local Defender update and protection metadata only after a
@@ -2939,10 +2958,12 @@ async fn get_defender_status(
         CancellationToken::new(),
         Duration::from_secs(120),
     ).await;
-    if !approved {
-        return Err("The native confirmation was declined, cancelled or expired; no Defender query was made.".into());
-    }
-    security_providers::read_defender_status().await
+    run_after_native_confirmation(
+        approved,
+        "The native confirmation was declined, cancelled or expired; no Defender query was made.",
+        security_providers::read_defender_status,
+    )
+    .await
 }
 
 macro_rules! ujani_invoke_handler {
@@ -3063,6 +3084,59 @@ mod security_provider_command_tests {
             "windows.antivirus".into(),
             "windows.firewall".into(),
         ]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod native_confirmation_boundary_tests {
+    use super::run_after_native_confirmation;
+    use std::cell::Cell;
+
+    #[tokio::test]
+    async fn denied_confirmation_does_not_construct_or_run_the_provider_query() {
+        let query_started = Cell::new(false);
+        let result = run_after_native_confirmation(
+            false,
+            "native confirmation denied",
+            || async {
+                query_started.set(true);
+                Ok::<(), String>(())
+            },
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err(), "native confirmation denied");
+        assert!(!query_started.get());
+    }
+
+    #[tokio::test]
+    async fn approved_confirmation_runs_the_query_once_and_returns_its_result() {
+        let query_calls = Cell::new(0);
+        let result = run_after_native_confirmation(
+            true,
+            "native confirmation denied",
+            || async {
+                query_calls.set(query_calls.get() + 1);
+                Ok::<_, String>("read-only provider result")
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, "read-only provider result");
+        assert_eq!(query_calls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn approved_query_failures_are_not_hidden() {
+        let result = run_after_native_confirmation(
+            true,
+            "native confirmation denied",
+            || async { Err::<(), _>("provider unavailable".to_string()) },
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err(), "provider unavailable");
     }
 }
 
