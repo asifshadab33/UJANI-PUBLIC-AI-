@@ -668,7 +668,7 @@ mod pdf_worker_status_tests {
     fn stderr_tail_is_bounded_and_preserves_a_marker_split_across_chunks() {
         use super::{append_bounded_pdf_worker_stderr, MAX_PDF_WORKER_STDERR_BYTES};
 
-        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\n";
         let mut metadata = Vec::new();
         append_bounded_pdf_worker_stderr(&mut metadata, &vec![b'x'; MAX_PDF_WORKER_STDERR_BYTES + 512]);
         assert_eq!(metadata.len(), MAX_PDF_WORKER_STDERR_BYTES);
