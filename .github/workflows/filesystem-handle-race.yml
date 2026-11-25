@@ -31,6 +31,15 @@ jobs:
       - name: Generate Tauri platform icons from the checked-in SVG
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+      - name: Install frontend and Tauri CLI dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Generate Tauri platform icons from the checked-in SVG
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       - if: runner.os == 'Linux'
         run: |
