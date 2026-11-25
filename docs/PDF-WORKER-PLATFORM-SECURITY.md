@@ -34,3 +34,12 @@ The PDF parser handles untrusted bytes in a child process. The controls below ap
 ## Evidence status
 
 GitHub Actions validates compilation, Rust tests, CodeQL and installer builds on its Linux, Windows and macOS runners. Linux now has an automated subprocess probe for the worker's path-open boundary, but the runtime capability remains Unknown until a supported-device smoke test confirms the deployed kernel enforces it. macOS still relies on deprecated `sandbox-exec` and does not deny arbitrary file reads; Windows Job Objects do not deny file reads or network access. Those platform gaps remain release blockers. CI is not a substitute for hands-on tests on macOS Intel/Apple Silicon devices or a security assessment of deployed OS versions. Unsupported restrictions must remain labelled unknown rather than inferred from a successful build.
+
+
+## Fail-closed platform policy (25 November 2026)
+
+The desktop PDF worker is enabled only on Linux builds where the parent resource limits, network/process syscall restrictions, and worker-side filesystem-denial filter are installed before untrusted PDF bytes are supplied. The Linux worker also has automated negative tests for path reads, inherited descriptors and path mutation attempts.
+
+Windows and macOS PDF extraction are intentionally disabled until equivalent filesystem **and** network isolation is implemented and verified. A Windows Job Object provides resource/process limits but is not filesystem or network confinement. The current macOS sandbox profile is deprecated and does not deny arbitrary file reads. Neither is sufficient to execute an untrusted PDF parser as an isolated worker.
+
+This is a fail-closed feature limitation, not a claim that those platforms have passed sandbox verification. Re-enable PDF extraction on a platform only after its native sandbox implementation, escape/negative tests, resource limits, cancellation/timeout behavior, installed-package tests and supported OS-version matrix have passed. Other UJANI features remain available on those platforms.
