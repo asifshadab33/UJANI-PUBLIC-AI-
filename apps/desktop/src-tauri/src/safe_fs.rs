@@ -1228,7 +1228,7 @@ mod walk_tests {
         );
 
         assert!(replaced_after_pin, "the descendant replacement hook must run after pinning");
-        let error = walked.expect_err("a replaced descendant must fail closed, not return either path");
+        let error = walked.err().expect("a replaced descendant must fail closed, not return either path");
         assert!(
             error.to_string().contains("selected folder changed during scanning"),
             "unexpected fail-closed error: {error}"
