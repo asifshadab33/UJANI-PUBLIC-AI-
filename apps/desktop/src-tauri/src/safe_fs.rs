@@ -1220,7 +1220,7 @@ mod walk_tests {
                 if relative == Path::new("nested") && nested.exists() {
                     fs::rename(&nested, &moved).unwrap();
                     fs::create_dir(&nested).unwrap();
-                    fs::write(nested.join("replacement.txt"), b"replacement").unwrap();
+                    fs::write(nested.join("inside.txt"), b"replacement").unwrap();
                 }
             },
         ).unwrap();
