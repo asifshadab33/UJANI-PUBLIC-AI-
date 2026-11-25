@@ -1,45 +1,66 @@
 # PDF worker confinement: platform evidence and limitations
 
-The PDF parser handles untrusted bytes in a child process. The controls below apply to that worker only; they do not sandbox the complete UJANI application.
+The PDF parser handles untrusted bytes in a child process. These controls apply to that worker only; they do not sandbox the complete UJANI application. UJANI's PDF feature is text extraction only. It does not execute PDF JavaScript, launch embedded files, follow document links, or fetch remote resources.
 
-## Linux
+## Security design requirements
+
+Treat every PDF as hostile input, regardless of extension or declared MIME type.
+
+- Validate the selected file and enforce the 10 MiB input cap before expensive decoding or parser startup.
+- Run parsing out of process. Do not fall back to in-process parsing when the worker or a required OS control is missing.
+- Deny worker network access and access to files other than the explicitly supplied input channel. Do not rely on the PDF parser's own behavior to enforce this.
+- Apply CPU, memory/address-space, process, descriptor, temporary-storage and output limits. Keep stdout/stderr draining bounded so a noisy worker cannot deadlock the parent or exhaust memory.
+- Bound wall-clock time; propagate cancellation; terminate the child on timeout, cancellation, malformed output or parent failure. Do not release concurrency permits while blocking parser work is still running.
+- Accept output only after successful worker exit and strict output validation. Truncated extraction must be reported as incomplete and must never be cached as a complete negative search result.
+- Keep diagnostics metadata-only and bounded. Never log document contents, extracted text, credentials or private paths.
+- Re-enable a platform only after native isolation tests, negative tests, installed-package tests and a supported OS-version/architecture matrix demonstrate the required boundary.
+
+## Linux — current supported worker path, subject to device verification
 
 - The child applies resource limits before executing the worker: 45 seconds CPU, 768 MiB address space, 16 file descriptors, zero file growth and zero core dumps.
 - The parent sets `no_new_privs` and installs seccomp before exec to deny network socket operations, process/thread creation and namespace changes. The filter fails closed on an unexpected syscall architecture and rejects the x86_64 x32 ABI.
-- After the dynamic loader has started the worker, but before it reads PDF bytes, the worker closes every inherited descriptor above stdin/stdout/stderr with `close_range` and stacks a second seccomp filter. It denies `open`, `openat`, `openat2`, handle-based opens, directory enumeration, file mutation, `io_uring`, pidfd descriptor transfer, process-memory access and exec syscalls.
-- The parent pre-exec denylist and worker-local second filter both deny the separate `fchmodat2` permission-change syscall (Linux syscall number 452 on the supported x86_64 and AArch64 ABIs). The worker-local filter also denies legacy x86_64 pathname mutation syscalls and modern `*at` mutation variants. The subprocess regression uses a disposable file to verify `fchmodat2` returns `EPERM` and leaves its mode unchanged; x86_64 probes also verify unlink, rename and truncate return `EPERM` and preserve the source bytes.
-- The worker receives untrusted PDF bytes only through stdin and returns bounded text through stdout; stderr carries only the fixed truncation marker. If descriptor closure or filter installation fails (including on a kernel without `close_range`), the worker exits with code 6 before reading the PDF.
-- A Linux subprocess regression proves that an inherited non-stdio descriptor is closed, opening `/etc/passwd` is denied with `EPERM`, and stdout remains available. This is worker-level path-open confinement, not a full application sandbox. Supported architecture claims remain limited to the build/test matrix.
+- After the dynamic loader has started the worker, but before it reads PDF bytes, the worker closes every inherited descriptor above stdin/stdout/stderr with `close_range` and stacks a second seccomp filter. It denies file opens, directory enumeration, file mutation, `io_uring`, pidfd descriptor transfer, process-memory access and exec syscalls.
+- The parent pre-exec denylist and worker-local second filter both deny the separate `fchmodat2` permission-change syscall. Regression probes verify denied operations return `EPERM` and leave test files unchanged.
+- The worker receives untrusted PDF bytes only through stdin and returns bounded text through stdout; stderr carries only the fixed truncation marker. If descriptor closure or filter installation fails, the worker exits before reading the PDF.
+- Automated subprocess regressions cover inherited descriptor closure, denied path reads and path mutation attempts. This is worker-level confinement, not a full application sandbox.
 
-## macOS
+**Evidence limitation:** Linux CI and subprocess tests do not prove that every deployed kernel, architecture or installed package enforces the intended boundary. Keep runtime capability status unknown until the supported-device probe and installed-package matrix pass.
 
-- The child applies the same Unix resource limits and launches through `/usr/bin/sandbox-exec` with a profile denying network operations and file writes.
-- Apple has deprecated `sandbox-exec`; UJANI currently uses it because a tested replacement is not available in this implementation. If the executable is absent or launch fails, PDF extraction fails closed.
-- This worker profile is not a full application sandbox. Current CI builds/tests do not constitute independent validation on every Intel and Apple Silicon hardware generation.
+## Windows — PDF extraction disabled
 
-## Windows
+The previous Job Object configuration provided process/resource limits, but it did not deny arbitrary filesystem access or network access. A process may begin executing before Job Object assignment is complete. Withholding PDF bytes during that interval is a useful mitigation, not a complete isolation boundary.
 
-- The child is assigned to a Job Object with kill-on-close, one active process, a 45-second process CPU limit and a 768 MiB process-memory limit.
-- Windows Job Object assignment occurs immediately after process creation, not atomically with creation. UJANI mitigates this interval by withholding all untrusted PDF bytes until assignment succeeds: the worker blocks reading stdin, and the parent only takes/writes stdin after successful assignment. If assignment fails, the parent kills the child before sending the bytes.
-- The launcher process can execute before assignment, so this is a mitigation, not an atomic containment guarantee.
-- The Job Object does not itself deny network access or arbitrary file writes. This build does not claim Windows worker network/file-system isolation; those capabilities remain unknown/unprovided pending a supported OS sandbox or restricted-token design and direct tests.
+The current build therefore fails closed and does not start the PDF parser on Windows. Do not re-enable it based only on Job Objects, restricted UI visibility or successful compilation. A replacement must use a supported OS-enforced design that denies filesystem and network access, applies resource limits, closes unintended inherited handles, and has negative tests for escape and unauthorized access.
 
-## Cross-platform lifecycle
+## macOS — PDF extraction disabled
 
-- Parent cancellation, the 45-second extraction timeout and the outer managed-task timeout drop/kill the child process. The child is configured with kill-on-drop.
+The previous worker profile used `/usr/bin/sandbox-exec`. Apple has deprecated this interface, and the existing profile did not establish the required denial of arbitrary file reads. It is not an acceptable production security boundary for untrusted PDF parsing.
+
+The current build therefore fails closed and does not start the PDF parser on macOS. A replacement should use a supported macOS sandbox architecture—such as a separately configured sandboxed helper/XPC service with least-privilege entitlements—and prove that the helper cannot access unselected files or the network. The helper must receive only the user-selected document through an explicitly granted file capability. Test both Intel and Apple Silicon, supported OS versions, signed/installed packages, cancellation and recovery.
+
+## Android
+
+The desktop PDF worker path is not supported on Android. Do not infer support from shared Rust code or a successful Android compatibility build.
+
+## Cross-platform lifecycle and output contract
+
+- Parent cancellation, the 45-second extraction timeout and the outer managed-task timeout must terminate the worker. Child lifetime and cleanup must be bounded.
 - Input is capped at 10 MiB and output at 1 MiB. Worker output is accepted only after successful child exit and UTF-8 validation.
-- PDF extraction errors and output-limit failures are returned as errors; the parent does not silently treat them as empty extracted text.
-- Resource limits and worker confinement do not prove absence of all side effects, do not attest the whole process tree, and do not replace OS-level application sandboxing.
+- Worker stderr retention is bounded to 4 KiB and preserves the fixed `UJANI_PDF_OUTPUT_TRUNCATED_V1` marker.
+- PDF extraction errors and output-limit failures are returned as explicit errors/incomplete results; they are not silently converted into empty extracted text or complete search misses.
+- A started blocking decoder thread cannot be forcibly aborted by Tokio. Its concurrency permit must remain held until the thread actually exits.
+- Missing workers, missing controls, failed sandbox setup, unexpected exit, timeout and cancellation must fail closed. There is no in-process parser fallback and no silent cloud fallback.
 
-## Evidence status
+## Re-enable criteria for each disabled platform
 
-GitHub Actions validates compilation, Rust tests, CodeQL and installer builds on its Linux, Windows and macOS runners. Linux now has an automated subprocess probe for the worker's path-open boundary, but the runtime capability remains Unknown until a supported-device smoke test confirms the deployed kernel enforces it. macOS still relies on deprecated `sandbox-exec` and does not deny arbitrary file reads; Windows Job Objects do not deny file reads or network access. Those platform gaps remain release blockers. CI is not a substitute for hands-on tests on macOS Intel/Apple Silicon devices or a security assessment of deployed OS versions. Unsupported restrictions must remain labelled unknown rather than inferred from a successful build.
+A platform may be re-enabled only when all of the following are demonstrated on the exact release candidate:
 
+1. OS-enforced filesystem and network denial for the parser process, including denial of unselected paths and inherited-handle abuse.
+2. CPU, memory, process, descriptor, temporary-storage, input, output and wall-clock bounds.
+3. Negative tests for unauthorized file reads/writes, network access, process creation and sandbox setup failure.
+4. Cancellation, timeout, crash, retry and cleanup tests, including proof that no orphan worker remains.
+5. Installed-package tests on every claimed OS version and architecture.
+6. Clear UI state and recovery behavior for unsupported platforms and malformed/oversized/encrypted PDFs.
+7. Independent review of the platform boundary and a recorded test matrix with package checksum, OS build, architecture and sanitized evidence.
 
-## Fail-closed platform policy (25 November 2026)
-
-The desktop PDF worker is enabled only on Linux builds where the parent resource limits, network/process syscall restrictions, and worker-side filesystem-denial filter are installed before untrusted PDF bytes are supplied. The Linux worker also has automated negative tests for path reads, inherited descriptors and path mutation attempts.
-
-Windows and macOS PDF extraction are intentionally disabled until equivalent filesystem **and** network isolation is implemented and verified. A Windows Job Object provides resource/process limits but is not filesystem or network confinement. The current macOS sandbox profile is deprecated and does not deny arbitrary file reads. Neither is sufficient to execute an untrusted PDF parser as an isolated worker.
-
-This is a fail-closed feature limitation, not a claim that those platforms have passed sandbox verification. Re-enable PDF extraction on a platform only after its native sandbox implementation, escape/negative tests, resource limits, cancellation/timeout behavior, installed-package tests and supported OS-version matrix have passed. Other UJANI features remain available on those platforms.
+A green hosted build is necessary but is not proof of installed-device isolation. Unsupported, untested or unknown controls must remain unavailable rather than being described as secure.
