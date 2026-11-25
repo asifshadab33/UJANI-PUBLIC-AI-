@@ -281,11 +281,9 @@ fn collect_selected_folder_with_budget(
     let mut skipped_file_names = Vec::new();
     for entry in walked.files {
         crate::ensure_task_not_cancelled(token)?;
-        // The walker returns canonical paths. Require a direct child and reopen it
-        // through the root-bound helper: Unix pins each ancestor with openat and
-        // O_NOFOLLOW; Windows pins each ancestor with handle-relative NtCreateFile
-        // and FILE_OPEN_REPARSE_POINT. Other platforms retain canonical containment
-        // plus final-link checks and do not claim equivalent race protection.
+        // The walker returns lexical display paths and a stable identity captured
+        // from an opened handle. Require a direct child, reopen under the selected
+        // root, and compare identity before reading so a replaced path is rejected.
         if entry.path.parent() != Some(selected_root.as_path()) {
             return Err("A selected file no longer belongs directly to the chosen folder.".into());
         }
@@ -300,6 +298,9 @@ fn collect_selected_folder_with_budget(
 
         let handle = crate::safe_fs::open_regular_file_under_root(&selected_root, &entry.path)
             .map_err(|error| format!("Cannot safely open selected file: {error}"))?;
+        if crate::safe_fs::file_identity(&handle) != entry.identity {
+            return Err("A selected file changed identity after the directory scan; retry the import.".into());
+        }
         let metadata = handle.metadata()
             .map_err(|error| format!("Cannot inspect selected file handle: {error}"))?;
         if metadata.len() > MAX_FILE_BYTES as u64 {
