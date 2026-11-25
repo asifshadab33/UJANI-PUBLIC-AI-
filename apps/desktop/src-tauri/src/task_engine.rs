@@ -422,6 +422,7 @@ fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
 }
 
 /// Maps bounded sidecar exit codes to actionable, content-free user errors.
+#[cfg(target_os = "linux")]
 fn pdf_worker_failure_message(exit_code: Option<i32>) -> &'static str {
     match exit_code {
         Some(2) => "The PDF worker rejected the input size or header. Select a valid PDF no larger than 10 MiB.",
