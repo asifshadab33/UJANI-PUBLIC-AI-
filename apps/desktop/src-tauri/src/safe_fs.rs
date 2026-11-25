@@ -3,19 +3,19 @@
 //! This module centralizes bounded no-follow file opening and directory traversal;
 //! callers retain extension, content, size and task-specific error policy.
 //!
-//! Security boundary: `open_regular_file_under_root` reopens a final file through
-//! pinned, no-follow handles, but `walk_directory` still enumerates directories and
-//! obtains some entry metadata by path. That walker is bounded and skips links, but
-//! it is not yet race-resistant against concurrent directory replacement. Do not
-//! treat walker results as authorization to read a file; reopen every candidate
-//! through `open_regular_file_under_root` and keep selected-root identity pinned.
-//! Full handle-relative enumeration is tracked separately before release.
+//! Security boundary: `walk_directory` pins the selected root and each descended
+//! directory, enumerates only through those capability handles, and opens entries
+//! relative to their pinned parent with final-component link following disabled.
+//! It records file identity from the opened handle. Callers must still reopen each
+//! candidate beneath the selected root and compare that identity before reading
+//! content; metadata results alone are never authorization to read. Platforms
+//! without the required handle-relative primitives fail closed.
 use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
 #[cfg(windows)]
 use std::fs::OpenOptions;
 
 
-/// Opens a file beneath a canonical selected root using handle-relative, no-follow
+/// Opens a file beneath the selected root using handle-relative, no-follow
 /// traversal. On Unix every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the
 /// final component with O_NOFOLLOW, so replacing a path component with a symlink
 /// cannot redirect a later file read outside the selected directory.
@@ -702,9 +702,6 @@ pub(crate) struct WalkResult {
     pub truncated: bool,
 }
 
-/// Shared bounded directory walker. It never follows an encountered symbolic link or
-/// reparse point intentionally, confines canonical paths to the selected root, and
-/// leaves extension, size, content, hashing and cancellation-result policy to callers.
 /// Open the selected root once, without following any path component. The returned
 /// directory handle remains pinned for the entire traversal.
 #[cfg(unix)]
