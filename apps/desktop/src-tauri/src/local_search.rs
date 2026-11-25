@@ -433,7 +433,13 @@ pub async fn find_local_files(
 /// Returns the device and inode identity for an opened Unix file handle.
 fn file_identity(_file: &File, metadata: &fs::Metadata) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
-    Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+    Some(format!(
+        "unix:{}:{}:{}:{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.ctime(),
+        metadata.ctime_nsec()
+    ))
 }
 
 #[cfg(windows)]
@@ -449,7 +455,11 @@ fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
     let info = unsafe { info.assume_init() };
     Some(format!(
         "windows:{}:{}:{}",
-        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+        info.ftCreationTime.dwHighDateTime,
+        info.ftCreationTime.dwLowDateTime
     ))
 }
 
