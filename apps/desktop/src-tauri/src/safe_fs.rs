@@ -1164,11 +1164,10 @@ mod walk_tests {
                     symlink(&outside, &selected).unwrap();
                 }
             },
-        ).unwrap();
+        );
 
-        assert_eq!(walked.files.len(), 1);
-        assert_eq!(walked.files[0].name, "inside.txt");
-        assert!(walked.files[0].identity.is_some());
+        assert!(walked.is_err(), "a replaced root path must fail closed");
+
         fs::remove_file(&selected).unwrap();
         fs::remove_dir_all(moved).unwrap();
         fs::remove_dir_all(outside).unwrap();
@@ -1198,9 +1197,8 @@ mod walk_tests {
             },
         ).unwrap();
 
-        assert_eq!(walked.files.len(), 1);
-        assert_eq!(walked.files[0].name, "inside.txt");
-        assert!(walked.files[0].identity.is_some());
+        assert!(walked.files.is_empty(), "a replaced descendant must not leak stale paths");
+        assert!(walked.truncated, "replaced descendant paths must be reported as skipped");
         fs::remove_file(&nested).unwrap();
         fs::remove_dir_all(moved).unwrap();
         fs::remove_dir_all(selected).unwrap();
