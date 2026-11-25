@@ -809,8 +809,9 @@ where
 {
     use cap_fs_ext::{
         FollowSymlinks, OpenOptions, OpenOptionsFollowExt, OpenOptionsMaybeDirExt,
-        OpenOptionsSyncExt,
     };
+    #[cfg(unix)]
+    use cap_fs_ext::OpenOptionsSyncExt;
     use cap_std::fs::Dir;
 
     if !selected_root.is_absolute() {
