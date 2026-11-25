@@ -477,7 +477,7 @@ pub(crate) async fn extract_pdf_isolated(_data: Vec<u8>) -> Result<String, Strin
     Err("PDF extraction is not available in the Android preview; the desktop worker is not bundled on Android.".into())
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "linux")]
 pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -677,6 +677,11 @@ mod pdf_worker_status_tests {
     fn ignores_non_marker_worker_diagnostics() {
         assert!(!pdf_worker_output_was_truncated(b"extractor warning\n").unwrap());
     }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+pub(crate) async fn extract_pdf_isolated(_data: Vec<u8>) -> Result<String, String> {
+    Err("PDF extraction is temporarily unavailable on this platform because UJANI has not yet verified a filesystem-and-network sandbox for the PDF worker. Other local features remain available.".into())
 }
 
 /// Split at UTF-8 boundaries, preferring whitespace so multi-stage summarisation
