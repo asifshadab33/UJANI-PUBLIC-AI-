@@ -366,46 +366,6 @@ impl LocalTaskEngine {
     }
 }
 
-#[cfg(windows)]
-/// Creates the worker Job Object with kill-on-close, process-count, CPU and memory limits.
-fn create_pdf_worker_job() -> Result<std::os::windows::io::OwnedHandle, String> {
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::System::JobObjects::{
-        CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOB_OBJECT_LIMIT_PROCESS_TIME,
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    };
-    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    if handle.is_null() {
-        return Err(format!("Could not create PDF worker Job Object: {}", std::io::Error::last_os_error()));
-    }
-    // OwnedHandle closes the Job Object when the parent exits or drops the worker.
-    let job = unsafe { OwnedHandle::from_raw_handle(handle as _) };
-    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-    limits.BasicLimitInformation.LimitFlags =
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            | JOB_OBJECT_LIMIT_PROCESS_MEMORY
-            | JOB_OBJECT_LIMIT_PROCESS_TIME
-            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-    limits.BasicLimitInformation.ActiveProcessLimit = 1;
-    limits.BasicLimitInformation.PerProcessUserTimeLimit = 45 * 10_000_000;
-    limits.ProcessMemoryLimit = 768 * 1024 * 1024;
-    let configured = unsafe {
-        SetInformationJobObject(
-            job.as_raw_handle() as HANDLE,
-            JobObjectExtendedLimitInformation,
-            &limits as *const _ as *const _,
-            std::mem::size_of_val(&limits) as u32,
-        )
-    };
-    if configured == 0 {
-        return Err(format!("Could not configure PDF worker resource limits: {}", std::io::Error::last_os_error()));
-    }
-    Ok(job)
-}
-
 #[cfg(target_os = "linux")]
 const SYS_FCHMODAT2: libc::c_long = 452; // Linux x86_64/AArch64 syscall ABI
 
