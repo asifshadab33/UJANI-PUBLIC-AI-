@@ -44,6 +44,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 zeroize = "1"
 ed25519-dalek = "3"
 ujani-core = { path = "../../../crates/ujani-core" }
+# Capability-based, handle-relative filesystem traversal; pin to the fixed 4.0.3 release.
+cap-std = "=4.0.3"
+cap-fs-ext = "=4.0.3"
 
 # Keep the Tauri application in its own workspace; the shared core crate is a path dependency.
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
