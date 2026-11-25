@@ -254,7 +254,7 @@ mod windows_handle {
         let metadata = handle.metadata()?;
         if !metadata.is_dir() || is_reparse_point(&metadata) {
             return Err(invalid_path(
-                "A selected directory component is not a real directory.",
+                "A selected directory component is not a real directory (symbolic link or reparse point).",
             ));
         }
         Ok(())
@@ -843,6 +843,10 @@ where
     use cap_fs_ext::OpenOptionsSyncExt;
     use cap_std::fs::Dir;
 
+    #[cfg(windows)]
+    if !selected_root.is_absolute() {
+        return Err("Only local drive paths are supported for safe folder access.".into());
+    }
     if !selected_root.is_absolute() {
         return Err("Choose an absolute local directory.".into());
     }
@@ -850,6 +854,14 @@ where
         return Err("Directory traversal cancelled by user.".into());
     }
 
+    // This preflight is diagnostic only: it provides a useful message for an
+    // already-present selected-root link. The no-follow handle open below is the
+    // security decision and remains authoritative against a concurrent replacement.
+    if let Ok(metadata) = std::fs::symlink_metadata(selected_root) {
+        if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+            return Err("Choose a real directory, not a symbolic link or reparse point.".into());
+        }
+    }
     // Pin the selected root once. Unix opens its parent handle (allowing normal OS
     // ancestor aliases) and opens the selected final component with O_NOFOLLOW;
     // Windows also denies FILE_SHARE_DELETE to prevent root replacement.
@@ -1228,7 +1240,7 @@ mod walk_tests {
         );
 
         assert!(replaced_after_pin, "the descendant replacement hook must run after pinning");
-        let error = walked.err().expect("a replaced descendant must fail closed, not return either path");
+        let error = walked.expect_err("a replaced descendant must fail closed, not return either path");
         assert!(
             error.to_string().contains("selected folder changed during scanning"),
             "unexpected fail-closed error: {error}"
@@ -1323,6 +1335,7 @@ mod selected_root_open_boundary_tests {
         let mut contents = Vec::new();
         opened.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"inside");
+        drop(opened);
         fs::remove_dir_all(parent).unwrap();
     }
 
@@ -1366,6 +1379,7 @@ mod selected_root_open_boundary_tests {
         let mut contents = Vec::new();
         opened.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"traverse-only");
+        drop(opened);
         fs::remove_dir_all(parent).unwrap();
     }
 
