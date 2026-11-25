@@ -231,6 +231,16 @@ fn build_inventory_v2_at(
         return None;
     }
     let generated_at = generated_at?;
+    // Observation timestamps are captured before inventory assembly. Reject an
+    // inconsistent/future observation instead of emitting evidence newer than
+    // the descriptor that claims to contain it.
+    if [runtime_observed_at_unix_ms, os_observed_at_unix_ms]
+        .into_iter()
+        .flatten()
+        .any(|observed_at| observed_at > generated_at)
+    {
+        return None;
+    }
     let ModelInventoryInput {
         models, metadata, runtime_available, runtime_version, os_name: _, os_version,
         architecture, cpu_logical_cores, memory_total_mb, memory_available_mb, accelerator,
@@ -481,6 +491,9 @@ mod tests {
         assert!(build_inventory_v2_at(input(), Some(1), Some(above_max), None).is_none());
         assert!(build_inventory_v2_at(input(), Some(1), None, Some(above_max)).is_none());
         assert!(build_inventory_v2_at(input(), Some(1), Some(0), None).is_none());
+        assert!(build_inventory_v2_at(input(), Some(10), Some(11), None).is_none());
+        assert!(build_inventory_v2_at(input(), Some(10), None, Some(11)).is_none());
+        assert!(build_inventory_v2_at(input(), Some(10), Some(10), Some(10)).is_some());
     }
 
     #[test]
