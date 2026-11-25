@@ -1211,22 +1211,28 @@ mod walk_tests {
         fs::create_dir_all(&nested).unwrap();
         let moved = selected.join("nested-pinned");
         fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let mut replaced_after_pin = false;
 
         let walked = super::walk_directory_impl(
             &selected,
             options(3, 20, LinkPolicy::Skip),
             &CancellationToken::new(),
             |relative| {
-                if relative == Path::new("nested") && nested.exists() {
+                if relative == Path::new("nested") && !replaced_after_pin {
                     fs::rename(&nested, &moved).unwrap();
                     fs::create_dir(&nested).unwrap();
                     fs::write(nested.join("inside.txt"), b"replacement").unwrap();
+                    replaced_after_pin = true;
                 }
             },
-        ).unwrap();
+        );
 
-        assert!(walked.files.is_empty(), "a replaced descendant must not leak stale paths");
-        assert!(walked.truncated, "replaced descendant paths must be reported as skipped");
+        assert!(replaced_after_pin, "the descendant replacement hook must run after pinning");
+        let error = walked.expect_err("a replaced descendant must fail closed, not return either path");
+        assert!(
+            error.to_string().contains("selected folder changed during scanning"),
+            "unexpected fail-closed error: {error}"
+        );
         fs::remove_dir_all(nested).unwrap();
         fs::remove_dir_all(moved).unwrap();
         fs::remove_dir_all(selected).unwrap();
