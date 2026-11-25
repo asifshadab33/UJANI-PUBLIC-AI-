@@ -830,6 +830,8 @@ where
     if !root_metadata.is_dir() || is_reparse_point(&root_metadata) {
         return Err("Choose a real directory, not a symbolic link or reparse point.".into());
     }
+    let root_identity = file_identity(&root_handle)
+        .ok_or_else(|| "This platform cannot identify the selected root safely.".to_owned())?;
     let root = selected_root.to_path_buf();
     let root_dir = Dir::from_std_file(root_handle);
     after_directory_pinned(Path::new(""));
@@ -972,7 +974,36 @@ where
         }
     }
 
-    Ok(WalkResult { root, files, files_examined, truncated })
+    // Do not return stale display paths if the selected root or any descendant was
+    // replaced while the scan was running. Reopen each path through the root-bound
+    // no-follow helper and require the same file identity observed from its handle.
+    let current_root = open_selected_root_no_follow(&root)
+        .map_err(|_| "The selected folder changed during scanning; retry the operation.".to_owned())?;
+    if file_identity(&current_root).as_deref() != Some(root_identity.as_str()) {
+        return Err("The selected folder changed during scanning; retry the operation.".into());
+    }
+
+    let mut verified_files = Vec::with_capacity(files.len());
+    for file in files {
+        if cancellation.is_cancelled() {
+            return Err("Directory traversal cancelled by user.".into());
+        }
+        if options.max_duration.is_some_and(|limit| started.elapsed() >= limit) {
+            truncated = true;
+            break;
+        }
+        match open_regular_file_under_root(&root, &file.path) {
+            Ok(opened) if file_identity(&opened) == file.identity => verified_files.push(file),
+            _ => truncated = true,
+        }
+    }
+
+    Ok(WalkResult {
+        root,
+        files: verified_files,
+        files_examined,
+        truncated,
+    })
 }
 
 /// Handle-relative directory traversal. Every directory is enumerated through a
