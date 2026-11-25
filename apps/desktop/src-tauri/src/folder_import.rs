@@ -344,7 +344,7 @@ fn collect_selected_folder_with_budget(
 mod tests {
     use super::{
         collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
-        MAX_REPORTED_SKIPPED_FILE_NAMES, MAX_TOTAL_BYTES,
+        MAX_TOTAL_BYTES,
     };
     use tokio_util::sync::CancellationToken;
     use std::{
