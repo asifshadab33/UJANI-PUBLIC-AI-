@@ -294,8 +294,9 @@ pub async fn find_local_files(
             } else {
                 let read_path = candidate.path.clone();
                 let read_root = root.clone();
+                let expected_identity = candidate.identity.clone();
                 match tauri::async_runtime::spawn_blocking(move || {
-                    read_bounded(&read_root, &read_path, MAX_TEXT_FILE_BYTES)
+                    read_bounded(&read_root, &read_path, MAX_TEXT_FILE_BYTES, expected_identity.as_deref())
                 }).await {
                     Ok(Ok(bytes)) => {
                         let actual_bytes = bytes.len() as u64;
@@ -328,8 +329,9 @@ pub async fn find_local_files(
             pdf_count += 1;
             let read_path = candidate.path.clone();
             let read_root = root.clone();
+            let expected_identity = candidate.identity.clone();
             match tauri::async_runtime::spawn_blocking(move || {
-                read_bounded(&read_root, &read_path, MAX_PDF_BYTES)
+                read_bounded(&read_root, &read_path, MAX_PDF_BYTES, expected_identity.as_deref())
             }).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
                     let actual_bytes = bytes.len() as u64;
@@ -545,6 +547,10 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
         let modified_unix_ns = modified_unix_ns(&metadata);
         let identity = file_identity(&file, &metadata);
+        if identity.is_none() || identity != entry.identity {
+            truncated = true;
+            continue;
+        }
         candidates.push(Candidate {
             path: entry.path,
             name: entry.name.to_string_lossy().into_owned(),
@@ -565,11 +571,15 @@ fn read_bounded(
     root: &Path,
     path: &Path,
     limit: u64,
+    expected_identity: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let mut file = crate::safe_fs::open_regular_file_under_root(root, path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
-    if !metadata.is_file() || metadata.len() > limit {
-        return Err("File is not eligible for bounded reading.".into());
+    if !metadata.is_file() || metadata.len() > limit
+        || expected_identity.is_none()
+        || file_identity(&file, &metadata).as_deref() != expected_identity
+    {
+        return Err("File identity changed or the file is not eligible for bounded reading.".into());
     }
     #[cfg(windows)]
     {
@@ -738,7 +748,7 @@ mod tests {
         let mut found = Vec::new();
         for candidate in candidates {
             if candidate.extension != "txt" { continue; }
-            let bytes = read_bounded(&canonical_root, &candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let bytes = read_bounded(&canonical_root, &candidate.path, MAX_TEXT_FILE_BYTES, candidate.identity.as_deref()).unwrap();
             let content = String::from_utf8(bytes).unwrap();
             if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
                 found.push((candidate.name, preview));
