@@ -1006,6 +1006,7 @@ where
     })
 }
 
+/// Returned paths are display handles only; content consumers must compare identity.
 /// Handle-relative directory traversal. Every directory is enumerated through a
 /// pinned capability handle; each child is opened relative to its pinned parent
 /// with final-component symlink/reparse following disabled.
