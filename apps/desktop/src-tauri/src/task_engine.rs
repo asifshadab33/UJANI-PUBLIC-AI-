@@ -603,11 +603,7 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
             loop {
                 let read = stderr.read(&mut buffer).await?;
                 if read == 0 { break; }
-                metadata.extend_from_slice(&buffer[..read]);
-                if metadata.len() > 4096 {
-                    let excess = metadata.len() - 4096;
-                    metadata.drain(..excess);
-                }
+                append_bounded_pdf_worker_stderr(&mut metadata, &buffer[..read]);
             }
             Ok::<Vec<u8>, std::io::Error>(metadata)
         });
@@ -638,6 +634,17 @@ pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String
         .map_err(|_| "PDF extraction exceeded 45 seconds and was stopped.".to_string())?
 }
 
+const MAX_PDF_WORKER_STDERR_BYTES: usize = 4 * 1024;
+
+/// Retains only the final bounded stderr bytes, preserving the worker's trailing status marker.
+fn append_bounded_pdf_worker_stderr(metadata: &mut Vec<u8>, chunk: &[u8]) {
+    metadata.extend_from_slice(chunk);
+    if metadata.len() > MAX_PDF_WORKER_STDERR_BYTES {
+        let excess = metadata.len() - MAX_PDF_WORKER_STDERR_BYTES;
+        metadata.drain(..excess);
+    }
+}
+
 /// Detects the worker's fixed, content-free truncation marker in bounded stderr metadata.
 /// Other bounded diagnostics are ignored; the worker's marker is appended after extraction.
 pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, String> {
@@ -655,6 +662,31 @@ mod pdf_worker_status_tests {
         assert!(pdf_worker_failure_message(Some(3)).contains("encrypted"));
         assert!(pdf_worker_failure_message(None).contains("Try the file again"));
         assert!(pdf_worker_failure_message(Some(6)).contains("filesystem boundary"));
+    }
+
+    #[test]
+    fn stderr_tail_is_bounded_and_preserves_a_marker_split_across_chunks() {
+        use super::{append_bounded_pdf_worker_stderr, MAX_PDF_WORKER_STDERR_BYTES};
+
+        let marker = b"UJANI_PDF_OUTPUT_TRUNCATED_V1\\n";
+        let mut metadata = Vec::new();
+        append_bounded_pdf_worker_stderr(&mut metadata, &vec![b'x'; MAX_PDF_WORKER_STDERR_BYTES + 512]);
+        assert_eq!(metadata.len(), MAX_PDF_WORKER_STDERR_BYTES);
+        append_bounded_pdf_worker_stderr(&mut metadata, &marker[..12]);
+        append_bounded_pdf_worker_stderr(&mut metadata, &marker[12..]);
+        assert_eq!(metadata.len(), MAX_PDF_WORKER_STDERR_BYTES);
+        assert!(pdf_worker_output_was_truncated(&metadata).unwrap());
+    }
+
+    #[test]
+    fn stderr_tail_handles_a_single_chunk_larger_than_its_limit() {
+        use super::{append_bounded_pdf_worker_stderr, MAX_PDF_WORKER_STDERR_BYTES};
+
+        let input = vec![b'z'; MAX_PDF_WORKER_STDERR_BYTES * 3];
+        let mut metadata = Vec::new();
+        append_bounded_pdf_worker_stderr(&mut metadata, &input);
+        assert_eq!(metadata.len(), MAX_PDF_WORKER_STDERR_BYTES);
+        assert_eq!(metadata, input[input.len() - MAX_PDF_WORKER_STDERR_BYTES..]);
     }
 
     #[test]
