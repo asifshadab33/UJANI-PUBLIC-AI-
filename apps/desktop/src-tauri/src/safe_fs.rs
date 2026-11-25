@@ -386,7 +386,7 @@ mod windows_handle {
     }
 
     fn open_directory_path_internal(path: &Path, enumerate: bool) -> io::Result<std::fs::File> {
-        let mut components = path.components();
+        let mut components = path.components().peekable();
         let drive = match components.next() {
             Some(Component::Prefix(prefix)) => match prefix.kind() {
                 Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive,
@@ -416,7 +416,7 @@ mod windows_handle {
             ));
         }
 
-        let has_components = components.clone().next().is_some();
+        let has_components = components.peek().is_some();
         let drive_access = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
             | if enumerate && !has_components { FILE_LIST_DIRECTORY } else { 0 };
         let mut directory = OpenOptions::new()
