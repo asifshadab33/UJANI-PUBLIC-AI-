@@ -792,7 +792,13 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Option<String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        Some(format!("unix:{}:{}", _metadata.dev(), _metadata.ino()))
+        Some(format!(
+            "unix:{}:{}:{}:{}",
+            _metadata.dev(),
+            _metadata.ino(),
+            _metadata.ctime(),
+            _metadata.ctime_nsec()
+        ))
     }
     #[cfg(windows)]
     {
@@ -809,8 +815,12 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Option<String> {
         // SAFETY: GetFileInformationByHandle succeeded and initialized the structure.
         let info = unsafe { info.assume_init() };
         Some(format!(
-            "windows:{}:{}:{}",
-            info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+            "windows:{}:{}:{}:{}:{}",
+            info.dwVolumeSerialNumber,
+            info.nFileIndexHigh,
+            info.nFileIndexLow,
+            info.ftCreationTime.dwHighDateTime,
+            info.ftCreationTime.dwLowDateTime
         ))
     }
     #[cfg(not(any(unix, windows)))]
