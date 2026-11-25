@@ -3,6 +3,7 @@ import unittest
 from check_native_command_security_map import (
     command_tokens,
     find_matching_delimiter,
+    rust_function_body,
     missing_demo_command_guards,
     missing_file_metadata_guards,
     missing_document_ipc_preflight_guards,
@@ -26,6 +27,26 @@ from check_native_command_security_map import (
 )
 
 
+
+
+class RustFunctionBodyGenericSignatureTests(unittest.TestCase):
+    def test_finds_async_generic_helper_with_where_clause(self):
+        source = """
+            async fn run_after_native_confirmation<T, F, Fut>(
+                approved: bool,
+                operation: F,
+            ) -> Result<T, String>
+            where
+                F: FnOnce() -> Fut,
+                Fut: std::future::Future<Output = Result<T, String>>,
+            {
+                if !approved { return Err("denied".into()); }
+                operation().await
+            }
+        """
+        body = rust_function_body(source, "run_after_native_confirmation")
+        self.assertIn("if !approved", body)
+        self.assertIn("operation().await", body)
 
 
 class DefenderNativeConfirmationGuardTests(unittest.TestCase):
