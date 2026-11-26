@@ -33,6 +33,15 @@ test "$(git branch --show-current)" = "updates"
 test -f latest.json
 grep -q '"version":"0.1.0"' latest.json
 
+# A remote/authentication failure must not be mistaken for a missing branch.
+git switch main >/dev/null 2>&1
+git remote set-url origin "$tmp/nonexistent-remote.git"
+if bash "$repo_root/scripts/checkout-updater-feed-branch.sh" >/dev/null 2>&1; then
+  echo "Unexpectedly treated a remote failure as a missing feed branch." >&2
+  exit 1
+fi
+test "$(git branch --show-current)" = "main"
+
 # The helper must not accept a caller-selected arbitrary branch name.
 if bash "$repo_root/scripts/checkout-updater-feed-branch.sh" attacker >/dev/null 2>&1; then
   echo "Unexpectedly accepted a non-updates branch." >&2
