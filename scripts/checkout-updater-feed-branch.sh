@@ -12,7 +12,7 @@ git check-ref-format "refs/heads/$branch"
 
 # Distinguish a missing remote ref (ls-remote exit 2) from network/auth failures.
 set +e
-remote_refs="$(git ls-remote --heads origin "refs/heads/$branch" 2>&1)"
+remote_refs="$(git ls-remote --exit-code --heads origin "refs/heads/$branch" 2>&1)"
 status=$?
 set -e
 if [[ $status -eq 0 && -n "$remote_refs" ]]; then
