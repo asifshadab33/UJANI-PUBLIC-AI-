@@ -34,7 +34,7 @@ pub struct LocalReminder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReminderValidationError {
     InvalidId, InvalidTitle, NotesTooLong, InvalidDueTime,
-    InvalidTimezone, InvalidTimestamps, InvalidSnooze,
+    InvalidTimezone, InvalidTimestamps, InvalidNotificationTimestamp, InvalidSnooze,
 }
 
 impl LocalReminder {
@@ -57,6 +57,11 @@ impl LocalReminder {
         }
         if self.created_at_unix_ms <= 0 || self.updated_at_unix_ms < self.created_at_unix_ms {
             return Err(ReminderValidationError::InvalidTimestamps);
+        }
+        // A persisted notification marker is an absolute Unix-millisecond instant;
+        // zero/negative values must not suppress a legitimate future notification.
+        if self.last_notified_due_at_unix_ms.is_some_and(|value| value <= 0) {
+            return Err(ReminderValidationError::InvalidNotificationTimestamp);
         }
         // A snooze must move the effective due instant forward. An earlier
         // timestamp could otherwise make a future reminder notify prematurely.
@@ -110,6 +115,16 @@ mod tests {
         item = reminder("good", 100); item.notes = Some("x".repeat(MAX_REMINDER_NOTES_BYTES + 1));
         assert_eq!(item.validate(), Err(ReminderValidationError::NotesTooLong));
     }
+    #[test]
+    fn rejects_non_positive_notification_deduplication_timestamps() {
+        let mut item = reminder("r1", 100);
+        item.last_notified_due_at_unix_ms = Some(0);
+        assert_eq!(item.validate(), Err(ReminderValidationError::InvalidNotificationTimestamp));
+        assert!(!item.should_notify_at(100));
+        item.last_notified_due_at_unix_ms = Some(-1);
+        assert_eq!(item.validate(), Err(ReminderValidationError::InvalidNotificationTimestamp));
+    }
+
     #[test] fn completed_and_invalid_records_never_enter_agenda() {
         let mut done = reminder("done", 200); done.state = ReminderState::Completed;
         let mut invalid = reminder("invalid", 200); invalid.timezone.clear();
