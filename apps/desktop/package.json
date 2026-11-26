@@ -15,7 +15,8 @@
     "build:pdf-worker:dev": "node scripts/build-pdf-worker.mjs --debug",
     "test:model-recommendation": "node --test src/modelRecommendation.test.js",
     "test:model-catalogue": "node --test src/modelCatalogue.test.js",
-    "test:clock-monitor": "node --test src/clockMonitor.test.js"
+    "test:clock-monitor": "node --test src/clockMonitor.test.js",
+    "test:async-event-subscription": "node --test src/asyncEventSubscription.test.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",
