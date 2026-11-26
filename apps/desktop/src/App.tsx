@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { subscribeWithCleanup } from "./asyncEventSubscription.js";
 import { invoke } from "@tauri-apps/api/core";
 import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
@@ -309,31 +310,22 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
-    // Tauri listener registration is asynchronous. React Strict Mode can run
-    // setup -> cleanup -> setup before the first registration promise resolves.
-    // Stop a late registration immediately so it cannot leak a duplicate listener.
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen<TaskProgressEvent>("ujani-task-progress", (event) => {
-      const progress = event.payload;
-      if (progress.stage === "receipt_recovered") {
-        setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
-        return;
-      }
-      setTaskProgress(progress);
-      if (progress.stage === "receipt_warning") {
-        setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
-      }
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unlisten = stop;
-    }).catch((error) => {
-      if (!cancelled) setOllamaError(String(error));
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
+    // Registration is asynchronous; the helper immediately stops a listener
+    // that resolves after React has already cleaned up this effect.
+    return subscribeWithCleanup(
+      listen<TaskProgressEvent>("ujani-task-progress", (event) => {
+        const progress = event.payload;
+        if (progress.stage === "receipt_recovered") {
+          setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
+          return;
+        }
+        setTaskProgress(progress);
+        if (progress.stage === "receipt_warning") {
+          setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
+        }
+      }),
+      (error) => setOllamaError(String(error)),
+    );
   }, []);
 
   useEffect(() => {
