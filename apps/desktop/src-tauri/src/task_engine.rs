@@ -366,46 +366,6 @@ impl LocalTaskEngine {
     }
 }
 
-#[cfg(windows)]
-/// Creates the worker Job Object with kill-on-close, process-count, CPU and memory limits.
-fn create_pdf_worker_job() -> Result<std::os::windows::io::OwnedHandle, String> {
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::System::JobObjects::{
-        CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOB_OBJECT_LIMIT_PROCESS_TIME,
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    };
-    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    if handle.is_null() {
-        return Err(format!("Could not create PDF worker Job Object: {}", std::io::Error::last_os_error()));
-    }
-    // OwnedHandle closes the Job Object when the parent exits or drops the worker.
-    let job = unsafe { OwnedHandle::from_raw_handle(handle as _) };
-    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-    limits.BasicLimitInformation.LimitFlags =
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            | JOB_OBJECT_LIMIT_PROCESS_MEMORY
-            | JOB_OBJECT_LIMIT_PROCESS_TIME
-            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-    limits.BasicLimitInformation.ActiveProcessLimit = 1;
-    limits.BasicLimitInformation.PerProcessUserTimeLimit = 45 * 10_000_000;
-    limits.ProcessMemoryLimit = 768 * 1024 * 1024;
-    let configured = unsafe {
-        SetInformationJobObject(
-            job.as_raw_handle() as HANDLE,
-            JobObjectExtendedLimitInformation,
-            &limits as *const _ as *const _,
-            std::mem::size_of_val(&limits) as u32,
-        )
-    };
-    if configured == 0 {
-        return Err(format!("Could not configure PDF worker resource limits: {}", std::io::Error::last_os_error()));
-    }
-    Ok(job)
-}
-
 #[cfg(target_os = "linux")]
 const SYS_FCHMODAT2: libc::c_long = 452; // Linux x86_64/AArch64 syscall ABI
 
@@ -462,6 +422,7 @@ fn pdf_worker_executable() -> Result<std::path::PathBuf, String> {
 }
 
 /// Maps bounded sidecar exit codes to actionable, content-free user errors.
+#[cfg(target_os = "linux")]
 fn pdf_worker_failure_message(exit_code: Option<i32>) -> &'static str {
     match exit_code {
         Some(2) => "The PDF worker rejected the input size or header. Select a valid PDF no larger than 10 MiB.",
@@ -477,7 +438,7 @@ pub(crate) async fn extract_pdf_isolated(_data: Vec<u8>) -> Result<String, Strin
     Err("PDF extraction is not available in the Android preview; the desktop worker is not bundled on Android.".into())
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "linux")]
 pub(crate) async fn extract_pdf_isolated(data: Vec<u8>) -> Result<String, String> {
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -654,8 +615,11 @@ pub(crate) fn pdf_worker_output_was_truncated(metadata: &[u8]) -> Result<bool, S
 
 #[cfg(test)]
 mod pdf_worker_status_tests {
-    use super::{pdf_worker_failure_message, pdf_worker_output_was_truncated};
+    use super::pdf_worker_output_was_truncated;
+    #[cfg(target_os = "linux")]
+    use super::pdf_worker_failure_message;
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn worker_exit_codes_provide_safe_actionable_errors() {
         assert!(pdf_worker_failure_message(Some(2)).contains("valid PDF"));
@@ -709,6 +673,11 @@ mod pdf_worker_status_tests {
     fn ignores_non_marker_worker_diagnostics() {
         assert!(!pdf_worker_output_was_truncated(b"extractor warning\n").unwrap());
     }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+pub(crate) async fn extract_pdf_isolated(_data: Vec<u8>) -> Result<String, String> {
+    Err("PDF extraction is temporarily unavailable on this platform because UJANI has not yet verified a filesystem-and-network sandbox for the PDF worker. Other local features remain available.".into())
 }
 
 /// Split at UTF-8 boundaries, preferring whitespace so multi-stage summarisation
@@ -991,43 +960,6 @@ mod local_capability_tests {
         assert!(validate_translation_input(" ", "Arabic", "smart").is_err());
         assert!(validate_translation_input("hello", "", "smart").is_err());
         assert!(validate_translation_input(&"x".repeat(16 * 1024 + 1), "Arabic", "smart").is_err());
-    }
-}
-
-#[cfg(all(test, target_os = "windows"))]
-mod windows_pdf_worker_job_tests {
-    use super::create_pdf_worker_job;
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::System::JobObjects::{
-        QueryInformationJobObject, JobObjectExtendedLimitInformation,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOB_OBJECT_LIMIT_PROCESS_TIME,
-        JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
-    };
-
-    #[test]
-    fn windows_job_object_reports_the_configured_worker_limits() {
-        let job = create_pdf_worker_job().expect("worker Job Object must be created and configured");
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        let queried = unsafe {
-            QueryInformationJobObject(
-                job.as_raw_handle() as HANDLE,
-                JobObjectExtendedLimitInformation,
-                &mut limits as *mut _ as *mut _,
-                std::mem::size_of_val(&limits) as u32,
-                std::ptr::null_mut(),
-            )
-        };
-        assert_ne!(queried, 0, "configured Job Object limits must be queryable");
-        let flags = limits.BasicLimitInformation.LimitFlags;
-        assert_ne!(flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0);
-        assert_ne!(flags & JOB_OBJECT_LIMIT_PROCESS_MEMORY, 0);
-        assert_ne!(flags & JOB_OBJECT_LIMIT_PROCESS_TIME, 0);
-        assert_ne!(flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS, 0);
-        assert_eq!(limits.BasicLimitInformation.ActiveProcessLimit, 1);
-        assert_eq!(limits.BasicLimitInformation.PerProcessUserTimeLimit, 45 * 10_000_000);
-        assert_eq!(limits.ProcessMemoryLimit, 768 * 1024 * 1024);
     }
 }
 
