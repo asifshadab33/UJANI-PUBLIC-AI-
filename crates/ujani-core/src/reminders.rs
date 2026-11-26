@@ -37,6 +37,24 @@ pub enum ReminderValidationError {
     InvalidTimezone, InvalidTimestamps, InvalidSnooze,
 }
 
+/// Accept a bounded IANA-style zone identifier, not an arbitrary path or offset.
+/// This is syntax validation only; the platform adapter must resolve the zone
+/// against its timezone database before rendering local wall-clock times.
+fn valid_timezone_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_TIMEZONE_BYTES
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && value.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'+' | b'.')
+                })
+        })
+}
+
 impl LocalReminder {
     pub fn validate(&self) -> Result<(), ReminderValidationError> {
         if self.id.is_empty() || self.id.len() > MAX_REMINDER_ID_BYTES
@@ -51,8 +69,7 @@ impl LocalReminder {
             return Err(ReminderValidationError::NotesTooLong);
         }
         if self.due_at_unix_ms <= 0 { return Err(ReminderValidationError::InvalidDueTime); }
-        if self.timezone.is_empty() || self.timezone.len() > MAX_TIMEZONE_BYTES
-            || self.timezone.chars().any(char::is_control) {
+        if !valid_timezone_identifier(&self.timezone) {
             return Err(ReminderValidationError::InvalidTimezone);
         }
         if self.created_at_unix_ms <= 0 || self.updated_at_unix_ms < self.created_at_unix_ms {
@@ -103,6 +120,32 @@ mod tests {
             timezone: "Asia/Qatar".into(), state: ReminderState::Active, snoozed_until_unix_ms: None,
             last_notified_due_at_unix_ms: None, created_at_unix_ms: 10, updated_at_unix_ms: 10 }
     }
+    #[test]
+    fn accepts_iana_style_timezone_identifiers() {
+        for timezone in ["UTC", "Asia/Kolkata", "Etc/GMT+5"] {
+            let mut item = reminder("timezone-valid", 100);
+            item.timezone = timezone.into();
+            assert!(item.validate().is_ok(), "{timezone}");
+        }
+    }
+
+    #[test]
+    fn rejects_unsafe_or_malformed_timezone_identifiers() {
+        for timezone in [
+            "",
+            "/etc/passwd",
+            "../UTC",
+            "Asia/../UTC",
+            "Asia//Kolkata",
+            "Asia/Kolkata ",
+            "UTC+05:30",
+        ] {
+            let mut item = reminder("timezone-invalid", 100);
+            item.timezone = timezone.into();
+            assert_eq!(item.validate(), Err(ReminderValidationError::InvalidTimezone), "{timezone}");
+        }
+    }
+
     #[test] fn accepts_bounded_local_reminder() { assert!(reminder("reminder-1", 100).validate().is_ok()); }
     #[test] fn rejects_invalid_ids_titles_and_oversized_notes() {
         let mut item = reminder("../bad", 100); assert_eq!(item.validate(), Err(ReminderValidationError::InvalidId));
