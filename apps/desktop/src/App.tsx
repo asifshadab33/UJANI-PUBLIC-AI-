@@ -309,6 +309,10 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
+    // Tauri listener registration is asynchronous. React Strict Mode can run
+    // setup -> cleanup -> setup before the first registration promise resolves.
+    // Stop a late registration immediately so it cannot leak a duplicate listener.
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen<TaskProgressEvent>("ujani-task-progress", (event) => {
       const progress = event.payload;
@@ -320,9 +324,16 @@ export default function App() {
       if (progress.stage === "receipt_warning") {
         setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
       }
-    }).then((stop) => { unlisten = stop; })
-      .catch((error) => setOllamaError(String(error)));
-    return () => { unlisten?.(); };
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      if (!cancelled) setOllamaError(String(error));
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
