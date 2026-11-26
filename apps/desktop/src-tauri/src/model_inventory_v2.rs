@@ -8,6 +8,7 @@ use serde::Serialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_SCHEMA_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+const MAX_MODEL_OBSERVATION_AGE_MS: u64 = 15 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelRuntimeInventoryV2 {
@@ -237,7 +238,10 @@ fn build_inventory_v2_at(
     if [runtime_observed_at_unix_ms, os_observed_at_unix_ms]
         .into_iter()
         .flatten()
-        .any(|observed_at| observed_at > generated_at)
+        .any(|observed_at| {
+            observed_at > generated_at
+                || generated_at.saturating_sub(observed_at) > MAX_MODEL_OBSERVATION_AGE_MS
+        })
     {
         return None;
     }
@@ -494,6 +498,16 @@ mod tests {
         assert!(build_inventory_v2_at(input(), Some(10), Some(11), None).is_none());
         assert!(build_inventory_v2_at(input(), Some(10), None, Some(11)).is_none());
         assert!(build_inventory_v2_at(input(), Some(10), Some(10), Some(10)).is_some());
+
+        let stale_generated_at = MAX_MODEL_OBSERVATION_AGE_MS + 11;
+        assert!(build_inventory_v2_at(input(), Some(stale_generated_at), Some(10), None).is_none());
+        assert!(build_inventory_v2_at(input(), Some(stale_generated_at), None, Some(10)).is_none());
+        assert!(build_inventory_v2_at(
+            input(),
+            Some(MAX_MODEL_OBSERVATION_AGE_MS + 10),
+            Some(10),
+            Some(10)
+        ).is_some());
     }
 
     #[test]
