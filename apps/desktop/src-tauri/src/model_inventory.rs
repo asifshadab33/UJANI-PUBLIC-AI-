@@ -146,11 +146,18 @@ fn normalized_model_digest(digest: Option<&str>) -> Option<String> {
 ///
 /// Non-positive totals are unknown. Available RAM above a known positive total is
 /// treated as unknown rather than clamped or used to recommend a model.
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+
 pub(crate) fn normalize_memory_readings(
     total_memory_mb: Option<u64>,
     available_memory_mb: Option<u64>,
 ) -> (Option<u64>, Option<u64>) {
-    let total_memory_mb = total_memory_mb.filter(|memory| *memory > 0);
+    // JSON consumers commonly use IEEE-754 numbers. Values above the exact-integer
+    // range must stay unknown rather than being rounded into misleading capacity data.
+    let total_memory_mb =
+        total_memory_mb.filter(|memory| *memory > 0 && *memory <= MAX_SAFE_JSON_INTEGER);
+    let available_memory_mb = available_memory_mb
+        .filter(|memory| *memory <= MAX_SAFE_JSON_INTEGER);
     let available_memory_mb = match (total_memory_mb, available_memory_mb) {
         (Some(total), Some(available)) if available > total => None,
         (_, available) => available,
@@ -386,6 +393,19 @@ mod tests {
 
         assert_eq!(inventory.hardware.memory_total_mb, Some(8_192));
         assert_eq!(inventory.hardware.memory_available_mb, None);
+    }
+
+    #[test]
+    fn memory_readings_outside_exact_json_integer_range_stay_unknown() {
+        let above_safe_integer = MAX_SAFE_JSON_INTEGER + 1;
+        assert_eq!(
+            normalize_memory_readings(Some(above_safe_integer), Some(above_safe_integer)),
+            (None, None)
+        );
+        assert_eq!(
+            normalize_memory_readings(Some(8_192), Some(above_safe_integer)),
+            (Some(8_192), None)
+        );
     }
 
     #[test]
