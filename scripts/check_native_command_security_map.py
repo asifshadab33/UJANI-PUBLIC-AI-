@@ -185,7 +185,10 @@ def rust_function_body(source: str, function_name: str) -> str:
     # Preserve offsets/newlines while blanking comments and strings first. This
     # prevents a commented-out fake fn declaration from shadowing the real item.
     masked = strip_rust_noncode(source)
-    match = re.search(rf"\bfn\s+{re.escape(function_name)}\s*\(", masked)
+    match = re.search(
+        rf"\bfn\s+{re.escape(function_name)}\s*(?:<[^()]*>)?\s*\(",
+        masked,
+    )
     if not match:
         raise ValueError(f"could not locate Rust function {function_name}")
     opening_paren = masked.find("(", match.start())
@@ -264,27 +267,50 @@ def missing_document_ipc_preflight_guards(source: str) -> list[str]:
 
 
 def missing_defender_status_guards(source: str, adapter_source: str) -> list[str]:
-    """Require one-time native consent and bounded read-only Defender collection."""
+    """Require native consent to fail closed before either bounded OS provider query."""
     missing = []
-    try:
-        body = rust_function_body(source, "get_defender_status")
-    except ValueError:
-        return ["get_defender_status"]
-    ordered = (
-        "confirm_native",
-        "Duration::from_secs(120)",
-        "security_providers::read_defender_status().await",
+    guarded_commands = (
+        ("get_security_provider_status", "security_providers::read_only_status"),
+        ("get_defender_status", "security_providers::read_defender_status"),
     )
-    positions = [body.find(token) for token in ordered]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
-        missing.append("get_defender_status consent/order")
+    for command, query_token in guarded_commands:
+        try:
+            body = rust_function_body(source, command)
+        except ValueError:
+            missing.append(command)
+            continue
+        ordered = (
+            "confirm_native",
+            "Duration::from_secs(120)",
+            "run_after_native_confirmation",
+            query_token,
+        )
+        positions = [body.find(token) for token in ordered]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            missing.append(command + " consent/order")
+
+    # The helper must receive a lazy closure and must return on denial before
+    # invoking it. This keeps the static guard aligned with the runtime test.
+    try:
+        gate = rust_function_body(source, "run_after_native_confirmation")
+    except ValueError:
+        missing.append("native confirmation helper missing")
+    else:
+        gate_ordered = (
+            "if !approved",
+            "return Err(denied_message.to_string())",
+            "operation().await",
+        )
+        gate_positions = [gate.find(token) for token in gate_ordered]
+        if any(position < 0 for position in gate_positions) or gate_positions != sorted(gate_positions):
+            missing.append("native confirmation helper must fail closed before invoking the query closure")
+
     for token in (
         "MAX_OUTPUT_BYTES: usize = 16 * 1024",
         "QUERY_TIMEOUT: Duration = Duration::from_secs(8)",
         ".kill_on_drop(true)",
         "GetSystemDirectoryW",
         "Get-MpComputerStatus -ErrorAction Stop",
-        "GetSystemDirectoryW",
     ):
         if token not in adapter_source:
             missing.append("Defender adapter " + token)
