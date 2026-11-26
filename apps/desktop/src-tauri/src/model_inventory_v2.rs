@@ -269,7 +269,11 @@ fn build_inventory_v2_at(
     const MAX_MODEL_SIZE_BYTES: u64 = 1_099_511_627_776;
     const MAX_CONTEXT_TOKENS: u64 = 10_000_000;
     let inventory_models = models
+        // A caller may still hold a previous discovery result after the local
+        // runtime becomes unavailable. Never publish cached models as currently
+        // installed unless this collection observed the runtime as available.
         .iter()
+        .filter(|_| runtime_available)
         .filter(|model| {
             !model.name.trim().is_empty()
                 && model.name.chars().count() <= MAX_MODEL_REF_CHARS
@@ -636,6 +640,33 @@ mod tests {
         assert_eq!(value["models"][0]["compatibility"]["status"], "unknown");
         assert_eq!(value["models"][0]["embeddings"]["supported"], serde_json::Value::Null);
         assert_eq!(value["models"][0]["embeddings"]["evidence"]["confidence"], "unknown");
+    }
+
+    #[test]
+    fn unavailable_runtime_never_publishes_cached_model_discovery_results() {
+        let models = [sample_model()];
+        let metadata = HashMap::from([("llama3.2:latest".to_string(), OllamaModelMetadata {
+            model_digest: Some(sample_digest()),
+            context_length_tokens: Some(8192),
+            capabilities: vec!["chat".into()],
+        })]);
+        let value = serde_json::to_value(build_inventory_v2_at(ModelInventoryInput {
+            models: &models,
+            metadata: &metadata,
+            runtime_available: false,
+            runtime_version: None,
+            os_name: "Linux".into(),
+            os_version: None,
+            architecture: "x86_64".into(),
+            cpu_logical_cores: Some(8),
+            memory_total_mb: Some(16_384),
+            memory_available_mb: Some(8_192),
+            accelerator: None,
+        }, Some(5_000), None, Some(5_000)).expect("valid system clock")).unwrap();
+
+        assert_eq!(value["runtimes"][0]["availability"], "unavailable");
+        assert_eq!(value["runtimes"][0]["evidence"]["confidence"], "unknown");
+        assert!(value["models"].as_array().unwrap().is_empty());
     }
 
     #[test]
