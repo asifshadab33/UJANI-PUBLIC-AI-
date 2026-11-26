@@ -8,7 +8,7 @@ test("formats a reminder in its saved IANA timezone", () => {
 
 test("does not silently substitute the host timezone for an unavailable saved zone", () => {
   const value = formatReminderDue(Date.UTC(2026, 0, 1, 12), "Invalid/Zone", "en-GB");
-  assert.match(value, /^2026-01-01T12:00:00\\.000Z/);
+  assert.ok(value.startsWith("2026-01-01T12:00:00.000Z"));
   assert.match(value, /UTC; saved timezone unavailable/);
 });
 
