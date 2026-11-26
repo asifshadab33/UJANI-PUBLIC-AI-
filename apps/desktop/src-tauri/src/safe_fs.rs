@@ -1250,6 +1250,72 @@ mod walk_tests {
         fs::remove_dir_all(selected).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn deeper_descendant_replacement_is_omitted_and_marks_scan_truncated() {
+        let selected = root("deep-child-race-selected");
+        let outer = selected.join("outer");
+        let nested = outer.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let moved = outer.join("nested-pinned");
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let mut replaced_after_pin = false;
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(4, 40, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative == Path::new("outer/nested") && !replaced_after_pin {
+                    fs::rename(&nested, &moved).unwrap();
+                    fs::create_dir(&nested).unwrap();
+                    fs::write(nested.join("inside.txt"), b"replacement").unwrap();
+                    replaced_after_pin = true;
+                }
+            },
+        );
+
+        assert!(replaced_after_pin, "the deeper descendant replacement hook must run after pinning");
+        let walked = walked.expect("the unchanged root remains usable for an explicitly truncated partial scan");
+        assert!(walked.truncated, "a path/identity mismatch must make the result incomplete");
+        assert!(
+            walked.files.is_empty(),
+            "neither the moved directory's file nor the replacement file may be returned"
+        );
+
+        fs::remove_dir_all(nested).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+        fs::remove_dir_all(selected).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_after_child_pin_stops_before_child_enumeration() {
+        let selected = root("cancel-after-child-pin");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let cancellation = CancellationToken::new();
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(3, 20, LinkPolicy::Skip),
+            &cancellation,
+            |relative| {
+                if relative == Path::new("nested") {
+                    cancellation.cancel();
+                }
+            },
+        );
+
+        let error = walked.expect_err("cancellation after pinning must stop descent");
+        assert!(
+            error.contains("cancelled"),
+            "unexpected cancellation result: {error}"
+        );
+        fs::remove_dir_all(selected).unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn pinned_windows_root_denies_replacement_while_enumerating() {
