@@ -2,6 +2,8 @@
 export function formatReminderDue(timestamp, timezone, locale) {
   if (!Number.isFinite(timestamp)) return "Invalid reminder timestamp";
   const date = new Date(timestamp);
+  // Finite JavaScript numbers can still fall outside the Date time-clip range.
+  if (!Number.isFinite(date.getTime())) return "Invalid reminder timestamp";
   try {
     return new Intl.DateTimeFormat(locale, {
       dateStyle: "medium",
