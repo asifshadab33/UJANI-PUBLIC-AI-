@@ -232,9 +232,9 @@ fn build_inventory_v2_at(
         return None;
     }
     let generated_at = generated_at?;
-    // Observation timestamps are captured before inventory assembly. Reject an
-    // inconsistent/future observation instead of emitting evidence newer than
-    // the descriptor that claims to contain it.
+    // Observation timestamps are captured before inventory assembly. Reject
+    // inconsistent, future or stale observations rather than emitting capability
+    // evidence that is no longer suitable for current resource planning.
     if [runtime_observed_at_unix_ms, os_observed_at_unix_ms]
         .into_iter()
         .flatten()
@@ -500,14 +500,21 @@ mod tests {
         assert!(build_inventory_v2_at(input(), Some(10), Some(10), Some(10)).is_some());
 
         let stale_generated_at = MAX_MODEL_OBSERVATION_AGE_MS + 11;
-        assert!(build_inventory_v2_at(input(), Some(stale_generated_at), Some(10), None).is_none());
-        assert!(build_inventory_v2_at(input(), Some(stale_generated_at), None, Some(10)).is_none());
-        assert!(build_inventory_v2_at(
-            input(),
-            Some(MAX_MODEL_OBSERVATION_AGE_MS + 10),
-            Some(10),
-            Some(10)
-        ).is_some());
+        assert!(
+            build_inventory_v2_at(input(), Some(stale_generated_at), Some(10), None).is_none()
+        );
+        assert!(
+            build_inventory_v2_at(input(), Some(stale_generated_at), None, Some(10)).is_none()
+        );
+        assert!(
+            build_inventory_v2_at(
+                input(),
+                Some(MAX_MODEL_OBSERVATION_AGE_MS + 10),
+                Some(10),
+                Some(10)
+            )
+            .is_some()
+        );
     }
 
     #[test]
