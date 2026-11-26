@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
+    fs,
     io::Read,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
@@ -294,8 +294,9 @@ pub async fn find_local_files(
             } else {
                 let read_path = candidate.path.clone();
                 let read_root = root.clone();
+                let expected_identity = candidate.identity.clone();
                 match tauri::async_runtime::spawn_blocking(move || {
-                    read_bounded(&read_root, &read_path, MAX_TEXT_FILE_BYTES)
+                    read_bounded(&read_root, &read_path, MAX_TEXT_FILE_BYTES, expected_identity.as_deref())
                 }).await {
                     Ok(Ok(bytes)) => {
                         let actual_bytes = bytes.len() as u64;
@@ -328,8 +329,9 @@ pub async fn find_local_files(
             pdf_count += 1;
             let read_path = candidate.path.clone();
             let read_root = root.clone();
+            let expected_identity = candidate.identity.clone();
             match tauri::async_runtime::spawn_blocking(move || {
-                read_bounded(&read_root, &read_path, MAX_PDF_BYTES)
+                read_bounded(&read_root, &read_path, MAX_PDF_BYTES, expected_identity.as_deref())
             }).await {
                 Ok(Ok(bytes)) if bytes.starts_with(b"%PDF-") => {
                     let actual_bytes = bytes.len() as u64;
@@ -427,36 +429,6 @@ pub async fn find_local_files(
 
 /// Stable filesystem identity where the platform exposes it. Unsupported platforms
 /// deliberately return None; size, high-resolution mtime and canonical path remain required.
-#[cfg(unix)]
-/// Returns the device and inode identity for an opened Unix file handle.
-fn file_identity(_file: &File, metadata: &fs::Metadata) -> Option<String> {
-    use std::os::unix::fs::MetadataExt;
-    Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
-}
-
-#[cfg(windows)]
-/// Returns the volume and file-index identity from an opened Windows file handle.
-fn file_identity(file: &File, _metadata: &fs::Metadata) -> Option<String> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION};
-    let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
-    let succeeded = unsafe {
-        GetFileInformationByHandle(file.as_raw_handle() as _, info.as_mut_ptr())
-    };
-    if succeeded == 0 { return None; }
-    let info = unsafe { info.assume_init() };
-    Some(format!(
-        "windows:{}:{}:{}",
-        info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
-    ))
-}
-
-#[cfg(not(any(unix, windows)))]
-/// Returns no stable file identity on platforms without a supported handle API.
-fn file_identity(_file: &File, _metadata: &fs::Metadata) -> Option<String> {
-    None
-}
-
 /// Returns a signed nanosecond modification timestamp, including pre-epoch files.
 fn modified_unix_ns(metadata: &fs::Metadata) -> Option<i64> {
     let time = metadata.modified().ok()?;
@@ -475,8 +447,9 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
     for (item, cached_identity) in cached.matches.iter().zip(cached_identities) {
         let path = PathBuf::from(&item.path);
         if !path.starts_with(root) { return false; }
-        let Ok(rechecked_path) = fs::canonicalize(&path) else { return false; };
-        if rechecked_path != path || !rechecked_path.starts_with(root) { return false; }
+        // The lexical path is only a display/cache key. Reopen it beneath the
+        // selected root using the platform's handle-relative no-follow primitive;
+        // canonicalize(path) here would follow links and reintroduce a path race.
         let Some(candidate) = candidates.iter().find(|candidate| candidate.path == path) else { return false; };
         if candidate.size != item.size_bytes || candidate.modified_unix_ms != item.modified_unix_ms
             || candidate.identity.as_ref() != cached_identity.as_ref() {
@@ -486,7 +459,7 @@ fn validate_cached_matches(root: &Path, candidates: &[Candidate], cached: &Local
         let Ok(metadata) = file.metadata() else { return false; };
         if !metadata.is_file() || metadata.len() != candidate.size
             || modified_unix_ns(&metadata) != candidate.modified_unix_ns
-            || file_identity(&file, &metadata) != candidate.identity {
+            || crate::safe_fs::file_identity(&file) != candidate.identity {
             return false;
         }
         #[cfg(windows)] {
@@ -544,7 +517,11 @@ fn collect_candidates(folder: &Path, token: &CancellationToken) -> Result<(PathB
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
         let modified_unix_ns = modified_unix_ns(&metadata);
-        let identity = file_identity(&file, &metadata);
+        let identity = crate::safe_fs::file_identity(&file);
+        if identity.is_none() || identity != entry.identity {
+            truncated = true;
+            continue;
+        }
         candidates.push(Candidate {
             path: entry.path,
             name: entry.name.to_string_lossy().into_owned(),
@@ -565,11 +542,15 @@ fn read_bounded(
     root: &Path,
     path: &Path,
     limit: u64,
+    expected_identity: Option<&str>,
 ) -> Result<Vec<u8>, String> {
     let mut file = crate::safe_fs::open_regular_file_under_root(root, path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
-    if !metadata.is_file() || metadata.len() > limit {
-        return Err("File is not eligible for bounded reading.".into());
+    if !metadata.is_file() || metadata.len() > limit
+        || expected_identity.is_none()
+        || crate::safe_fs::file_identity(&file).as_deref() != expected_identity
+    {
+        return Err("File identity changed or the file is not eligible for bounded reading.".into());
     }
     #[cfg(windows)]
     {
@@ -738,7 +719,7 @@ mod tests {
         let mut found = Vec::new();
         for candidate in candidates {
             if candidate.extension != "txt" { continue; }
-            let bytes = read_bounded(&canonical_root, &candidate.path, MAX_TEXT_FILE_BYTES).unwrap();
+            let bytes = read_bounded(&canonical_root, &candidate.path, MAX_TEXT_FILE_BYTES, candidate.identity.as_deref()).unwrap();
             let content = String::from_utf8(bytes).unwrap();
             if let Some(preview) = match_preview_for(&content, "acme-rare-entity-9917") {
                 found.push((candidate.name, preview));
@@ -764,7 +745,7 @@ mod tests {
             std::os::unix::fs::symlink(&outside, root.join("linked-dir")).unwrap();
         }
         let (canonical, files, count, truncated) = collect_candidates(&root, &CancellationToken::new()).unwrap();
-        assert_eq!(canonical, fs::canonicalize(&root).unwrap());
+        assert_eq!(canonical, root);
         assert_eq!(count, 1);
         assert_eq!(files.len(), 1);
         assert!(!truncated);

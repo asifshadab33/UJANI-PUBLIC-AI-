@@ -1,0 +1,42 @@
+name: Filesystem handle-race regression tests
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/src-tauri/src/safe_fs.rs"
+      - "apps/desktop/src-tauri/src/folder_import.rs"
+      - "apps/desktop/src-tauri/src/local_search.rs"
+      - "apps/desktop/src-tauri/Cargo.toml"
+      - "apps/desktop/src-tauri/Cargo.lock"
+      - ".github/workflows/filesystem-handle-race.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  handle-race:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+      - name: Install frontend and Tauri CLI dependencies
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Generate Tauri platform icons from the checked-in SVG
+        working-directory: apps/desktop
+        run: npm run tauri icon src-tauri/icons/ujani.svg
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Run focused handle-relative traversal regressions
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
+        run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib safe_fs::walk_tests -- --nocapture

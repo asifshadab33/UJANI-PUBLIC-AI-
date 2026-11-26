@@ -3,22 +3,23 @@
 //! This module centralizes bounded no-follow file opening and directory traversal;
 //! callers retain extension, content, size and task-specific error policy.
 //!
-//! Security boundary: `open_regular_file_under_root` reopens a final file through
-//! pinned, no-follow handles, but `walk_directory` still enumerates directories and
-//! obtains some entry metadata by path. That walker is bounded and skips links, but
-//! it is not yet race-resistant against concurrent directory replacement. Do not
-//! treat walker results as authorization to read a file; reopen every candidate
-//! through `open_regular_file_under_root` and keep selected-root identity pinned.
-//! Full handle-relative enumeration is tracked separately before release.
+//! Security boundary: `walk_directory` pins the selected root and each descended
+//! directory, enumerates only through those capability handles, and opens entries
+//! relative to their pinned parent with final-component link following disabled.
+//! It records file identity from the opened handle. Callers must still reopen each
+//! candidate beneath the selected root and compare that identity before reading
+//! content; metadata results alone are never authorization to read. Platforms
+//! without the required handle-relative primitives fail closed.
 use std::{io, path::Path, time::{Duration, Instant, UNIX_EPOCH}};
 #[cfg(windows)]
 use std::fs::OpenOptions;
 
 
-/// Opens a file beneath a canonical selected root using handle-relative, no-follow
-/// traversal. On Unix every ancestor is opened with O_DIRECTORY|O_NOFOLLOW and the
-/// final component with O_NOFOLLOW, so replacing a path component with a symlink
-/// cannot redirect a later file read outside the selected directory.
+/// Opens a file beneath the selected root using handle-relative, no-follow
+/// traversal. The selected root's parent is resolved and pinned once, the final
+/// root component is opened with O_NOFOLLOW, and every relative child component is
+/// opened from its pinned parent with O_NOFOLLOW. Windows uses handle-relative
+/// NtCreateFile with FILE_OPEN_REPARSE_POINT and denies delete sharing on directories.
 #[cfg(unix)]
 pub(crate) fn open_regular_file_under_root(
     root: &Path,
@@ -28,6 +29,7 @@ pub(crate) fn open_regular_file_under_root(
         ffi::CString,
         os::fd::{AsRawFd, FromRawFd},
         os::unix::ffi::OsStrExt,
+        path::Component,
     };
 
     fn open_at(
@@ -47,9 +49,6 @@ pub(crate) fn open_regular_file_under_root(
         Ok(unsafe { std::fs::File::from_raw_fd(fd) })
     }
 
-    // Linux O_PATH handles require search permission but not directory read
-    // permission. They remain valid dirfds for component-wise openat traversal.
-    // Other Unix targets retain O_RDONLY because O_PATH is Linux-specific.
     fn directory_open_flags() -> i32 {
         #[cfg(target_os = "linux")]
         {
@@ -61,54 +60,31 @@ pub(crate) fn open_regular_file_under_root(
         }
     }
 
-    fn open_root_directory() -> io::Result<std::fs::File> {
-        #[cfg(target_os = "linux")]
-        {
-            let name = CString::new("/").expect("static root path has no NUL");
-            // SAFETY: name is NUL-terminated and remains alive for the call.
-            let fd = unsafe { libc::open(name.as_ptr(), directory_open_flags()) };
-            if fd < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            // SAFETY: fd is a fresh descriptor returned by open and ownership is transferred.
-            Ok(unsafe { std::fs::File::from_raw_fd(fd) })
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            std::fs::File::open("/")
-        }
-    }
-
     if !root.is_absolute() || !path.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "selected root and file path must be absolute",
         ));
     }
-    let relative = path.strip_prefix(root)
-        .map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "file path is outside selected root",
-            )
-        })?;
-    let mut components = root
-        .components()
-        .chain(relative.components())
-        .filter_map(|component| {
-        match component {
-            std::path::Component::RootDir => None,
-            std::path::Component::Normal(name) => Some(Ok(name)),
-            _ => Some(Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "non-normal path component rejected",
-            ))),
-        }
-    }).peekable();
+    let relative = path.strip_prefix(root).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file path is outside selected root",
+        )
+    })?;
+    let mut directory = open_selected_root_no_follow(root)?;
+    let mut components = relative.components().peekable();
 
-    let mut directory = open_root_directory()?;
     while let Some(component) = components.next() {
-        let name = component?;
+        let name = match component {
+            Component::Normal(name) => name,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "non-normal relative path component rejected",
+                ));
+            }
+        };
         let final_component = components.peek().is_none();
         let flags = if final_component {
             libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
@@ -260,7 +236,8 @@ mod windows_handle {
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const SYNCHRONIZE: u32 = 0x0010_0000;
-    const FILE_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
+    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
     const FILE_OPEN: u32 = 0x0000_0001;
     const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
     const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
@@ -277,7 +254,7 @@ mod windows_handle {
         let metadata = handle.metadata()?;
         if !metadata.is_dir() || is_reparse_point(&metadata) {
             return Err(invalid_path(
-                "A selected directory component is not a real directory.",
+                "A selected directory component is not a real directory (symbolic link or reparse point).",
             ));
         }
         Ok(())
@@ -289,6 +266,7 @@ mod windows_handle {
         parent: &std::fs::File,
         name: &OsStr,
         directory: bool,
+        list_directory: bool,
     ) -> io::Result<std::fs::File> {
         let mut wide: Vec<u16> = name.encode_wide().collect();
         if wide.is_empty()
@@ -326,6 +304,7 @@ mod windows_handle {
         let mut handle = ptr::null_mut::<c_void>();
         let access = if directory {
             FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+                | if list_directory { FILE_LIST_DIRECTORY } else { 0 }
         } else {
             FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE
         };
@@ -348,7 +327,7 @@ mod windows_handle {
                 &mut io_status,
                 ptr::null_mut(),
                 0,
-                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_SHARE_READ_WRITE,
                 FILE_OPEN,
                 options,
                 ptr::null_mut(),
@@ -373,16 +352,24 @@ mod windows_handle {
     /// ancestor by handle and rejecting any reparse point encountered on the way.
     /// UNC/network roots and non-drive device namespaces are rejected fail-closed.
     pub(super) fn open_directory_path_no_reparse(path: &Path) -> io::Result<std::fs::File> {
-        let mut components = path.components();
+        open_directory_path_internal(path, false)
+    }
+
+    /// Opens the selected root with list-directory access and no FILE_SHARE_DELETE,
+    /// so cap_std can enumerate the already-pinned handle without a path reopen.
+    pub(super) fn open_directory_path_for_enumeration(path: &Path) -> io::Result<std::fs::File> {
+        open_directory_path_internal(path, true)
+    }
+
+    fn open_directory_path_internal(path: &Path, enumerate: bool) -> io::Result<std::fs::File> {
+        let mut components = path.components().peekable();
         let drive = match components.next() {
             Some(Component::Prefix(prefix)) => match prefix.kind() {
                 Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive,
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "Only local drive paths are supported for safe folder access.",
-                    ));
-                }
+                _ => return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "Only local drive paths are supported for safe folder access.",
+                )),
             },
             _ => return Err(invalid_path("Selected root must be an absolute drive path.")),
         };
@@ -398,29 +385,35 @@ mod windows_handle {
             .collect();
         // SAFETY: drive_type_wide is NUL-terminated and remains alive for the call.
         let drive_type = unsafe { GetDriveTypeW(drive_type_wide.as_ptr()) };
-        if drive_type != DRIVE_FIXED
-            && drive_type != DRIVE_REMOVABLE
-            && drive_type != DRIVE_RAMDISK
-        {
+        if drive_type != DRIVE_FIXED && drive_type != DRIVE_REMOVABLE && drive_type != DRIVE_RAMDISK {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Safe folder access is limited to local fixed, removable or RAM drives.",
             ));
         }
 
+        let has_components = components.peek().is_some();
+        let drive_access = FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+            | if enumerate && !has_components { FILE_LIST_DIRECTORY } else { 0 };
         let mut directory = OpenOptions::new()
-            .access_mode(FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
-            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+            .access_mode(drive_access)
+            .share_mode(FILE_SHARE_READ_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(drive_root)?;
         verify_directory_handle(&directory)?;
 
-        for component in components {
+        while let Some(component) = components.next() {
             let name = match component {
                 Component::Normal(name) => name,
                 _ => return Err(invalid_path("Non-normal Windows path component rejected.")),
             };
-            let child = open_relative_component(&directory, name, true)?;
+            let final_component = components.peek().is_none();
+            let child = open_relative_component(
+                &directory,
+                name,
+                true,
+                enumerate && final_component,
+            )?;
             verify_directory_handle(&child)?;
             directory = child;
         }
@@ -440,7 +433,7 @@ mod windows_handle {
                 _ => return Err(invalid_path("Non-normal relative path component rejected.")),
             };
             let final_component = components.peek().is_none();
-            let opened = open_relative_component(&directory, name, !final_component)?;
+            let opened = open_relative_component(&directory, name, !final_component, false)?;
             if final_component {
                 let metadata = opened.metadata()?;
                 if !metadata.is_file() || is_reparse_point(&metadata) {
@@ -672,6 +665,8 @@ pub(crate) struct WalkFile {
     pub name: OsString,
     pub size_bytes: u64,
     pub modified_unix_ms: Option<u64>,
+    /// Stable identity captured from the opened file handle; callers must compare it after reopening.
+    pub identity: Option<String>,
 }
 
 #[derive(Debug)]
@@ -683,39 +678,213 @@ pub(crate) struct WalkResult {
     pub truncated: bool,
 }
 
-/// Shared bounded directory walker. It never follows an encountered symbolic link or
-/// reparse point intentionally, confines canonical paths to the selected root, and
-/// leaves extension, size, content, hashing and cancellation-result policy to callers.
-pub(crate) fn walk_directory(
+/// Resolve and pin the selected root's parent, then open the selected final
+/// directory component with O_NOFOLLOW. Ancestor aliases (for example macOS
+/// /var -> /private/var) may resolve before the parent handle is pinned.
+#[cfg(unix)]
+fn open_selected_root_no_follow(path: &Path) -> io::Result<std::fs::File> {
+    use std::{
+        ffi::CString,
+        os::fd::{AsRawFd, FromRawFd},
+        os::unix::ffi::OsStrExt,
+        path::Component,
+    };
+
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selected root must be an absolute normalized path",
+        ));
+    }
+    if path == Path::new("/") {
+        return std::fs::File::open("/");
+    }
+
+    let parent_path = path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "selected root has no parent directory")
+    })?;
+    let root_name = match path.components().next_back() {
+        Some(Component::Normal(name)) => name,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "selected root must end in a normal path component",
+            ));
+        }
+    };
+
+    // Resolve and pin the parent in one open operation. This intentionally follows
+    // ancestor aliases such as macOS /var -> /private/var; only the user-selected
+    // final directory component is opened with O_NOFOLLOW below.
+    #[cfg(target_os = "linux")]
+    let parent = {
+        let parent_name = CString::new(parent_path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "parent path contains NUL"))?;
+        // SAFETY: parent_name is NUL-terminated and remains alive for the call.
+        let fd = unsafe {
+            libc::open(
+                parent_name.as_ptr(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fd is a fresh descriptor returned by open and ownership is transferred.
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let parent = std::fs::File::open(parent_path)?;
+
+    if !parent.metadata()?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "selected root parent is not a directory",
+        ));
+    }
+
+    let root_name = CString::new(root_name.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "root component contains NUL"))?;
+    // SAFETY: parent is a live directory descriptor and root_name is NUL-terminated.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            root_name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is a fresh descriptor returned by openat and ownership is transferred.
+    let root = unsafe { std::fs::File::from_raw_fd(fd) };
+    let metadata = root.metadata()?;
+    if !metadata.is_dir() || is_reparse_point(&metadata) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "selected root is not a real directory",
+        ));
+    }
+    Ok(root)
+}
+
+#[cfg(windows)]
+fn open_selected_root_no_follow(path: &Path) -> io::Result<std::fs::File> {
+    windows_handle::open_directory_path_for_enumeration(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_selected_root_no_follow(_path: &Path) -> io::Result<std::fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "race-resistant directory enumeration is not implemented for this platform",
+    ))
+}
+
+/// Stable filesystem identity from an already-open file or directory handle.
+pub(crate) fn file_identity(file: &std::fs::File) -> Option<String> {
+    let _metadata = file.metadata().ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(format!(
+            "unix:{}:{}:{}:{}",
+            _metadata.dev(),
+            _metadata.ino(),
+            _metadata.ctime(),
+            _metadata.ctime_nsec()
+        ))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+        // SAFETY: the file handle is live and info points to writable storage.
+        let succeeded = unsafe {
+            GetFileInformationByHandle(file.as_raw_handle() as _, info.as_mut_ptr())
+        };
+        if succeeded == 0 { return None; }
+        // SAFETY: GetFileInformationByHandle succeeded and initialized the structure.
+        let info = unsafe { info.assume_init() };
+        Some(format!(
+            "windows:{}:{}:{}:{}:{}",
+            info.dwVolumeSerialNumber,
+            info.nFileIndexHigh,
+            info.nFileIndexLow,
+            info.ftCreationTime.dwHighDateTime,
+            info.ftCreationTime.dwLowDateTime
+        ))
+    }
+    #[cfg(not(any(unix, windows)))]
+    { let _ = _metadata; None }
+}
+
+fn walk_directory_impl<F>(
     selected_root: &Path,
     options: WalkOptions,
     cancellation: &CancellationToken,
-) -> Result<WalkResult, String> {
-    // The Windows handle-relative implementation intentionally supports local
-    // fixed/removable/RAM drives only. Validate this before either importer or
-    // search starts enumeration, so UNC and mapped network selections fail
-    // explicitly instead of becoming silently skipped/truncated results.
-    #[cfg(windows)]
-    let _validated_root = windows_handle::open_directory_path_no_reparse(selected_root)
-        .map_err(|error| format!(
-            "Cannot safely access the selected Windows folder: {error}"
-        ))?;
+    mut after_directory_pinned: F,
+) -> Result<WalkResult, String>
+where
+    F: FnMut(&Path),
+{
+    use cap_fs_ext::{
+        FollowSymlinks, OpenOptions, OpenOptionsFollowExt, OpenOptionsMaybeDirExt,
+    };
+    #[cfg(unix)]
+    use cap_fs_ext::OpenOptionsSyncExt;
+    use cap_std::fs::Dir;
 
-    let root_metadata = std::fs::symlink_metadata(selected_root)
-        .map_err(|error| format!("Cannot inspect selected folder: {error}"))?;
-    if is_reparse_point(&root_metadata) || !root_metadata.is_dir() {
+    #[cfg(windows)]
+    if !selected_root.is_absolute() {
+        return Err("Only local drive paths are supported for safe folder access.".into());
+    }
+    if !selected_root.is_absolute() {
+        return Err("Choose an absolute local directory.".into());
+    }
+    if cancellation.is_cancelled() {
+        return Err("Directory traversal cancelled by user.".into());
+    }
+
+    // This preflight is diagnostic only: it provides a useful message for an
+    // already-present selected-root link. The no-follow handle open below is the
+    // security decision and remains authoritative against a concurrent replacement.
+    if let Ok(metadata) = std::fs::symlink_metadata(selected_root) {
+        if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+            return Err("Choose a real directory, not a symbolic link or reparse point.".into());
+        }
+    }
+    // Pin the selected root once. Unix opens its parent handle (allowing normal OS
+    // ancestor aliases) and opens the selected final component with O_NOFOLLOW;
+    // Windows also denies FILE_SHARE_DELETE to prevent root replacement.
+    let root_handle = open_selected_root_no_follow(selected_root)
+        .map_err(|error| format!("Cannot safely pin the selected folder: {error}"))?;
+    let root_metadata = root_handle.metadata()
+        .map_err(|error| format!("Cannot inspect pinned selected folder: {error}"))?;
+    if !root_metadata.is_dir() || is_reparse_point(&root_metadata) {
         return Err("Choose a real directory, not a symbolic link or reparse point.".into());
     }
-    let root = std::fs::canonicalize(selected_root)
-        .map_err(|error| format!("Cannot resolve selected folder: {error}"))?;
+    let root_identity = file_identity(&root_handle)
+        .ok_or_else(|| "This platform cannot identify the selected root safely.".to_owned())?;
+    let root = selected_root.to_path_buf();
+    let root_dir = Dir::from_std_file(root_handle);
+    after_directory_pinned(Path::new(""));
     let started = Instant::now();
-    let mut stack = vec![(root.clone(), 0usize)];
+    let mut stack = vec![(root_dir, PathBuf::new(), 0usize)];
     let mut files = Vec::new();
     let mut files_examined = 0usize;
     let mut entries_seen = 0usize;
     let mut truncated = false;
 
-    while let Some((directory, depth)) = stack.pop() {
+    while let Some((directory, relative_directory, depth)) = stack.pop() {
         if cancellation.is_cancelled() {
             return Err("Directory traversal cancelled by user.".into());
         }
@@ -723,38 +892,15 @@ pub(crate) fn walk_directory(
             truncated = true;
             break;
         }
-        let directory_metadata = match std::fs::symlink_metadata(&directory) {
-            Ok(metadata) => metadata,
-            Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                return Err(format!("Cannot inspect directory: {error}"));
-            }
-            Err(_) => { truncated = true; continue; }
-        };
-        if is_reparse_point(&directory_metadata) || !directory_metadata.is_dir() {
-            if options.links == LinkPolicy::Reject {
-                return Err("The selected folder contains a symbolic link or reparse point.".into());
-            }
-            continue;
-        }
-        let canonical_directory = match std::fs::canonicalize(&directory) {
-            Ok(path) if path.starts_with(&root) => path,
-            Ok(_) if options.errors == WalkErrorPolicy::Reject => {
-                return Err("A directory resolves outside the selected folder.".into());
-            }
-            Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                return Err(format!("Cannot resolve a selected directory: {error}"));
-            }
-            _ => { truncated = true; continue; }
-        };
-        let iterator = match std::fs::read_dir(&canonical_directory) {
+        let iterator = match directory.entries() {
             Ok(entries) => entries,
             Err(error) if options.errors == WalkErrorPolicy::Reject || depth == 0 => {
-                return Err(format!("Cannot read selected folder: {error}"));
+                return Err(format!("Cannot enumerate pinned directory: {error}"));
             }
             Err(_) => { truncated = true; continue; }
         };
 
-        for entry in iterator {
+        for entry_result in iterator {
             if cancellation.is_cancelled() {
                 return Err("Directory traversal cancelled by user.".into());
             }
@@ -767,102 +913,152 @@ pub(crate) fn walk_directory(
                 truncated = true;
                 break;
             }
-            let entry = match entry {
+            let entry = match entry_result {
                 Ok(entry) => entry,
                 Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                    return Err(format!("Cannot inspect a folder entry: {error}"));
+                    return Err(format!("Cannot enumerate a pinned directory entry: {error}"));
                 }
                 Err(_) => { truncated = true; continue; }
             };
-            let path = entry.path();
-            let metadata = match std::fs::symlink_metadata(&path) {
-                Ok(metadata) => metadata,
+            let name = entry.file_name();
+            if name == "." || name == ".." { continue; }
+            let relative_path = relative_directory.join(&name);
+            let display_path = root.join(&relative_path);
+            let entry_type = match entry.file_type() {
+                Ok(kind) => kind,
                 Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                    return Err(format!("Cannot inspect a folder entry: {error}"));
+                    return Err(format!("Cannot inspect a pinned directory entry: {error}"));
                 }
                 Err(_) => { truncated = true; continue; }
             };
-            if is_reparse_point(&metadata) {
+
+            if entry_type.is_symlink() {
                 if options.links == LinkPolicy::Reject {
                     return Err("The selected folder contains a symbolic link or reparse point. Remove it and try again.".into());
                 }
                 continue;
             }
-            if metadata.is_dir() {
-                if options.recursive && depth < options.max_depth {
-                    let canonical_child = match std::fs::canonicalize(&path) {
-                        Ok(child) if child.starts_with(&root) => child,
-                        Ok(_) if options.errors == WalkErrorPolicy::Reject => {
-                            return Err("A child directory resolves outside the selected folder.".into());
-                        }
-                        Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                            return Err(format!("Cannot resolve child directory: {error}"));
-                        }
-                        _ => { truncated = true; continue; }
-                    };
-                    stack.push((canonical_child, depth + 1));
-                } else if options.recursive && depth >= options.max_depth {
+
+            if entry_type.is_dir() {
+                if !options.recursive { continue; }
+                if depth >= options.max_depth {
                     truncated = true;
+                    continue;
                 }
+                let mut open_options = OpenOptions::new();
+                open_options.read(true).follow(FollowSymlinks::No).maybe_dir(true);
+                let child_file = match entry.open_with(&open_options) {
+                    Ok(file) => file.into_std(),
+                    Err(error) if options.errors == WalkErrorPolicy::Reject || options.links == LinkPolicy::Reject => {
+                        return Err(format!("Cannot safely pin child directory: {error}"));
+                    }
+                    Err(_) => { truncated = true; continue; }
+                };
+                let metadata = match child_file.metadata() {
+                    Ok(metadata) if metadata.is_dir() && !is_reparse_point(&metadata) => metadata,
+                    _ if options.links == LinkPolicy::Reject => {
+                        return Err("A selected child is not a real directory.".into());
+                    }
+                    _ => { truncated = true; continue; }
+                };
+                let _ = metadata;
+                let child_dir = Dir::from_std_file(child_file);
+                after_directory_pinned(&relative_path);
+                stack.push((child_dir, relative_path, depth + 1));
                 continue;
             }
-            if !metadata.is_file() {
-                continue;
-            }
+
+            if !entry_type.is_file() { continue; }
             files_examined = files_examined.saturating_add(1);
-            if options.file_filter.is_some_and(|filter| !filter(&path)) {
+            if options.file_filter.is_some_and(|filter| !filter(&display_path)) {
                 continue;
             }
-            // Reopen from the selected root with handle-relative, no-follow traversal.
-            // A final-component no-follow open is insufficient if an ancestor is replaced
-            // after enumeration; pin every component again before trusting file metadata.
-            let handle = match open_regular_file_under_root(&root, &path) {
-                Ok(handle) => handle,
+
+            let mut open_options = OpenOptions::new();
+            open_options.read(true).follow(FollowSymlinks::No);
+            #[cfg(unix)]
+            open_options.nonblock(true);
+            let file = match entry.open_with(&open_options) {
+                Ok(file) => file.into_std(),
                 Err(error) if options.errors == WalkErrorPolicy::Reject || options.links == LinkPolicy::Reject => {
-                    return Err(format!("Cannot safely open selected file: {error}"));
+                    return Err(format!("Cannot safely open selected file relative to its pinned parent: {error}"));
                 }
                 Err(_) => { truncated = true; continue; }
             };
-            let opened_metadata = match handle.metadata() {
+            let opened_metadata = match file.metadata() {
                 Ok(metadata) if metadata.is_file() && !is_reparse_point(&metadata) => metadata,
                 _ if options.links == LinkPolicy::Reject => {
                     return Err("A selected file is not a regular non-reparse file.".into());
                 }
                 _ => { truncated = true; continue; }
             };
-            let canonical_file = match std::fs::canonicalize(&path) {
-                Ok(file) if file.starts_with(&root) => file,
-                Ok(_) if options.errors == WalkErrorPolicy::Reject => {
-                    return Err("A selected file resolves outside the chosen folder.".into());
-                }
-                Err(error) if options.errors == WalkErrorPolicy::Reject => {
-                    return Err(format!("Cannot resolve selected file: {error}"));
-                }
-                _ => { truncated = true; continue; }
-            };
+            let identity = file_identity(&file);
+            if identity.is_none() {
+                return Err("This platform cannot provide a stable file identity; refusing to return an unbound scan result.".into());
+            }
             let modified_unix_ms = opened_metadata.modified().ok()
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64);
             files.push(WalkFile {
-                path: canonical_file,
-                name: entry.file_name(),
+                path: display_path,
+                name,
                 size_bytes: opened_metadata.len(),
                 modified_unix_ms,
+                identity,
             });
         }
+
         if entries_seen > options.max_entries
             || options.max_duration.is_some_and(|limit| started.elapsed() >= limit)
         {
-            if options.max_duration.is_some_and(|limit| started.elapsed() >= limit) {
-                truncated = true;
-            }
+            truncated = true;
             break;
         }
     }
 
-    Ok(WalkResult { root, files, files_examined, truncated })
+    // Do not return stale display paths if the selected root or any descendant was
+    // replaced while the scan was running. Reopen each path through the root-bound
+    // no-follow helper and require the same file identity observed from its handle.
+    let current_root = open_selected_root_no_follow(&root)
+        .map_err(|_| "The selected folder changed during scanning; retry the operation.".to_owned())?;
+    if file_identity(&current_root).as_deref() != Some(root_identity.as_str()) {
+        return Err("The selected folder changed during scanning; retry the operation.".into());
+    }
+
+    let mut verified_files = Vec::with_capacity(files.len());
+    for file in files {
+        if cancellation.is_cancelled() {
+            return Err("Directory traversal cancelled by user.".into());
+        }
+        if options.max_duration.is_some_and(|limit| started.elapsed() >= limit) {
+            truncated = true;
+            break;
+        }
+        match open_regular_file_under_root(&root, &file.path) {
+            Ok(opened) if file_identity(&opened) == file.identity => verified_files.push(file),
+            _ => truncated = true,
+        }
+    }
+
+    Ok(WalkResult {
+        root,
+        files: verified_files,
+        files_examined,
+        truncated,
+    })
 }
 
+/// Returned paths are display handles only; content consumers must compare identity.
+/// Handle-relative directory traversal. Every directory is enumerated through a
+/// pinned capability handle; each child is opened relative to its pinned parent
+/// with final-component symlink/reparse following disabled.
+pub(crate) fn walk_directory(
+    selected_root: &Path,
+    options: WalkOptions,
+    cancellation: &CancellationToken,
+) -> Result<WalkResult, String> {
+    walk_directory_impl(selected_root, options, cancellation, |_| {})
+}
 
 #[cfg(test)]
 mod walk_tests {
@@ -891,7 +1087,7 @@ mod walk_tests {
             )
             .unwrap_err();
             assert!(
-                error.contains("Cannot safely access the selected Windows folder"),
+                error.contains("local drive paths are supported for safe folder access"),
                 "unsupported root should be rejected before enumeration: {value}: {error}"
             );
         }
@@ -899,6 +1095,8 @@ mod walk_tests {
 
     use super::{walk_directory, LinkPolicy, WalkErrorPolicy, WalkOptions};
     use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    #[cfg(unix)]
+    use std::path::Path;
     use tokio_util::sync::CancellationToken;
 
     fn root(label: &str) -> std::path::PathBuf {
@@ -991,6 +1189,181 @@ mod walk_tests {
         assert!(walk_directory(&folder, options(2, 20, LinkPolicy::Skip), &cancellation).is_err());
         fs::remove_dir_all(folder).unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn root_replacement_after_pin_does_not_redirect_directory_enumeration() {
+        let selected = root("root-race-selected");
+        let moved = selected.with_extension("pinned");
+        fs::write(selected.join("inside.txt"), b"inside").unwrap();
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(2, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative.as_os_str().is_empty() && selected.exists() {
+                    fs::rename(&selected, &moved).unwrap();
+                    fs::create_dir(&selected).unwrap();
+                    fs::write(selected.join("replacement.txt"), b"replacement").unwrap();
+                }
+            },
+        );
+
+        assert!(walked.is_err(), "a replaced root path must fail closed");
+
+        fs::remove_dir_all(selected).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descendant_replacement_after_child_pin_does_not_redirect_descent() {
+        let selected = root("child-race-selected");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let moved = selected.join("nested-pinned");
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let mut replaced_after_pin = false;
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(3, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative == Path::new("nested") && !replaced_after_pin {
+                    fs::rename(&nested, &moved).unwrap();
+                    fs::create_dir(&nested).unwrap();
+                    fs::write(nested.join("inside.txt"), b"replacement").unwrap();
+                    replaced_after_pin = true;
+                }
+            },
+        );
+
+        assert!(replaced_after_pin, "the descendant replacement hook must run after pinning");
+        let error = walked.expect_err("a replaced descendant must fail closed, not return either path");
+        assert!(
+            error.to_string().contains("selected folder changed during scanning"),
+            "unexpected fail-closed error: {error}"
+        );
+        fs::remove_dir_all(nested).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+        fs::remove_dir_all(selected).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deeper_descendant_replacement_is_omitted_and_marks_scan_truncated() {
+        let selected = root("deep-child-race-selected");
+        let outer = selected.join("outer");
+        let nested = outer.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        let moved = outer.join("nested-pinned");
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let mut replaced_after_pin = false;
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(4, 40, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative == Path::new("outer/nested") && !replaced_after_pin {
+                    fs::rename(&nested, &moved).unwrap();
+                    fs::create_dir(&nested).unwrap();
+                    fs::write(nested.join("inside.txt"), b"replacement").unwrap();
+                    replaced_after_pin = true;
+                }
+            },
+        );
+
+        assert!(replaced_after_pin, "the deeper descendant replacement hook must run after pinning");
+        let walked = walked.expect("the unchanged root remains usable for an explicitly truncated partial scan");
+        assert!(walked.truncated, "a path/identity mismatch must make the result incomplete");
+        assert!(
+            walked.files.is_empty(),
+            "neither the moved directory's file nor the replacement file may be returned"
+        );
+
+        fs::remove_dir_all(nested).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+        fs::remove_dir_all(selected).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_after_child_pin_stops_before_child_enumeration() {
+        let selected = root("cancel-after-child-pin");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let cancellation = CancellationToken::new();
+
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(3, 20, LinkPolicy::Skip),
+            &cancellation,
+            |relative| {
+                if relative == Path::new("nested") {
+                    cancellation.cancel();
+                }
+            },
+        );
+
+        let error = walked.expect_err("cancellation after pinning must stop descent");
+        assert!(
+            error.contains("cancelled"),
+            "unexpected cancellation result: {error}"
+        );
+        fs::remove_dir_all(selected).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pinned_windows_root_denies_replacement_while_enumerating() {
+        let selected = root("windows-root-race");
+        let moved = selected.with_extension("pinned");
+        fs::write(selected.join("inside.txt"), b"inside").unwrap();
+        let mut rename_blocked = false;
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(2, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative.as_os_str().is_empty() {
+                    rename_blocked = fs::rename(&selected, &moved).is_err();
+                }
+            },
+        ).unwrap();
+        assert!(rename_blocked, "root handle must deny FILE_SHARE_DELETE");
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "inside.txt");
+        fs::remove_dir_all(selected).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pinned_windows_child_denies_replacement_before_descent() {
+        let selected = root("windows-child-race");
+        let nested = selected.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("inside.txt"), b"inside").unwrap();
+        let moved = selected.join("nested-pinned");
+        let mut rename_blocked = false;
+        let walked = super::walk_directory_impl(
+            &selected,
+            options(3, 20, LinkPolicy::Skip),
+            &CancellationToken::new(),
+            |relative| {
+                if relative == std::path::Path::new("nested") {
+                    rename_blocked = fs::rename(&nested, &moved).is_err();
+                }
+            },
+        ).unwrap();
+        assert!(rename_blocked, "child directory handle must deny FILE_SHARE_DELETE");
+        assert_eq!(walked.files.len(), 1);
+        assert_eq!(walked.files[0].name, "inside.txt");
+        fs::remove_dir_all(selected).unwrap();
+    }
+
 }
 
 
@@ -1028,6 +1401,7 @@ mod selected_root_open_boundary_tests {
         let mut contents = Vec::new();
         opened.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"inside");
+        drop(opened);
         fs::remove_dir_all(parent).unwrap();
     }
 
@@ -1071,6 +1445,7 @@ mod selected_root_open_boundary_tests {
         let mut contents = Vec::new();
         opened.read_to_end(&mut contents).unwrap();
         assert_eq!(contents, b"traverse-only");
+        drop(opened);
         fs::remove_dir_all(parent).unwrap();
     }
 
