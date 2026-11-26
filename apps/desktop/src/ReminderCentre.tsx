@@ -34,16 +34,10 @@ function localDateTimeInput(timestamp: number): string {
   return local.toISOString().slice(0, 16);
 }
 
+import { formatReminderDue } from "./reminderDateFormat.js";
+
 function formatDue(timestamp: number, timezone: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone: timezone,
-    }).format(new Date(timestamp));
-  } catch {
-    return new Date(timestamp).toLocaleString();
-  }
+  return formatReminderDue(timestamp, timezone);
 }
 
 function localTimezone(): string {
