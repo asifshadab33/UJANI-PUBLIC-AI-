@@ -496,23 +496,40 @@ def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
 
 
 def missing_folder_import_preflight_guards(source: str) -> list[str]:
-    """Require task/capability checks before the native picker and bounded file traversal."""
+    """Require a pre-picker check and a fresh post-picker check before folder traversal."""
     try:
         body = rust_function_body(source, "process_selected_folder")
+        read_gate = rust_function_body(source, "run_folder_read_preflight")
     except ValueError:
         return ["process_selected_folder"]
 
-    ordered = (
-        "register_active_task",
-        "get_capability_snapshot_for_task",
-        "require_local_operation",
-        "blocking_pick_folder",
-        "collect_selected_folder",
-    )
-    positions = [body.find(token) for token in ordered]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
+    picker_at = body.find("blocking_pick_folder")
+    initial_positions = [
+        body.find("register_active_task"),
+        body.find("get_capability_snapshot_for_task"),
+        body.find("require_local_operation"),
+        picker_at,
+    ]
+    if any(position < 0 for position in initial_positions) or initial_positions != sorted(initial_positions):
         return ["process_selected_folder"]
-    if "PathBuf" in body or "selected_path" in body:
+
+    fresh_snapshot_at = body.find("get_capability_snapshot_for_task", picker_at + 1)
+    read_gate_at = body.find("run_folder_read_preflight", picker_at + 1)
+    traversal_at = body.find("collect_selected_folder", read_gate_at + 1)
+    if not (picker_at < fresh_snapshot_at < read_gate_at < traversal_at):
+        return ["process_selected_folder"]
+
+    gate_order = (
+        "ensure_task_not_cancelled",
+        "require_local_operation",
+        "start_read()",
+    )
+    gate_positions = [read_gate.find(token) for token in gate_order]
+    if any(position < 0 for position in gate_positions) or gate_positions != sorted(gate_positions):
+        return ["run_folder_read_preflight"]
+
+    signature = source.split("pub async fn process_selected_folder(", 1)[-1].split(") ->", 1)[0]
+    if "PathBuf" in signature or "selected_path" in signature:
         return ["process_selected_folder"]
     return []
 
