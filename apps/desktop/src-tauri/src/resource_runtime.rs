@@ -44,6 +44,17 @@ fn current_available_memory_mb() -> Option<u64> {
     Some(system.available_memory() / (1024 * 1024))
 }
 
+/// Run synchronous host-resource probes on Tokio's blocking pool, never on an async worker.
+async fn run_blocking_probe<T, F>(probe: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(probe)
+        .await
+        .map_err(|_| "Local resource probe worker failed.".to_string())
+}
+
 struct QueueTicket<'a> { counter: &'a AtomicUsize }
 
 impl<'a> QueueTicket<'a> {
@@ -74,7 +85,8 @@ impl MemoryReservation {
         validate_task_id(task_id)?;
         let permit = semaphore().clone().try_acquire_owned()
             .map_err(|_| "Another local inference task is using the device. Managed tasks are queued; retry this one after it completes.".to_string())?;
-        validate_available_memory(task_id, current_available_memory_mb())?;
+        let available_memory_mb = run_blocking_probe(current_available_memory_mb).await?;
+        validate_available_memory(task_id, available_memory_mb)?;
         Ok(Self { _task_id: task_id.to_string(), _permit: permit })
     }
 
@@ -114,6 +126,21 @@ mod tests {
         assert!(validate_task_id("../escape").is_err());
         assert!(validate_task_id("").is_err());
         assert!(validate_available_memory("task-1", Some(MIN_FREE_MEMORY_MB)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn queued_admission_offloads_memory_probe_from_async_executor() {
+        let caller = std::thread::current().id();
+        let probe_thread = super::run_blocking_probe(|| std::thread::current().id())
+            .await
+            .unwrap();
+        assert_ne!(caller, probe_thread, "resource probes must run on the blocking pool");
+    }
+
+    #[tokio::test]
+    async fn blocking_probe_worker_panics_are_reported_as_errors() {
+        let result = super::run_blocking_probe(|| -> () { panic!("simulated probe panic") }).await;
+        assert!(matches!(result, Err(ref error) if error.contains("worker failed")));
     }
 
     #[tokio::test]
