@@ -567,11 +567,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out the dedicated updater-feed branch
+      - name: Check out a clean base for updater-feed publication
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: updates
-          fetch-depth: 1
+          ref: main
+          fetch-depth: 0
+      - name: Select or safely bootstrap the dedicated updater-feed branch
+        run: bash scripts/checkout-updater-feed-branch.sh
       - name: Check out the approved release source for feed validation
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

@@ -150,6 +150,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Test updater feed branch bootstrap and preservation
+        run: bash scripts/test_checkout_updater_feed_branch.sh
       - name: Require version-bound updater signatures
         run: grep -Eq '"requireSignedVersion"[[:space:]]*:[[:space:]]*true' apps/desktop/src-tauri/tauri.conf.json
       - name: Reject updater artifacts until a non-empty signing public key is configured
