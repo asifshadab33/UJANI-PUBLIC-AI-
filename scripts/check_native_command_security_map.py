@@ -788,7 +788,7 @@ def registered_commands(source: str) -> tuple[list[str], list[str]]:
 def ipc_policy_commands(source: str) -> list[str]:
     """Extract the explicit command names classified by the native IPC policy."""
     body = rust_function_body(source, "ipc_command_policy")
-    return re.findall(r'"([A-Za-z_]\\w*)"\\s*(?=\\||=>)', body)
+    return re.findall(r'"([A-Za-z_]\w*)"\s*(?=\||=>)', body)
 
 
 def require_tokens(path: Path, tokens: tuple[str, ...], errors: list[str], label: str) -> str:
