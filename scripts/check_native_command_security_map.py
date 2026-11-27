@@ -531,7 +531,7 @@ def missing_folder_import_preflight_guards(source: str) -> list[str]:
 
     try:
         masked = strip_rust_noncode(source)
-        signature_start = re.search(r"\\bfn\\s+process_selected_folder\\s*\\(", masked)
+        signature_start = re.search(r"\bfn\s+process_selected_folder\s*\(", masked)
         if not signature_start:
             return ["process_selected_folder:signature-not-found"]
         opening_paren = masked.find("(", signature_start.start())
