@@ -890,10 +890,17 @@ def main() -> int:
     errors: list[str] = []
     policy_commands = ipc_policy_commands(source)
     registered = default + peer
+    # Tauri handler registrations are module-qualified Rust paths, while
+    # Invoke.message.command() exposes the command's leaf identifier. Compare
+    # the actual IPC names, but reject duplicate leaves rather than silently
+    # collapsing two Rust handlers onto one externally visible command name.
+    registered_ipc_names = [command.rsplit("::", 1)[-1] for command in registered]
+    if len(registered_ipc_names) != len(set(registered_ipc_names)):
+        errors.append("duplicate externally visible Tauri IPC command name")
     if len(policy_commands) != len(set(policy_commands)):
         errors.append("duplicate command in native IPC policy registry")
-    missing_policy = sorted(set(registered) - set(policy_commands))
-    stale_policy = sorted(set(policy_commands) - set(registered))
+    missing_policy = sorted(set(registered_ipc_names) - set(policy_commands))
+    stale_policy = sorted(set(policy_commands) - set(registered_ipc_names))
     if missing_policy:
         errors.append("registered commands missing native IPC policy: " + ", ".join(missing_policy))
     if stale_policy:
