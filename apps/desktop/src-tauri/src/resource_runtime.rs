@@ -85,11 +85,7 @@ impl MemoryReservation {
         validate_task_id(task_id)?;
         let permit = semaphore().clone().try_acquire_owned()
             .map_err(|_| "Another local inference task is using the device. Managed tasks are queued; retry this one after it completes.".to_string())?;
-        let available_memory_mb = run_blocking_probe(current_available_memory_mb).await?;
-        if cancellation.is_cancelled() {
-            return Err("Task cancelled while checking local device capacity.".into());
-        }
-        validate_available_memory(task_id, available_memory_mb)?;
+        validate_available_memory(task_id, current_available_memory_mb())?;
         Ok(Self { _task_id: task_id.to_string(), _permit: permit })
     }
 
@@ -112,7 +108,11 @@ impl MemoryReservation {
         if cancellation.is_cancelled() {
             return Err("Task cancelled while waiting for local device capacity.".into());
         }
-        validate_available_memory(task_id, current_available_memory_mb())?;
+        let available_memory_mb = run_blocking_probe(current_available_memory_mb).await?;
+        if cancellation.is_cancelled() {
+            return Err("Task cancelled while checking local device capacity.".into());
+        }
+        validate_available_memory(task_id, available_memory_mb)?;
         Ok(Self { _task_id: task_id.to_string(), _permit: permit })
     }
 }
