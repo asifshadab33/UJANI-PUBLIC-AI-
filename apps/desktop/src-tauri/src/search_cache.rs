@@ -1,9 +1,9 @@
 //! Encrypted, bounded metadata-only cache for repeated local file searches.
 //! Cache entries are hints: callers must compare the current full directory inventory
 //! and re-open every returned file before displaying a cached result.
-use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
+use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use rand::{rngs::OsRng, RngCore};
+
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
 use serde::Serialize;
 use std::{fs, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
@@ -294,7 +294,7 @@ fn cache_key() -> Result<Zeroizing<[u8; 32]>, String> {
     match entry.get_password() {
         Ok(encoded) => decode_cache_key(encoded),
         Err(keyring::Error::NoEntry) => {
-            let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
+            let key = Zeroizing::new(crate::os_random_bytes::<32>()?);
             let encoded = Zeroizing::new(B64.encode(*key));
             entry.set_password(encoded.as_str())
                 .map_err(|error| format!("Could not protect search-cache key in the OS credential vault: {error}"))?;
@@ -307,10 +307,11 @@ fn cache_key() -> Result<Zeroizing<[u8; 32]>, String> {
 /// Encrypts one cache field with AES-GCM and context-bound associated data.
 fn encrypt(key: &[u8; 32], value: &[u8], aad: &[u8]) -> Result<String, String> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid search-cache key.".to_string())?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-    let ciphertext = cipher.encrypt(&nonce, Payload { msg: value, aad })
+    let nonce_bytes = crate::os_random_bytes::<12>()?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher.encrypt(nonce, Payload { msg: value, aad })
         .map_err(|_| "Could not encrypt local search-cache data.".to_string())?;
-    let mut payload = nonce.to_vec();
+    let mut payload = nonce_bytes.to_vec();
     payload.extend_from_slice(&ciphertext);
     Ok(format!("{CIPHER_PREFIX}{}", B64.encode(payload)))
 }
@@ -376,8 +377,7 @@ fn scope_for_path_in_transaction(
     if !create {
         return Ok(None);
     }
-    let mut random = [0_u8; 16];
-    OsRng.fill_bytes(&mut random);
+    let random = crate::os_random_bytes::<16>()?;
     let scope_id = random.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
     let encrypted_path = encrypt(key, canonical_text.as_bytes(), &scope_aad(&scope_id))?;
     tx.execute(
@@ -793,7 +793,7 @@ mod tests {
     use super::*;
 
     fn key() -> [u8; 32] {
-        Aes256Gcm::generate_key(&mut OsRng).into()
+        crate::os_random_bytes::<32>().expect("OS CSPRNG should be available in tests")
     }
 
     #[test]
