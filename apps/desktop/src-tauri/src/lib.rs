@@ -85,6 +85,10 @@ fn ipc_command_policy(command: &str) -> Option<IpcCommandPolicy> {
     })
 }
 
+fn ipc_policy_allowed(policy: IpcCommandPolicy, peer_feature_enabled: bool, debug_build: bool) -> bool {
+    !matches!(policy, IpcCommandPolicy::PeerPreview) || (peer_feature_enabled && debug_build)
+}
+
 /// Only the packaged application origin (or the exact Vite dev origin in debug builds)
 /// may invoke native commands. This is a global first-layer gate; command-specific
 /// consent, path scoping and capability checks remain mandatory inside handlers.
@@ -113,10 +117,12 @@ fn guard_ipc_invoke<R: tauri::Runtime>(
         invoke.resolver.reject("UJANI blocked native IPC: untrusted origin or unclassified command.");
         return true;
     }
-    if matches!(command_policy, Some(IpcCommandPolicy::PeerPreview))
-        && !cfg!(feature = "peer-preview")
-    {
-        invoke.resolver.reject("UJANI peer-preview IPC is disabled in this build.");
+    if !ipc_policy_allowed(
+        command_policy.expect("unclassified commands were rejected above"),
+        cfg!(feature = "peer-preview"),
+        cfg!(debug_assertions),
+    ) {
+        invoke.resolver.reject("UJANI peer-preview IPC is available only in explicitly enabled debug builds.");
         return true;
     }
 
@@ -125,7 +131,15 @@ fn guard_ipc_invoke<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod ipc_origin_gate_tests {
-    use super::{ipc_command_policy, is_trusted_ipc_origin, IpcCommandPolicy};
+    use super::{ipc_command_policy, ipc_policy_allowed, is_trusted_ipc_origin, IpcCommandPolicy};
+
+    #[test]
+    fn peer_preview_commands_require_explicit_feature_and_debug_build() {
+        assert!(ipc_policy_allowed(IpcCommandPolicy::ReadOnly, false, false));
+        assert!(!ipc_policy_allowed(IpcCommandPolicy::PeerPreview, false, true));
+        assert!(!ipc_policy_allowed(IpcCommandPolicy::PeerPreview, true, false));
+        assert!(ipc_policy_allowed(IpcCommandPolicy::PeerPreview, true, true));
+    }
 
     #[test]
     fn every_registered_command_has_an_explicit_policy_class() {
