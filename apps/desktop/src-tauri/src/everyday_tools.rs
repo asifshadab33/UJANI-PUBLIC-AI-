@@ -2,7 +2,7 @@
 //! All filesystem access is scoped to a folder chosen through the native OS picker.
 use serde::Serialize;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Read,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -37,6 +37,8 @@ pub struct DuplicateScanResult {
     pub root_name: String,
     pub scanned_files: usize,
     pub hashed_files: usize,
+    /// Additional paths to the same filesystem object, not independent duplicate files.
+    pub hard_link_aliases: usize,
     pub duplicate_groups: Vec<DuplicateGroup>,
     pub truncated: bool,
     pub note: String,
@@ -46,6 +48,7 @@ struct Candidate {
     path: PathBuf,
     file_name: String,
     size_bytes: u64,
+    identity: String,
 }
 
 fn unix_epoch_millis_from_duration(duration: std::time::Duration) -> Result<u64, String> {
@@ -163,6 +166,8 @@ fn scan_duplicates_with_budget(
     let root_name = walked.root.file_name().map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Selected folder".into());
     let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
+    let mut seen_file_identities = HashSet::new();
+    let mut hard_link_aliases = 0usize;
     let mut scanned_files = 0usize;
     let mut truncated = walked.truncated;
 
@@ -187,10 +192,28 @@ fn scan_duplicates_with_budget(
             truncated = true;
             continue;
         }
+        // The walker records identity from its opened handle. Re-open beneath the
+        // selected root and compare before using the path, so a replaced entry is
+        // never treated as the object that was originally enumerated.
+        let Some(identity) = crate::safe_fs::file_identity(&file) else {
+            truncated = true;
+            continue;
+        };
+        if entry.identity.as_deref() != Some(identity.as_str()) {
+            truncated = true;
+            continue;
+        }
+        // Multiple names for one filesystem object are hard-link aliases, not
+        // independent copies. Hash that object once and keep the preview honest.
+        if !seen_file_identities.insert(identity.clone()) {
+            hard_link_aliases += 1;
+            continue;
+        }
         by_size.entry(metadata.len()).or_default().push(Candidate {
             path: entry.path,
             file_name: entry.name.to_string_lossy().into_owned(),
             size_bytes: metadata.len(),
+            identity,
         });
     }
 
@@ -215,6 +238,7 @@ fn scan_duplicates_with_budget(
                 &selected_root,
                 &candidate.path,
                 candidate.size_bytes,
+                &candidate.identity,
                 remaining_budget,
             ) {
                 Ok(result) => result,
@@ -247,13 +271,19 @@ fn scan_duplicates_with_budget(
         truncated = true;
     }
 
+    let note = if hard_link_aliases == 0 {
+        "Read-only duplicate preview. Files are grouped by matching size and SHA-256 content hash. Nothing is deleted, moved, renamed or overwritten.".to_string()
+    } else {
+        format!("Read-only duplicate preview. Files are grouped by matching size and SHA-256 content hash. {hard_link_aliases} hard-link path alias(es) to an already-counted file were omitted because they do not represent additional file content. Nothing is deleted, moved, renamed or overwritten.")
+    };
     Ok(DuplicateScanResult {
         root_name,
         scanned_files,
         hashed_files,
+        hard_link_aliases,
         duplicate_groups,
         truncated,
-        note: "Read-only duplicate preview. Files are grouped by matching size and SHA-256 content hash. Nothing is deleted, moved, renamed or overwritten.".into(),
+        note,
     })
 }
 
@@ -262,12 +292,14 @@ fn hash_file(
     root: &Path,
     path: &Path,
     expected_size: u64,
+    expected_identity: &str,
     limit: u64,
 ) -> Result<(String, u64), (String, u64)> {
     let mut file = crate::safe_fs::open_regular_file_under_root(root, path)
         .map_err(|error| (error.to_string(), 0))?;
     let metadata = file.metadata().map_err(|error| (error.to_string(), 0))?;
-    if !metadata.is_file() || metadata.len() != expected_size || expected_size > limit {
+    if crate::safe_fs::file_identity(&file).as_deref() != Some(expected_identity)
+        || !metadata.is_file() || metadata.len() != expected_size || expected_size > limit {
         return Err(("File changed or is not eligible for bounded hashing.".into(), 0));
     }
 
@@ -281,8 +313,9 @@ fn hash_file(
         return Err(("File changed while it was being hashed.".into(), bytes_read));
     }
     let final_metadata = file.metadata().map_err(|error| (error.to_string(), bytes_read))?;
-    if final_metadata.len() != expected_size {
-        return Err(("File changed while it was being hashed.".into(), bytes_read));
+    if final_metadata.len() != expected_size
+        || crate::safe_fs::file_identity(&file).as_deref() != Some(expected_identity) {
+        return Err(("File identity or size changed while it was being hashed.".into(), bytes_read));
     }
     Ok((super::sha256_hex(&bytes), bytes_read))
 }
@@ -348,6 +381,26 @@ mod tests {
         assert_eq!(result.hashed_files, 2);
         assert_eq!(result.duplicate_groups.len(), 1);
         assert_eq!(result.duplicate_groups[0].size_bytes, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn counts_hard_link_aliases_once_but_keeps_independent_identical_copies() {
+        let root = temp_dir("hard-link-duplicates");
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("original.bin");
+        fs::write(&original, b"same bytes").unwrap();
+        fs::hard_link(&original, root.join("alias.bin")).unwrap();
+        fs::write(root.join("independent-copy.bin"), b"same bytes").unwrap();
+
+        let result = scan_duplicates(&root, &CancellationToken::new()).unwrap();
+
+        assert_eq!(result.hard_link_aliases, 1);
+        assert_eq!(result.hashed_files, 2);
+        assert_eq!(result.duplicate_groups.len(), 1);
+        assert_eq!(result.duplicate_groups[0].files.len(), 2);
+        assert!(result.note.contains("1 hard-link path alias"));
         fs::remove_dir_all(root).unwrap();
     }
 
