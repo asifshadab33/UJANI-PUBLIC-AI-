@@ -92,13 +92,40 @@ fn ipc_policy_allowed(policy: IpcCommandPolicy, peer_feature_enabled: bool, debu
 /// Only the packaged application origin (or the exact Vite dev origin in debug builds)
 /// may invoke native commands. This is a global first-layer gate; command-specific
 /// consent, path scoping and capability checks remain mandatory inside handlers.
-fn is_trusted_ipc_origin(raw_url: &str, allow_dev_server: bool) -> bool {
+fn configured_dev_authority(host: &str) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty()
+        || host.chars().any(|character| {
+            character.is_ascii_whitespace() || matches!(character, '/' | '?' | '#' | '@')
+        })
+    {
+        return None;
+    }
+    let authority = if host.starts_with('[') && host.ends_with(']') {
+        format!("{host}:1420")
+    } else if host.contains(':') {
+        format!("[{host}]:1420")
+    } else {
+        format!("{host}:1420")
+    };
+    Some(authority)
+}
+
+fn is_trusted_ipc_origin(
+    raw_url: &str,
+    allow_dev_server: bool,
+    configured_dev_host: Option<&str>,
+) -> bool {
     let Some((scheme, remainder)) = raw_url.split_once("://") else {
         return false;
     };
     let authority = remainder.split(['/', '?', '#']).next().unwrap_or("");
-    matches!((scheme, authority), ("tauri", "localhost") | ("http", "tauri.localhost"))
-        || (allow_dev_server && scheme == "http" && authority == "localhost:1420")
+    let packaged = matches!((scheme, authority), ("tauri", "localhost") | ("http", "tauri.localhost"));
+    let local_dev = matches!(authority, "localhost:1420" | "127.0.0.1:1420");
+    let configured_mobile_dev = configured_dev_host
+        .and_then(configured_dev_authority)
+        .is_some_and(|expected| authority == expected);
+    packaged || (allow_dev_server && scheme == "http" && (local_dev || configured_mobile_dev))
 }
 
 fn guard_ipc_invoke<R: tauri::Runtime>(
@@ -110,7 +137,7 @@ fn guard_ipc_invoke<R: tauri::Runtime>(
     let trusted_origin = webview
         .url()
         .ok()
-        .is_some_and(|url| is_trusted_ipc_origin(url.as_str(), cfg!(debug_assertions)));
+        .is_some_and(|url| is_trusted_ipc_origin(url.as_str(), cfg!(debug_assertions), option_env!("TAURI_DEV_HOST")));
 
     let Some(command_policy) = ipc_command_policy(invoke.message.command()) else {
         invoke.resolver.reject("UJANI blocked native IPC: command has no explicit policy classification.");
@@ -174,10 +201,40 @@ mod ipc_origin_gate_tests {
 
     #[test]
     fn accepts_only_packaged_and_exact_development_origins() {
-        assert!(is_trusted_ipc_origin("tauri://localhost/", false));
-        assert!(is_trusted_ipc_origin("http://tauri.localhost/", false));
-        assert!(is_trusted_ipc_origin("http://localhost:1420/", true));
-        assert!(!is_trusted_ipc_origin("http://localhost:1420/", false));
+        assert!(is_trusted_ipc_origin("tauri://localhost/", false, None));
+        assert!(is_trusted_ipc_origin("http://tauri.localhost/", false, None));
+        assert!(is_trusted_ipc_origin("http://localhost:1420/", true, None));
+        assert!(is_trusted_ipc_origin("http://127.0.0.1:1420/", true, None));
+        assert!(!is_trusted_ipc_origin("http://localhost:1420/", false, None));
+    }
+
+    #[test]
+    fn supports_only_the_build_configured_mobile_dev_host_in_debug() {
+        assert!(is_trusted_ipc_origin(
+            "http://192.168.1.42:1420/",
+            true,
+            Some("192.168.1.42")
+        ));
+        assert!(is_trusted_ipc_origin(
+            "http://[fd00::42]:1420/",
+            true,
+            Some("fd00::42")
+        ));
+        assert!(!is_trusted_ipc_origin(
+            "http://192.168.1.43:1420/",
+            true,
+            Some("192.168.1.42")
+        ));
+        assert!(!is_trusted_ipc_origin(
+            "http://192.168.1.42:1420/",
+            false,
+            Some("192.168.1.42")
+        ));
+        assert!(!is_trusted_ipc_origin(
+            "http://attacker@192.168.1.42:1420/",
+            true,
+            Some("192.168.1.42")
+        ));
     }
 
     #[test]
@@ -191,7 +248,7 @@ mod ipc_origin_gate_tests {
             "file:///tmp/index.html",
             "http://localhost:1421/",
         ] {
-            assert!(!is_trusted_ipc_origin(value, true), "unexpectedly trusted {value}");
+            assert!(!is_trusted_ipc_origin(value, true, None), "unexpectedly trusted {value}");
         }
     }
 }
