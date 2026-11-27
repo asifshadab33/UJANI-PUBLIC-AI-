@@ -3187,28 +3187,33 @@ async fn get_defender_status(
 
 macro_rules! ujani_invoke_handler {
     ($($peer_command:path),* $(,)?) => {
-        tauri::generate_handler![
-            execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
-            get_security_provider_status,
-            get_defender_status,
-            plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
-            run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
-            get_model_recommendation, execute_document_workflow, execute_local_ai_task,
-            cancel_active_task, analyze_text_file, summarize_selected_text, process_selected_document,
-            process_selected_pdf, translate_text_local, inspect_image_file,
-            folder_import::process_selected_folder, local_search::find_local_files,
-            search_cache::get_local_search_cache_settings, search_cache::list_recent_local_searches,
-            search_cache::set_local_search_cache_settings, search_cache::clear_local_search_cache,
-            everyday_tools::get_local_clock, everyday_tools::find_duplicate_files,
-            file_insights::find_large_files, recent_files::find_recent_files, history::get_task_history_settings,
-            history::set_task_history_enabled, history::save_task_history, history::list_task_history,
-            history::delete_task_history, history::clear_task_history,
-            reminder_store::manage_local_reminders,
-            security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
-            security_store::get_cloud_budget_status,
-            security_store::set_cloud_budget_limit,
-            $($peer_command),*
-        ]
+        {
+            let handler: Box<dyn Fn(tauri::ipc::Invoke) -> bool + Send + Sync> = Box::new(
+                tauri::generate_handler![
+                    execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
+                    get_security_provider_status,
+                    get_defender_status,
+                    plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
+                    run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
+                    get_model_recommendation, execute_document_workflow, execute_local_ai_task,
+                    cancel_active_task, analyze_text_file, summarize_selected_text, process_selected_document,
+                    process_selected_pdf, translate_text_local, inspect_image_file,
+                    folder_import::process_selected_folder, local_search::find_local_files,
+                    search_cache::get_local_search_cache_settings, search_cache::list_recent_local_searches,
+                    search_cache::set_local_search_cache_settings, search_cache::clear_local_search_cache,
+                    everyday_tools::get_local_clock, everyday_tools::find_duplicate_files,
+                    file_insights::find_large_files, recent_files::find_recent_files, history::get_task_history_settings,
+                    history::set_task_history_enabled, history::save_task_history, history::list_task_history,
+                    history::delete_task_history, history::clear_task_history,
+                    reminder_store::manage_local_reminders,
+                    security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
+                    security_store::get_cloud_budget_status,
+                    security_store::set_cloud_budget_limit,
+                    $($peer_command),*
+                ]
+            );
+            move |invoke| guard_ipc_invoke(invoke, &handler)
+        }
     };
 }
 
@@ -3223,25 +3228,18 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(feature = "peer-preview")]
-    let builder = builder.invoke_handler(move |invoke| {
-        guard_ipc_invoke(
-            invoke,
-            ujani_invoke_handler!(
-                security_store::enroll_trusted_peer,
-                security_store::revoke_trusted_peer,
-                security_store::list_trusted_peers,
-                security_store::verify_and_claim_peer_envelope,
-                device_identity::get_or_create_device_identity,
-                device_identity::rotate_device_identity,
-                device_identity::sign_peer_task_envelope
-            ),
-        )
-    });
+    let builder = builder.invoke_handler(ujani_invoke_handler!(
+        security_store::enroll_trusted_peer,
+        security_store::revoke_trusted_peer,
+        security_store::list_trusted_peers,
+        security_store::verify_and_claim_peer_envelope,
+        device_identity::get_or_create_device_identity,
+        device_identity::rotate_device_identity,
+        device_identity::sign_peer_task_envelope
+    ));
 
     #[cfg(not(feature = "peer-preview"))]
-    let builder = builder.invoke_handler(move |invoke| {
-        guard_ipc_invoke(invoke, ujani_invoke_handler!())
-    });
+    let builder = builder.invoke_handler(ujani_invoke_handler!());
 
     let app = builder.build(tauri::generate_context!())
         .expect("error while building UJANI Public AI");
