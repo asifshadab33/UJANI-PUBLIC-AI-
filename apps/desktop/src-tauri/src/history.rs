@@ -5,7 +5,6 @@ use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager}; 
 use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-
 use zeroize::Zeroizing;
 
 const KEYRING_SERVICE: &str = "org.ujani.publicai";
