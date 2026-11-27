@@ -74,6 +74,9 @@ jobs:
       - name: Run reminder date formatting regression tests
         working-directory: apps/desktop
         run: npm run test:reminder-date
+      - name: Test asynchronous Tauri event listener cleanup
+        working-directory: apps/desktop
+        run: npm run test:async-event-subscription
       - name: Generate Tauri platform icons from the checked-in SVG
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/ujani.svg
