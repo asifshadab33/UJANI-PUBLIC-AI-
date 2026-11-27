@@ -325,6 +325,40 @@ def main() -> None:
             path, name, function_body(path, name), markers
         )
 
+    # Model identifiers are untrusted IPC input. Reject them before task registration,
+    # capability discovery, local runtime probes, or expensive PDF decoding.
+    model_preflight_order = {
+        ("lib.rs", "execute_document_workflow"): (
+            "validate_model_identifier(&model)",
+            "task_engine::validate_document_request",
+            "register_active_task",
+        ),
+        ("lib.rs", "summarize_selected_text"): (
+            "validate_model_identifier(&model)",
+            "task_engine::validate_summarize_input",
+            "register_active_task",
+        ),
+        ("lib.rs", "process_selected_document"): (
+            "validate_model_identifier(&model)",
+            "task_engine::validate_document_request",
+            "register_active_task",
+        ),
+        ("lib.rs", "process_selected_pdf"): (
+            "validate_model_identifier(&model)",
+            "task_engine::validate_pdf_metadata",
+            "validate_bounded_pdf_encoded_length",
+            "register_active_task",
+            "decode_pdf_upload_off_thread(",
+        ),
+        ("lib.rs", "translate_text_local"): (
+            "validate_model_identifier(&model)",
+            "task_engine::validate_translation_input",
+            "register_active_task",
+        ),
+    }
+    for (path, name), markers in model_preflight_order.items():
+        require_ordered_markers(path, name, function_body(path, name), markers)
+
     required_tests = {
         "search_cache.rs": (
             "cache_store_receipt_input_uses_only_non_sensitive_flags",
