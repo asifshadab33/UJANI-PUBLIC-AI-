@@ -2333,10 +2333,16 @@ fn cancel_active_task(app: AppHandle, control: State<'_, TaskControlState>, task
 }
 
 
-/// Processes text supplied by the user through the UI; never opens a path.
+/// Processes bounded user-supplied text on a blocking worker; never opens a path.
 #[tauri::command]
-fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis, String> {
-    LocalTaskEngine::analyze_text(&file_name, &content)
+async fn analyze_text_file(file_name: String, content: String) -> Result<FileAnalysis, String> {
+    // Text analysis is bounded to 1 MiB, but tokenisation and keyword extraction
+    // are still synchronous CPU work. Keep that work off the async command executor.
+    tauri::async_runtime::spawn_blocking(move || {
+        LocalTaskEngine::analyze_text(&file_name, &content)
+    })
+    .await
+    .map_err(|error| format!("Text analysis worker failed: {error}"))?
 }
 
 
