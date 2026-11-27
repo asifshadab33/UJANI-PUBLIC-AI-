@@ -43,6 +43,67 @@ use ujani_core::{sha256_hex, validate_model_identifier, ExecutionOutcome, Networ
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
+
+/// Only the packaged application origin (or the exact Vite dev origin in debug builds)
+/// may invoke native commands. This is a global first-layer gate; command-specific
+/// consent, path scoping and capability checks remain mandatory inside handlers.
+fn is_trusted_ipc_origin(raw_url: &str, allow_dev_server: bool) -> bool {
+    let Some((scheme, remainder)) = raw_url.split_once("://") else {
+        return false;
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or("");
+    matches!((scheme, authority), ("tauri", "localhost") | ("http", "tauri.localhost"))
+        || (allow_dev_server && scheme == "http" && authority == "localhost:1420")
+}
+
+fn guard_ipc_invoke<R: tauri::Runtime>(
+    invoke: tauri::ipc::Invoke<R>,
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool,
+) -> bool {
+    let webview = invoke.message.webview_ref();
+    let trusted_window = webview.label() == "main";
+    let trusted_origin = webview
+        .url()
+        .ok()
+        .is_some_and(|url| is_trusted_ipc_origin(url.as_str(), cfg!(debug_assertions)));
+
+    if !trusted_window || !trusted_origin {
+        invoke.resolver.reject("UJANI blocked native IPC from an untrusted window or origin.");
+        return true;
+    }
+
+    handler(invoke)
+}
+
+#[cfg(test)]
+mod ipc_origin_gate_tests {
+    use super::is_trusted_ipc_origin;
+
+    #[test]
+    fn accepts_only_packaged_and_exact_development_origins() {
+        assert!(is_trusted_ipc_origin("tauri://localhost/", false));
+        assert!(is_trusted_ipc_origin("http://tauri.localhost/", false));
+        assert!(is_trusted_ipc_origin("http://localhost:1420/", true));
+        assert!(!is_trusted_ipc_origin("http://localhost:1420/", false));
+    }
+
+    #[test]
+    fn rejects_remote_similar_and_userinfo_origins() {
+        for value in [
+            "https://example.com/",
+            "http://tauri.localhost.attacker.invalid/",
+            "http://attacker@tauri.localhost/",
+            "http://tauri.localhost:80/",
+            "tauri://localhost.attacker.invalid/",
+            "file:///tmp/index.html",
+            "http://localhost:1421/",
+        ] {
+            assert!(!is_trusted_ipc_origin(value, true), "unexpectedly trusted {value}");
+        }
+    }
+}
+
+
 fn valid_command_identifier(value: &str, max_len: usize) -> bool {
     !value.trim().is_empty()
         && value.len() <= max_len
@@ -3082,7 +3143,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(feature = "peer-preview")]
-    let builder = builder.invoke_handler(ujani_invoke_handler!(
+    let handler = ujani_invoke_handler!(
         security_store::enroll_trusted_peer,
         security_store::revoke_trusted_peer,
         security_store::list_trusted_peers,
@@ -3090,10 +3151,12 @@ pub fn run() {
         device_identity::get_or_create_device_identity,
         device_identity::rotate_device_identity,
         device_identity::sign_peer_task_envelope
-    ));
+    );
 
     #[cfg(not(feature = "peer-preview"))]
-    let builder = builder.invoke_handler(ujani_invoke_handler!());
+    let handler = ujani_invoke_handler!();
+
+    let builder = builder.invoke_handler(move |invoke| guard_ipc_invoke(invoke, &handler));
 
     let app = builder.build(tauri::generate_context!())
         .expect("error while building UJANI Public AI");
