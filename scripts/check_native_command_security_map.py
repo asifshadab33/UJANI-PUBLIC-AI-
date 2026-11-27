@@ -496,24 +496,51 @@ def missing_cloud_transfer_preflight_guards(source: str) -> list[str]:
 
 
 def missing_folder_import_preflight_guards(source: str) -> list[str]:
-    """Require task/capability checks before the native picker and bounded file traversal."""
+    """Require a pre-picker check and a fresh post-picker check before folder traversal."""
     try:
         body = rust_function_body(source, "process_selected_folder")
     except ValueError:
-        return ["process_selected_folder"]
+        return ["process_selected_folder:not-found"]
 
-    ordered = (
-        "register_active_task",
-        "get_capability_snapshot_for_task",
-        "require_local_operation",
-        "blocking_pick_folder",
-        "collect_selected_folder",
-    )
-    positions = [body.find(token) for token in ordered]
-    if any(position < 0 for position in positions) or positions != sorted(positions):
-        return ["process_selected_folder"]
-    if "PathBuf" in body or "selected_path" in body:
-        return ["process_selected_folder"]
+    picker_at = body.find("blocking_pick_folder")
+    registration_at = body.find("register_active_task")
+    initial_snapshot_at = body.find("get_capability_snapshot_for_task")
+    initial_gate_at = body.find("require_local_operation")
+    if not (
+        0 <= registration_at < initial_snapshot_at < initial_gate_at < picker_at
+    ):
+        return ["process_selected_folder:pre-picker-order"]
+
+    fresh_snapshot_at = body.find("get_capability_snapshot_for_task", picker_at + 1)
+    read_gate_at = body.find("run_folder_read_preflight", picker_at + 1)
+    traversal_at = body.find("collect_selected_folder", read_gate_at + 1)
+    if not (picker_at < fresh_snapshot_at < read_gate_at < traversal_at):
+        return ["process_selected_folder:post-picker-order"]
+
+    try:
+        read_gate = rust_function_body(source, "run_folder_read_preflight")
+    except ValueError:
+        return ["run_folder_read_preflight:not-found"]
+    gate_positions = [
+        read_gate.find("ensure_task_not_cancelled"),
+        read_gate.find("require_local_operation"),
+        read_gate.find("start_read()"),
+    ]
+    if not (0 <= gate_positions[0] < gate_positions[1] < gate_positions[2]):
+        return ["run_folder_read_preflight:lazy-gate"]
+
+    try:
+        masked = strip_rust_noncode(source)
+        signature_start = re.search(r"\bfn\s+process_selected_folder\s*\(", masked)
+        if not signature_start:
+            return ["process_selected_folder:signature-not-found"]
+        opening_paren = masked.find("(", signature_start.start())
+        closing_paren = find_matching_delimiter(masked, opening_paren, "(", ")")
+        signature = source[opening_paren + 1:closing_paren]
+    except ValueError:
+        return ["process_selected_folder:signature-not-found"]
+    if "PathBuf" in signature or "selected_path" in signature:
+        return ["process_selected_folder:webview-path-parameter"]
     return []
 
 

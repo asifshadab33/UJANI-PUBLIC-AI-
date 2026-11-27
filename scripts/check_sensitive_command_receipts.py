@@ -199,8 +199,9 @@ REQUIRED_ORDERED_MARKERS = {
         "crate::ensure_task_not_cancelled(&task_token)?;",
         "let picker_token = task_token.clone();",
         "blocking_pick_folder()",
-        "collect_selected_folder(&path, &picker_token)",
-        "crate::ensure_task_not_cancelled(&task_token)?;",
+        "crate::get_capability_snapshot_for_task(&task_token).await?;",
+        "run_folder_read_preflight(",
+        "collect_selected_folder(&folder, &collect_token)",
         "crate::run_managed_task_registered(",
     ),
     ("local_search.rs", "find_local_files"): (
@@ -211,6 +212,9 @@ REQUIRED_ORDERED_MARKERS = {
         '"file.search.pdf_text"',
         "run_selected_folder_preflight",
         "blocking_pick_folder()",
+        "get_selected_folder_capability_snapshot_for_task(&token).await",
+        "run_selected_folder_preflight(",
+        "collect_candidates(&folder, &collect_token)",
     ),
     ("everyday_tools.rs", "find_duplicate_files"): (
         "register_active_task",

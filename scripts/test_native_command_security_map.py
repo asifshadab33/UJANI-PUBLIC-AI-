@@ -480,28 +480,48 @@ class NativeCommandSideEffectOrderingTests(unittest.TestCase):
             get_capability_snapshot_for_task().await;
             require_local_operation();
             blocking_pick_folder();
+            get_capability_snapshot_for_task().await;
+            run_folder_read_preflight();
             collect_selected_folder();
+        }
+        fn run_folder_read_preflight() {
+            ensure_task_not_cancelled();
+            require_local_operation();
+            start_read();
         }
         """
         self.assertEqual(missing_folder_import_preflight_guards(source), [])
         unsafe = source.replace(
             "require_local_operation();\n            blocking_pick_folder();",
             "blocking_pick_folder();\n            require_local_operation();",
+            1,
         )
-        self.assertEqual(missing_folder_import_preflight_guards(unsafe), ["process_selected_folder"])
+        self.assertEqual(
+            missing_folder_import_preflight_guards(unsafe),
+            ["process_selected_folder:pre-picker-order"],
+        )
 
     def test_folder_import_does_not_accept_a_webview_path(self):
         source = """
-        async fn process_selected_folder() {
+        async fn process_selected_folder(selected_path: PathBuf) {
             register_active_task();
             get_capability_snapshot_for_task().await;
             require_local_operation();
-            let selected_path = PathBuf::from("caller-controlled");
             blocking_pick_folder();
+            get_capability_snapshot_for_task().await;
+            run_folder_read_preflight();
             collect_selected_folder();
         }
+        fn run_folder_read_preflight() {
+            ensure_task_not_cancelled();
+            require_local_operation();
+            start_read();
+        }
         """
-        self.assertEqual(missing_folder_import_preflight_guards(source), ["process_selected_folder"])
+        self.assertEqual(
+            missing_folder_import_preflight_guards(source),
+            ["process_selected_folder:webview-path-parameter"],
+        )
 
 
 

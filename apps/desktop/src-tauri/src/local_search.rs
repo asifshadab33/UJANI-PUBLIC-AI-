@@ -202,11 +202,24 @@ pub async fn find_local_files(
         });
     };
 
-    super::emit_task_progress(&app, &task_id, "scanning", "Scanning the selected folder.", 10);
+    // The user may leave the native picker open while device capabilities change.
+    // Refresh the local capability view after selection and before the first directory read.
+    let fresh_snapshot = super::get_selected_folder_capability_snapshot_for_task(&token).await;
     let collect_token = token.clone();
-    let (root, candidates, scanned_files, mut truncated) = tauri::async_runtime::spawn_blocking(move || {
-        collect_candidates(&folder, &collect_token)
-    }).await.map_err(|e| format!("File search worker failed: {e}"))??;
+    let selected_folder_read = super::run_selected_folder_preflight(
+        &token,
+        fresh_snapshot.as_ref().map_err(Clone::clone),
+        required_operations,
+        move || {
+            tauri::async_runtime::spawn_blocking(move || {
+                collect_candidates(&folder, &collect_token)
+            })
+        },
+    )?;
+    super::emit_task_progress(&app, &task_id, "scanning", "Scanning the selected folder.", 10);
+    let (root, candidates, scanned_files, mut truncated) = selected_folder_read
+        .await
+        .map_err(|e| format!("File search worker failed: {e}"))??;
 
     let root_name = root.file_name().map(|v| v.to_string_lossy().into_owned())
         .unwrap_or_else(|| root.display().to_string());
