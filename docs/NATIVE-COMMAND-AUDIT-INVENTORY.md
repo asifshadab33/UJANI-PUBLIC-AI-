@@ -7,7 +7,7 @@ Scope: Tauri command surface registered by `apps/desktop/src-tauri/src/lib.rs` o
 
 ## Global native IPC boundary
 
-All registered invokes now pass a native guard before the generated command handler runs. The guard requires the `main` webview and an exact packaged Tauri origin (`tauri://localhost` or `http://tauri.localhost`); the exact Vite development origin is accepted only in debug builds. URL-read failures, untrusted windows/origins and unclassified commands are rejected before handler dispatch.
+All registered invokes now pass a native guard before the generated command handler runs. The guard requires the `main` webview and an exact packaged Tauri origin (`tauri://localhost` or `http://tauri.localhost`). The exact local Vite origin and the build-configured `TAURI_DEV_HOST` address are accepted only in debug builds, supporting mobile-device development without allowing arbitrary runtime origins. URL-read failures, untrusted windows/origins and unclassified commands are rejected before handler dispatch.
 
 The native source also classifies each command as read-only, scoped local read, local mutation, native-consent, external-transfer or peer-preview. CI compares that registry with the actual default and peer-preview handler expansions, so adding or removing a command without updating its policy classification fails closed.
 
