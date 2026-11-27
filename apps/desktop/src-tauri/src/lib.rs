@@ -43,6 +43,217 @@ use ujani_core::{sha256_hex, validate_model_identifier, ExecutionOutcome, Networ
 use std::time::{SystemTime, UNIX_EPOCH};
 
 
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IpcCommandPolicy {
+    ReadOnly,
+    ScopedLocalRead,
+    LocalMutation,
+    NativeConsent,
+    ExternalTransfer,
+    PeerPreview,
+}
+
+/// Every command registered below must have an explicit policy class. Unknown
+/// commands fail closed, so adding a new Tauri command requires a reviewed policy entry.
+fn ipc_command_policy(command: &str) -> Option<IpcCommandPolicy> {
+    use IpcCommandPolicy::*;
+    Some(match command {
+        "get_device_info" | "get_capability_snapshot" | "get_tool_catalogue"
+        | "plan_local_operation" | "plan_task_workflow" | "list_local_models"
+        | "evaluate_task_route" | "get_ollama_status" | "get_model_recommendation"
+        | "get_local_search_cache_settings" | "list_recent_local_searches"
+        | "get_local_clock" | "get_task_history_settings" | "list_task_history"
+        | "verify_execution_receipt_ledger" | "list_execution_receipts"
+        | "get_cloud_budget_status" => ReadOnly,
+        "get_security_provider_status" | "get_defender_status" => NativeConsent,
+        "find_local_files" | "find_duplicate_files" | "find_large_files"
+        | "find_recent_files" => ScopedLocalRead,
+        "execute_cloud_ai_task" => ExternalTransfer,
+        "pull_ollama_model" => ExternalTransfer,
+        "run_local_model_task" | "run_local_task" | "execute_document_workflow"
+        | "execute_local_ai_task" | "cancel_active_task" | "analyze_text_file"
+        | "summarize_selected_text" | "process_selected_document" | "process_selected_pdf"
+        | "translate_text_local" | "inspect_image_file" | "process_selected_folder"
+        | "set_local_search_cache_settings" | "clear_local_search_cache"
+        | "set_task_history_enabled" | "save_task_history" | "delete_task_history"
+        | "clear_task_history" | "manage_local_reminders" | "set_cloud_budget_limit" => LocalMutation,
+        "enroll_trusted_peer" | "revoke_trusted_peer" | "list_trusted_peers"
+        | "verify_and_claim_peer_envelope" | "get_or_create_device_identity"
+        | "rotate_device_identity" | "sign_peer_task_envelope" => PeerPreview,
+        _ => return None,
+    })
+}
+
+fn ipc_policy_allowed(policy: IpcCommandPolicy, peer_feature_enabled: bool, debug_build: bool) -> bool {
+    !matches!(policy, IpcCommandPolicy::PeerPreview) || (peer_feature_enabled && debug_build)
+}
+
+/// Only the packaged application origin (or the exact Vite dev origin in debug builds)
+/// may invoke native commands. This is a global first-layer gate; command-specific
+/// consent, path scoping and capability checks remain mandatory inside handlers.
+fn configured_dev_authority(host: &str) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty()
+        || host.chars().any(|character| {
+            character.is_ascii_whitespace() || matches!(character, '/' | '?' | '#' | '@')
+        })
+    {
+        return None;
+    }
+    let authority = if host.starts_with('[') && host.ends_with(']') {
+        format!("{host}:1420")
+    } else if host.contains(':') {
+        format!("[{host}]:1420")
+    } else {
+        format!("{host}:1420")
+    };
+    Some(authority)
+}
+
+fn is_trusted_ipc_origin(
+    raw_url: &str,
+    allow_dev_server: bool,
+    configured_dev_host: Option<&str>,
+) -> bool {
+    let Some((scheme, remainder)) = raw_url.split_once("://") else {
+        return false;
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or("");
+    let packaged = matches!((scheme, authority), ("tauri", "localhost") | ("http", "tauri.localhost"));
+    let local_dev = matches!(authority, "localhost:1420" | "127.0.0.1:1420");
+    let configured_mobile_dev = configured_dev_host
+        .and_then(configured_dev_authority)
+        .is_some_and(|expected| authority == expected);
+    packaged || (allow_dev_server && scheme == "http" && (local_dev || configured_mobile_dev))
+}
+
+fn guard_ipc_invoke<R: tauri::Runtime>(
+    invoke: tauri::ipc::Invoke<R>,
+    handler: impl Fn(tauri::ipc::Invoke<R>) -> bool,
+) -> bool {
+    let webview = invoke.message.webview_ref();
+    let trusted_window = webview.label() == "main";
+    let trusted_origin = webview
+        .url()
+        .ok()
+        .is_some_and(|url| is_trusted_ipc_origin(url.as_str(), cfg!(debug_assertions), option_env!("TAURI_DEV_HOST")));
+
+    let Some(command_policy) = ipc_command_policy(invoke.message.command()) else {
+        invoke.resolver.reject("UJANI blocked native IPC: command has no explicit policy classification.");
+        return true;
+    };
+    if !trusted_window || !trusted_origin {
+        invoke.resolver.reject("UJANI blocked native IPC from an untrusted window or origin.");
+        return true;
+    }
+    if !ipc_policy_allowed(command_policy, cfg!(feature = "peer-preview"), cfg!(debug_assertions)) {
+        invoke.resolver.reject("UJANI peer-preview IPC is available only in explicitly enabled debug builds.");
+        return true;
+    }
+
+    handler(invoke)
+}
+
+#[cfg(test)]
+mod ipc_origin_gate_tests {
+    use super::{ipc_command_policy, ipc_policy_allowed, is_trusted_ipc_origin, IpcCommandPolicy};
+
+    #[test]
+    fn peer_preview_commands_require_explicit_feature_and_debug_build() {
+        assert!(ipc_policy_allowed(IpcCommandPolicy::ReadOnly, false, false));
+        assert!(!ipc_policy_allowed(IpcCommandPolicy::PeerPreview, false, true));
+        assert!(!ipc_policy_allowed(IpcCommandPolicy::PeerPreview, true, false));
+        assert!(ipc_policy_allowed(IpcCommandPolicy::PeerPreview, true, true));
+    }
+
+    #[test]
+    fn every_registered_command_has_an_explicit_policy_class() {
+        let registered = [
+            "execute_cloud_ai_task", "get_device_info", "get_capability_snapshot",
+            "get_tool_catalogue", "get_security_provider_status", "get_defender_status",
+            "plan_local_operation", "plan_task_workflow", "list_local_models",
+            "run_local_model_task", "run_local_task", "evaluate_task_route",
+            "get_ollama_status", "pull_ollama_model", "get_model_recommendation",
+            "execute_document_workflow", "execute_local_ai_task", "cancel_active_task",
+            "analyze_text_file", "summarize_selected_text", "process_selected_document",
+            "process_selected_pdf", "translate_text_local", "inspect_image_file",
+            "process_selected_folder", "find_local_files", "get_local_search_cache_settings",
+            "list_recent_local_searches", "set_local_search_cache_settings",
+            "clear_local_search_cache", "get_local_clock", "find_duplicate_files",
+            "find_large_files", "find_recent_files", "get_task_history_settings",
+            "set_task_history_enabled", "save_task_history", "list_task_history",
+            "delete_task_history", "clear_task_history", "manage_local_reminders",
+            "verify_execution_receipt_ledger", "list_execution_receipts",
+            "get_cloud_budget_status", "set_cloud_budget_limit",
+            "enroll_trusted_peer", "revoke_trusted_peer", "list_trusted_peers",
+            "verify_and_claim_peer_envelope", "get_or_create_device_identity",
+            "rotate_device_identity", "sign_peer_task_envelope",
+        ];
+        for command in registered {
+            assert!(ipc_command_policy(command).is_some(), "unclassified IPC command: {command}");
+        }
+        assert_eq!(ipc_command_policy("future_unreviewed_command"), None);
+        assert_eq!(ipc_command_policy("execute_cloud_ai_task"), Some(IpcCommandPolicy::ExternalTransfer));
+        assert_eq!(ipc_command_policy("get_defender_status"), Some(IpcCommandPolicy::NativeConsent));
+        assert_eq!(ipc_command_policy("process_selected_pdf"), Some(IpcCommandPolicy::LocalMutation));
+    }
+
+    #[test]
+    fn accepts_only_packaged_and_exact_development_origins() {
+        assert!(is_trusted_ipc_origin("tauri://localhost/", false, None));
+        assert!(is_trusted_ipc_origin("http://tauri.localhost/", false, None));
+        assert!(is_trusted_ipc_origin("http://localhost:1420/", true, None));
+        assert!(is_trusted_ipc_origin("http://127.0.0.1:1420/", true, None));
+        assert!(!is_trusted_ipc_origin("http://localhost:1420/", false, None));
+    }
+
+    #[test]
+    fn supports_only_the_build_configured_mobile_dev_host_in_debug() {
+        assert!(is_trusted_ipc_origin(
+            "http://192.168.1.42:1420/",
+            true,
+            Some("192.168.1.42")
+        ));
+        assert!(is_trusted_ipc_origin(
+            "http://[fd00::42]:1420/",
+            true,
+            Some("fd00::42")
+        ));
+        assert!(!is_trusted_ipc_origin(
+            "http://192.168.1.43:1420/",
+            true,
+            Some("192.168.1.42")
+        ));
+        assert!(!is_trusted_ipc_origin(
+            "http://192.168.1.42:1420/",
+            false,
+            Some("192.168.1.42")
+        ));
+        assert!(!is_trusted_ipc_origin(
+            "http://attacker@192.168.1.42:1420/",
+            true,
+            Some("192.168.1.42")
+        ));
+    }
+
+    #[test]
+    fn rejects_remote_similar_and_userinfo_origins() {
+        for value in [
+            "https://example.com/",
+            "http://tauri.localhost.attacker.invalid/",
+            "http://attacker@tauri.localhost/",
+            "http://tauri.localhost:80/",
+            "tauri://localhost.attacker.invalid/",
+            "file:///tmp/index.html",
+            "http://localhost:1421/",
+        ] {
+            assert!(!is_trusted_ipc_origin(value, true, None), "unexpectedly trusted {value}");
+        }
+    }
+}
+
+
 fn valid_command_identifier(value: &str, max_len: usize) -> bool {
     !value.trim().is_empty()
         && value.len() <= max_len
@@ -3046,28 +3257,33 @@ async fn get_defender_status(
 
 macro_rules! ujani_invoke_handler {
     ($($peer_command:path),* $(,)?) => {
-        tauri::generate_handler![
-            execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
-            get_security_provider_status,
-            get_defender_status,
-            plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
-            run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
-            get_model_recommendation, execute_document_workflow, execute_local_ai_task,
-            cancel_active_task, analyze_text_file, summarize_selected_text, process_selected_document,
-            process_selected_pdf, translate_text_local, inspect_image_file,
-            folder_import::process_selected_folder, local_search::find_local_files,
-            search_cache::get_local_search_cache_settings, search_cache::list_recent_local_searches,
-            search_cache::set_local_search_cache_settings, search_cache::clear_local_search_cache,
-            everyday_tools::get_local_clock, everyday_tools::find_duplicate_files,
-            file_insights::find_large_files, recent_files::find_recent_files, history::get_task_history_settings,
-            history::set_task_history_enabled, history::save_task_history, history::list_task_history,
-            history::delete_task_history, history::clear_task_history,
-            reminder_store::manage_local_reminders,
-            security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
-            security_store::get_cloud_budget_status,
-            security_store::set_cloud_budget_limit,
-            $($peer_command),*
-        ]
+        {
+            let handler: Box<dyn Fn(tauri::ipc::Invoke) -> bool + Send + Sync> = Box::new(
+                tauri::generate_handler![
+                    execute_cloud_ai_task, get_device_info, get_capability_snapshot, get_tool_catalogue,
+                    get_security_provider_status,
+                    get_defender_status,
+                    plan_local_operation, plan_task_workflow, list_local_models, run_local_model_task,
+                    run_local_task, evaluate_task_route, get_ollama_status, pull_ollama_model,
+                    get_model_recommendation, execute_document_workflow, execute_local_ai_task,
+                    cancel_active_task, analyze_text_file, summarize_selected_text, process_selected_document,
+                    process_selected_pdf, translate_text_local, inspect_image_file,
+                    folder_import::process_selected_folder, local_search::find_local_files,
+                    search_cache::get_local_search_cache_settings, search_cache::list_recent_local_searches,
+                    search_cache::set_local_search_cache_settings, search_cache::clear_local_search_cache,
+                    everyday_tools::get_local_clock, everyday_tools::find_duplicate_files,
+                    file_insights::find_large_files, recent_files::find_recent_files, history::get_task_history_settings,
+                    history::set_task_history_enabled, history::save_task_history, history::list_task_history,
+                    history::delete_task_history, history::clear_task_history,
+                    reminder_store::manage_local_reminders,
+                    security_store::verify_execution_receipt_ledger, security_store::list_execution_receipts,
+                    security_store::get_cloud_budget_status,
+                    security_store::set_cloud_budget_limit,
+                    $($peer_command),*
+                ]
+            );
+            move |invoke| guard_ipc_invoke(invoke, &handler)
+        }
     };
 }
 
