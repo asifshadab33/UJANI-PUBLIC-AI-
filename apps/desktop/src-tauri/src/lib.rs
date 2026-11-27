@@ -629,6 +629,10 @@ async fn execute_document_workflow(
  model: String,
  translation_language: Option<String>,
 ) -> Result<WorkflowExecutionResult, String> {
+ // Validate the model identifier before registering work or probing local services.
+ if !validate_model_identifier(&model) {
+  return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+ }
  // Reject invalid metadata/content before task registration, receipts or capability probes.
  task_engine::validate_document_request(&file_name, &content, &mode)?;
  validate_document_workflow_content(&content)?;
@@ -2347,6 +2351,10 @@ async fn summarize_selected_text(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    // Reject unsafe model metadata before task registration or local service probes.
+    if !validate_model_identifier(&model) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
     // Validate untrusted IPC input before registering a task or probing local services.
     // LocalTaskEngine::summarize repeats the same checks before inference.
     task_engine::validate_summarize_input(&file_name, &content, &mode)?;
@@ -2387,6 +2395,10 @@ async fn process_selected_document(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    // Reject unsafe model metadata before task registration or local service probes.
+    if !validate_model_identifier(&model) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
     task_engine::validate_document_request(&file_name, &content, &mode)?;
     if let Some(language) = translation_language.as_deref() {
         task_engine::validate_translation_target_language(language)?;
@@ -2685,6 +2697,10 @@ async fn process_selected_pdf(
     model: String,
     translation_language: Option<String>,
 ) -> Result<task_engine::DocumentPipelineResult, String> {
+    // Reject unsafe model metadata before registration, capability discovery or PDF decoding.
+    if !validate_model_identifier(&model) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
     // Reject caller-controlled metadata and oversized base64 before registration,
     // capability discovery, receipt creation or the blocking decode worker.
     task_engine::validate_pdf_metadata(&file_name, &mode)?;
@@ -2737,6 +2753,10 @@ async fn translate_text_local(
     mode: String,
     model: String,
 ) -> Result<String, String> {
+    // Reject unsafe model metadata before task registration or local service probes.
+    if !validate_model_identifier(&model) {
+        return Err("Model identifier cannot be recorded safely in execution provenance.".into());
+    }
     // Reject invalid translation input before task registration or local service probes.
     // LocalTaskEngine::translate_local repeats this validation before inference.
     task_engine::validate_translation_input(&text, &target_language, &mode)?;
