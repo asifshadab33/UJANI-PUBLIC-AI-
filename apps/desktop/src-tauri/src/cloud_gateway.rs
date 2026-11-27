@@ -105,16 +105,25 @@ fn is_public_ip(ip: IpAddr) -> bool {
     || (o[0] == 198 && o[1] == 51 && o[2] == 100)
     || (o[0] == 203 && o[1] == 0 && o[2] == 113);
    let benchmarking = o[0] == 198 && (o[1] == 18 || o[1] == 19);
+   // Deprecated 6to4 relay space is not a valid direct public destination.
+   let six_to_four_relay = o[0] == 192 && o[1] == 88 && o[2] == 99;
    !(v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified()
     || v.is_multicast() || v.is_broadcast() || o[0] == 0 || o[0] >= 240
-    || shared || protocol || documentation || benchmarking)
+    || shared || protocol || documentation || benchmarking || six_to_four_relay)
   },
   IpAddr::V6(v) => {
    if let Some(mapped) = v.to_ipv4_mapped() { return is_public_ip(IpAddr::V4(mapped)); }
    let segments = v.segments();
    let global_unicast = (segments[0] & 0xe000) == 0x2000;
    let documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
-   global_unicast && !documentation && !v.is_loopback() && !v.is_unique_local()
+   // Reject special-purpose transition/relay prefixes. In particular, 6to4
+   // can embed an IPv4 destination and Teredo can tunnel to one, defeating a
+   // policy that only checks the outer IPv6 address for global-unicast scope.
+   let special_purpose_2001 = segments[0] == 0x2001 && segments[1] <= 0x01ff;
+   let six_to_four = segments[0] == 0x2002;
+   let documentation_3fff = segments[0] == 0x3fff && (segments[1] & 0xf000) == 0;
+   global_unicast && !documentation && !special_purpose_2001 && !six_to_four
+    && !documentation_3fff && !v.is_loopback() && !v.is_unique_local()
     && !v.is_unicast_link_local() && !v.is_unspecified() && !v.is_multicast()
   }
  }
@@ -262,8 +271,9 @@ mod cloud_gateway_boundary_regression_tests {
     fn cloud_destination_filter_rejects_special_and_non_global_addresses() {
         for address in [
             "0.0.0.0", "100.64.0.1", "169.254.1.1", "192.0.2.1",
-            "198.18.0.1", "203.0.113.1", "224.0.0.1", "255.255.255.255",
+            "198.18.0.1", "203.0.113.1", "192.88.99.1", "224.0.0.1", "255.255.255.255",
             "::", "::1", "fc00::1", "fe80::1", "2001:db8::1",
+            "2001:0::1", "2001:100::1", "2002:0808:0808::1", "3fff:0::1",
             "::ffff:10.0.0.1",
         ] {
             let ip: IpAddr = address.parse().unwrap();
