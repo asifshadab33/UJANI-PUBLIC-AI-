@@ -2941,6 +2941,58 @@ where
     operation().await
 }
 
+#[cfg(test)]
+mod native_confirmation_gate_tests {
+    use super::run_after_native_confirmation;
+    use std::{cell::Cell, future};
+
+    #[tokio::test]
+    async fn declined_native_confirmation_does_not_construct_the_sensitive_operation() {
+        let operation_started = Cell::new(false);
+        let result = run_after_native_confirmation(
+            false,
+            "native approval required",
+            || {
+                operation_started.set(true);
+                future::ready(Ok::<_, String>(()))
+            },
+        )
+        .await;
+
+        assert_eq!(result, Err("native approval required".into()));
+        assert!(!operation_started.get(), "denial must happen before constructing the provider operation");
+    }
+
+    #[tokio::test]
+    async fn approved_native_confirmation_invokes_the_operation_once() {
+        let operation_calls = Cell::new(0);
+        let result = run_after_native_confirmation(
+            true,
+            "native approval required",
+            || {
+                operation_calls.set(operation_calls.get() + 1);
+                future::ready(Ok::<_, String>(42_u8))
+            },
+        )
+        .await;
+
+        assert_eq!(result, Ok(42));
+        assert_eq!(operation_calls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn provider_operation_errors_are_not_converted_to_success() {
+        let result = run_after_native_confirmation(
+            true,
+            "native approval required",
+            || future::ready(Err::<(), _>("provider unavailable".to_string())),
+        )
+        .await;
+
+        assert_eq!(result, Err("provider unavailable".into()));
+    }
+}
+
 /// Reads aggregate OS security-provider status only after a native confirmation.
 /// The React consent checkbox is a usability gate, not an authorization boundary:
 /// direct IPC callers must receive the same native, scope-specific confirmation.
