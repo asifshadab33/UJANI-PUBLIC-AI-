@@ -152,7 +152,9 @@ pub async fn process_selected_folder(
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
     let picker_app = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
+    let picker_token = task_token.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || -> Result<Option<std::path::PathBuf>, String> {
+        crate::ensure_task_not_cancelled(&picker_token)?;
         let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
         };
@@ -421,7 +423,7 @@ mod tests {
         let token = CancellationToken::new();
         let snapshot = crate::selected_folder_capability_snapshot(4096, false, false);
         let read_started = std::cell::Cell::new(false);
-        let result = run_folder_read_preflight(
+        let result = super::run_folder_read_preflight(
             &token,
             Ok(&snapshot),
             "smart",
