@@ -132,7 +132,6 @@ pub async fn process_selected_folder(
     // Keep the native folder picker and all path handling in Rust. The webview
     // never supplies a filesystem path or receives a persistent directory grant.
     let picker_app = app.clone();
-    let picker_token = task_token.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
         let Some(folder) = picker_app.dialog().file().blocking_pick_folder() else {
             return Ok(None);
@@ -140,12 +139,12 @@ pub async fn process_selected_folder(
         let path = folder
             .into_path()
             .map_err(|_| "The selected folder path is not a local filesystem path.".to_string())?;
-        collect_selected_folder(&path, &picker_token).map(Some)
+        Ok(Some(path))
     })
     .await
     .map_err(|error| format!("Folder selection worker failed: {error}"))??;
 
-    let Some(collected) = selected else {
+    let Some(folder) = selected else {
         return Ok(FolderImportResult {
             cancelled: true,
             files: Vec::new(),
@@ -154,6 +153,33 @@ pub async fn process_selected_folder(
             skipped_file_names: Vec::new(),
         });
     };
+
+    // Capabilities may change while the user is deciding which folder to share.
+    // Re-check after selection and before traversal so stale preflight cannot read files.
+    crate::ensure_task_not_cancelled(&task_token)?;
+    let fresh_capability_snapshot =
+        crate::get_capability_snapshot_for_task(&task_token).await?;
+    crate::ensure_task_not_cancelled(&task_token)?;
+    crate::require_local_operation(
+        &fresh_capability_snapshot,
+        "file.analyze_text",
+        &mode,
+    )?;
+    if ollama_available {
+        crate::require_local_operation(
+            &fresh_capability_snapshot,
+            "document.summarize",
+            &mode,
+        )?;
+    }
+    crate::ensure_task_not_cancelled(&task_token)?;
+
+    let collect_token = task_token.clone();
+    let collected = tauri::async_runtime::spawn_blocking(move || {
+        collect_selected_folder(&folder, &collect_token)
+    })
+    .await
+    .map_err(|error| format!("Selected-folder read worker failed: {error}"))??;
     let files = collected.files;
     let skipped_file_count = collected.skipped_file_count;
     let skipped_file_names = collected.skipped_file_names;
