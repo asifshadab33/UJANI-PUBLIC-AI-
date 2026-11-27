@@ -23,6 +23,26 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "csv", "json", "rs", "py", "js", "ts", "html", "xml", "log",
 ];
 
+/// Run the first selected-folder read only after a fresh capability snapshot has passed.
+/// The callback is lazy so a cancelled task or lost capability cannot start filesystem I/O.
+fn run_folder_read_preflight<T>(
+    token: &CancellationToken,
+    snapshot: Result<&crate::CapabilitySnapshot, String>,
+    mode: &str,
+    ollama_available: bool,
+    start_read: impl FnOnce() -> T,
+) -> Result<T, String> {
+    crate::ensure_task_not_cancelled(token)?;
+    let snapshot = snapshot?;
+    crate::ensure_task_not_cancelled(token)?;
+    crate::require_local_operation(snapshot, "file.analyze_text", mode)?;
+    if ollama_available {
+        crate::require_local_operation(snapshot, "document.summarize", mode)?;
+    }
+    crate::ensure_task_not_cancelled(token)?;
+    Ok(start_read())
+}
+
 /// Returns whether a direct-child path has an extension accepted by folder import.
 fn is_supported_text_file(path: &Path) -> bool {
     let extension = path.extension().and_then(|value| value.to_str())
@@ -156,30 +176,23 @@ pub async fn process_selected_folder(
 
     // Capabilities may change while the user is deciding which folder to share.
     // Re-check after selection and before traversal so stale preflight cannot read files.
-    crate::ensure_task_not_cancelled(&task_token)?;
     let fresh_capability_snapshot =
         crate::get_capability_snapshot_for_task(&task_token).await?;
-    crate::ensure_task_not_cancelled(&task_token)?;
-    crate::require_local_operation(
-        &fresh_capability_snapshot,
-        "file.analyze_text",
-        &mode,
-    )?;
-    if ollama_available {
-        crate::require_local_operation(
-            &fresh_capability_snapshot,
-            "document.summarize",
-            &mode,
-        )?;
-    }
-    crate::ensure_task_not_cancelled(&task_token)?;
-
     let collect_token = task_token.clone();
-    let collected = tauri::async_runtime::spawn_blocking(move || {
-        collect_selected_folder(&folder, &collect_token)
-    })
-    .await
-    .map_err(|error| format!("Selected-folder read worker failed: {error}"))??;
+    let selected_folder_read = run_folder_read_preflight(
+        &task_token,
+        Ok(&fresh_capability_snapshot),
+        &mode,
+        ollama_available,
+        move || {
+            tauri::async_runtime::spawn_blocking(move || {
+                collect_selected_folder(&folder, &collect_token)
+            })
+        },
+    )?;
+    let collected = selected_folder_read
+        .await
+        .map_err(|error| format!("Selected-folder read worker failed: {error}"))??;
     let files = collected.files;
     let skipped_file_count = collected.skipped_file_count;
     let skipped_file_names = collected.skipped_file_names;
@@ -401,6 +414,37 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn capability_loss_after_picker_selection_prevents_folder_read_start() {
+        let token = CancellationToken::new();
+        let snapshot = crate::selected_folder_capability_snapshot(4096, false, false);
+        let read_started = std::cell::Cell::new(false);
+        let result = run_folder_read_preflight(
+            &token,
+            Ok(&snapshot),
+            "smart",
+            false,
+            || read_started.set(true),
+        );
+        assert!(result.is_err());
+        assert!(!read_started.get());
+    }
+
+    #[test]
+    fn fresh_capability_allows_bounded_folder_read_start() {
+        let token = CancellationToken::new();
+        let snapshot = crate::selected_folder_capability_snapshot(4096, true, false);
+        let result = run_folder_read_preflight(
+            &token,
+            Ok(&snapshot),
+            "smart",
+            false,
+            || 7_u8,
+        )
+        .unwrap();
+        assert_eq!(result, 7);
     }
 
     #[test]
