@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { subscribeWithCleanup } from "./asyncEventSubscription.js";
 import { invoke } from "@tauri-apps/api/core";
 import UpdateNotice from "./UpdateNotice";
 import LocalFinder from "./LocalFinder";
@@ -309,20 +310,22 @@ export default function App() {
 
   useEffect(() => {
     if (!isTauri()) return;
-    let unlisten: (() => void) | undefined;
-    listen<TaskProgressEvent>("ujani-task-progress", (event) => {
-      const progress = event.payload;
-      if (progress.stage === "receipt_recovered") {
-        setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
-        return;
-      }
-      setTaskProgress(progress);
-      if (progress.stage === "receipt_warning") {
-        setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
-      }
-    }).then((stop) => { unlisten = stop; })
-      .catch((error) => setOllamaError(String(error)));
-    return () => { unlisten?.(); };
+    // Registration is asynchronous; the helper immediately stops a listener
+    // that resolves after React has already cleaned up this effect.
+    return subscribeWithCleanup(
+      listen<TaskProgressEvent>("ujani-task-progress", (event) => {
+        const progress = event.payload;
+        if (progress.stage === "receipt_recovered") {
+          setReceiptWarnings((current) => current.filter((item) => item.task_id !== progress.task_id));
+          return;
+        }
+        setTaskProgress(progress);
+        if (progress.stage === "receipt_warning") {
+          setReceiptWarnings((current) => [...current.filter((item) => item.task_id !== progress.task_id), progress]);
+        }
+      }),
+      (error) => setOllamaError(String(error)),
+    );
   }, []);
 
   useEffect(() => {
