@@ -27,14 +27,15 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
+use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
+use tauri::{AppHandle, Emitter, State};
+
 pub(crate) fn os_random_bytes<const N: usize>() -> Result<[u8; N], String> {
     let mut bytes = [0_u8; N];
     getrandom::fill(&mut bytes)
         .map_err(|_| "The OS random source is unavailable.".to_string())?;
     Ok(bytes)
 }
-use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
-use tauri::{AppHandle, Emitter, State};
 
 use tokio_util::sync::CancellationToken;
 use ujani_core::router::{evaluate_mode, ExecutionMode, ModeRoutingDecision, RouteRequest};
