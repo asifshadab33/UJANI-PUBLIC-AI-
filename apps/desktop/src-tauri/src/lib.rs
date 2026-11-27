@@ -44,6 +44,47 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IpcCommandPolicy {
+    ReadOnly,
+    ScopedLocalRead,
+    LocalMutation,
+    NativeConsent,
+    ExternalTransfer,
+    PeerPreview,
+}
+
+/// Every command registered below must have an explicit policy class. Unknown
+/// commands fail closed, so adding a new Tauri command requires a reviewed policy entry.
+fn ipc_command_policy(command: &str) -> Option<IpcCommandPolicy> {
+    use IpcCommandPolicy::*;
+    Some(match command {
+        "get_device_info" | "get_capability_snapshot" | "get_tool_catalogue"
+        | "plan_local_operation" | "plan_task_workflow" | "list_local_models"
+        | "evaluate_task_route" | "get_ollama_status" | "get_model_recommendation"
+        | "get_local_search_cache_settings" | "list_recent_local_searches"
+        | "get_local_clock" | "get_task_history_settings" | "list_task_history"
+        | "verify_execution_receipt_ledger" | "list_execution_receipts"
+        | "get_cloud_budget_status" => ReadOnly,
+        "get_security_provider_status" | "get_defender_status" => NativeConsent,
+        "find_local_files" | "find_duplicate_files" | "find_large_files"
+        | "find_recent_files" => ScopedLocalRead,
+        "execute_cloud_ai_task" => ExternalTransfer,
+        "pull_ollama_model" => ExternalTransfer,
+        "run_local_model_task" | "run_local_task" | "execute_document_workflow"
+        | "execute_local_ai_task" | "cancel_active_task" | "analyze_text_file"
+        | "summarize_selected_text" | "process_selected_document" | "process_selected_pdf"
+        | "translate_text_local" | "inspect_image_file" | "process_selected_folder"
+        | "set_local_search_cache_settings" | "clear_local_search_cache"
+        | "set_task_history_enabled" | "save_task_history" | "delete_task_history"
+        | "clear_task_history" | "manage_local_reminders" | "set_cloud_budget_limit" => LocalMutation,
+        "enroll_trusted_peer" | "revoke_trusted_peer" | "list_trusted_peers"
+        | "verify_and_claim_peer_envelope" | "get_or_create_device_identity"
+        | "rotate_device_identity" | "sign_peer_task_envelope" => PeerPreview,
+        _ => return None,
+    })
+}
+
 /// Only the packaged application origin (or the exact Vite dev origin in debug builds)
 /// may invoke native commands. This is a global first-layer gate; command-specific
 /// consent, path scoping and capability checks remain mandatory inside handlers.
@@ -67,8 +108,15 @@ fn guard_ipc_invoke<R: tauri::Runtime>(
         .ok()
         .is_some_and(|url| is_trusted_ipc_origin(url.as_str(), cfg!(debug_assertions)));
 
-    if !trusted_window || !trusted_origin {
-        invoke.resolver.reject("UJANI blocked native IPC from an untrusted window or origin.");
+    let command_policy = ipc_command_policy(invoke.message.command());
+    if !trusted_window || !trusted_origin || command_policy.is_none() {
+        invoke.resolver.reject("UJANI blocked native IPC: untrusted origin or unclassified command.");
+        return true;
+    }
+    if matches!(command_policy, Some(IpcCommandPolicy::PeerPreview))
+        && !cfg!(feature = "peer-preview")
+    {
+        invoke.resolver.reject("UJANI peer-preview IPC is disabled in this build.");
         return true;
     }
 
@@ -77,7 +125,39 @@ fn guard_ipc_invoke<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod ipc_origin_gate_tests {
-    use super::is_trusted_ipc_origin;
+    use super::{ipc_command_policy, is_trusted_ipc_origin, IpcCommandPolicy};
+
+    #[test]
+    fn every_registered_command_has_an_explicit_policy_class() {
+        let registered = [
+            "execute_cloud_ai_task", "get_device_info", "get_capability_snapshot",
+            "get_tool_catalogue", "get_security_provider_status", "get_defender_status",
+            "plan_local_operation", "plan_task_workflow", "list_local_models",
+            "run_local_model_task", "run_local_task", "evaluate_task_route",
+            "get_ollama_status", "pull_ollama_model", "get_model_recommendation",
+            "execute_document_workflow", "execute_local_ai_task", "cancel_active_task",
+            "analyze_text_file", "summarize_selected_text", "process_selected_document",
+            "process_selected_pdf", "translate_text_local", "inspect_image_file",
+            "process_selected_folder", "find_local_files", "get_local_search_cache_settings",
+            "list_recent_local_searches", "set_local_search_cache_settings",
+            "clear_local_search_cache", "get_local_clock", "find_duplicate_files",
+            "find_large_files", "find_recent_files", "get_task_history_settings",
+            "set_task_history_enabled", "save_task_history", "list_task_history",
+            "delete_task_history", "clear_task_history", "manage_local_reminders",
+            "verify_execution_receipt_ledger", "list_execution_receipts",
+            "get_cloud_budget_status", "set_cloud_budget_limit",
+            "enroll_trusted_peer", "revoke_trusted_peer", "list_trusted_peers",
+            "verify_and_claim_peer_envelope", "get_or_create_device_identity",
+            "rotate_device_identity", "sign_peer_task_envelope",
+        ];
+        for command in registered {
+            assert!(ipc_command_policy(command).is_some(), "unclassified IPC command: {command}");
+        }
+        assert_eq!(ipc_command_policy("future_unreviewed_command"), None);
+        assert_eq!(ipc_command_policy("execute_cloud_ai_task"), Some(IpcCommandPolicy::ExternalTransfer));
+        assert_eq!(ipc_command_policy("get_defender_status"), Some(IpcCommandPolicy::NativeConsent));
+        assert_eq!(ipc_command_policy("process_selected_pdf"), Some(IpcCommandPolicy::LocalMutation));
+    }
 
     #[test]
     fn accepts_only_packaged_and_exact_development_origins() {
