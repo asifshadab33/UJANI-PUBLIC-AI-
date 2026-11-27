@@ -438,7 +438,7 @@ mod tests {
     fn fresh_capability_allows_bounded_folder_read_start() {
         let token = CancellationToken::new();
         let snapshot = crate::selected_folder_capability_snapshot(4096, true, false);
-        let result = run_folder_read_preflight(
+        let result = super::run_folder_read_preflight(
             &token,
             Ok(&snapshot),
             "smart",
