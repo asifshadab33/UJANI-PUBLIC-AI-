@@ -5,7 +5,6 @@ use ed25519_dalek::SigningKey;
 use crate::native_consent::confirm_native;
 use ujani_core::{peer_protocol::{SignedTaskEnvelope, TaskEnvelope, PROTOCOL_VERSION}, registered_operations};
 use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::Serialize;
 use tauri::AppHandle;
 use zeroize::Zeroizing;
