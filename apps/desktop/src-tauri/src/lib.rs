@@ -3223,20 +3223,25 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     #[cfg(feature = "peer-preview")]
-    let handler = ujani_invoke_handler!(
-        security_store::enroll_trusted_peer,
-        security_store::revoke_trusted_peer,
-        security_store::list_trusted_peers,
-        security_store::verify_and_claim_peer_envelope,
-        device_identity::get_or_create_device_identity,
-        device_identity::rotate_device_identity,
-        device_identity::sign_peer_task_envelope
-    );
+    let builder = builder.invoke_handler(move |invoke| {
+        guard_ipc_invoke(
+            invoke,
+            ujani_invoke_handler!(
+                security_store::enroll_trusted_peer,
+                security_store::revoke_trusted_peer,
+                security_store::list_trusted_peers,
+                security_store::verify_and_claim_peer_envelope,
+                device_identity::get_or_create_device_identity,
+                device_identity::rotate_device_identity,
+                device_identity::sign_peer_task_envelope
+            ),
+        )
+    });
 
     #[cfg(not(feature = "peer-preview"))]
-    let handler = ujani_invoke_handler!();
-
-    let builder = builder.invoke_handler(move |invoke| guard_ipc_invoke(invoke, &handler));
+    let builder = builder.invoke_handler(move |invoke| {
+        guard_ipc_invoke(invoke, ujani_invoke_handler!())
+    });
 
     let app = builder.build(tauri::generate_context!())
         .expect("error while building UJANI Public AI");
