@@ -112,16 +112,15 @@ fn guard_ipc_invoke<R: tauri::Runtime>(
         .ok()
         .is_some_and(|url| is_trusted_ipc_origin(url.as_str(), cfg!(debug_assertions)));
 
-    let command_policy = ipc_command_policy(invoke.message.command());
-    if !trusted_window || !trusted_origin || command_policy.is_none() {
-        invoke.resolver.reject("UJANI blocked native IPC: untrusted origin or unclassified command.");
+    let Some(command_policy) = ipc_command_policy(invoke.message.command()) else {
+        invoke.resolver.reject("UJANI blocked native IPC: command has no explicit policy classification.");
+        return true;
+    };
+    if !trusted_window || !trusted_origin {
+        invoke.resolver.reject("UJANI blocked native IPC from an untrusted window or origin.");
         return true;
     }
-    if !ipc_policy_allowed(
-        command_policy.expect("unclassified commands were rejected above"),
-        cfg!(feature = "peer-preview"),
-        cfg!(debug_assertions),
-    ) {
+    if !ipc_policy_allowed(command_policy, cfg!(feature = "peer-preview"), cfg!(debug_assertions)) {
         invoke.resolver.reject("UJANI peer-preview IPC is available only in explicitly enabled debug builds.");
         return true;
     }
