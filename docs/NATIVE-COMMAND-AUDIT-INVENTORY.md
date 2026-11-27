@@ -5,6 +5,14 @@ Scope: Tauri command surface registered by `apps/desktop/src-tauri/src/lib.rs` o
 
 > This document is not a declaration that every command is already authorized correctly. It records the IPC inventory and identifies the review obligations. Do not treat the presence of a UI control, hidden menu item, or caller-supplied flag as an authorization boundary. Sensitive side effects must be gated in native code.
 
+## Global native IPC boundary
+
+All registered invokes now pass a native guard before the generated command handler runs. The guard requires the `main` webview and an exact packaged Tauri origin (`tauri://localhost` or `http://tauri.localhost`); the exact Vite development origin is accepted only in debug builds. URL-read failures, untrusted windows/origins and unclassified commands are rejected before handler dispatch.
+
+The native source also classifies each command as read-only, scoped local read, local mutation, native-consent, external-transfer or peer-preview. CI compares that registry with the actual default and peer-preview handler expansions, so adding or removing a command without updating its policy classification fails closed.
+
+This is a first-layer origin/command-coverage boundary, not proof of per-operation authorization. Folder scope, fresh capabilities, task cancellation, local receipts, native OS confirmation and explicit external-transfer policy must still be enforced inside the command handlers. A compromised renderer executing inside the trusted local origin remains in scope for CSP/XSS defence and handler-level validation.
+
 ## Inventory source and count
 
 The current `ujani_invoke_handler!` registration contains **45 statically named command entries**, plus a feature-supplied peer-command expansion. The main native source also contains 24 directly annotated command functions; module-level commands are registered by qualified module path. The inventory must be refreshed whenever the handler or command modules change.
