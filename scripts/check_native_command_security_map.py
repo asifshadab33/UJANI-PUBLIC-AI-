@@ -529,7 +529,16 @@ def missing_folder_import_preflight_guards(source: str) -> list[str]:
     if not (0 <= gate_positions[0] < gate_positions[1] < gate_positions[2]):
         return ["run_folder_read_preflight:lazy-gate"]
 
-    signature = source.split("pub async fn process_selected_folder(", 1)[-1].split(") ->", 1)[0]
+    try:
+        masked = strip_rust_noncode(source)
+        signature_start = re.search(r"\\bfn\\s+process_selected_folder\\s*\\(", masked)
+        if not signature_start:
+            return ["process_selected_folder:signature-not-found"]
+        opening_paren = masked.find("(", signature_start.start())
+        closing_paren = find_matching_delimiter(masked, opening_paren, "(", ")")
+        signature = source[opening_paren + 1:closing_paren]
+    except ValueError:
+        return ["process_selected_folder:signature-not-found"]
     if "PathBuf" in signature or "selected_path" in signature:
         return ["process_selected_folder:webview-path-parameter"]
     return []
