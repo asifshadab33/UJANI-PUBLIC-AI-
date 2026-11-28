@@ -127,7 +127,7 @@ fn configured_dev_authority(host: &str) -> Option<String> {
             && label.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
             && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     });
-    valid_dns_name.then(|| format!("{host}:1420"))
+    valid_dns_name.then(|| format!("{}:1420", host.to_ascii_lowercase()))
 }
 
 fn is_trusted_ipc_origin(
@@ -3594,6 +3594,7 @@ mod configured_dev_authority_validation_tests {
     fn accepts_dns_and_ip_literals_with_a_fixed_development_port() {
         assert_eq!(configured_dev_authority("localhost").as_deref(), Some("localhost:1420"));
         assert_eq!(configured_dev_authority("dev-box.local").as_deref(), Some("dev-box.local:1420"));
+        assert_eq!(configured_dev_authority("DEV-BOX.LOCAL").as_deref(), Some("dev-box.local:1420"));
         assert_eq!(configured_dev_authority("192.168.1.42").as_deref(), Some("192.168.1.42:1420"));
         assert_eq!(configured_dev_authority("fd00::42").as_deref(), Some("[fd00::42]:1420"));
         assert_eq!(configured_dev_authority("[fd00::42]").as_deref(), Some("[fd00::42]:1420"));
