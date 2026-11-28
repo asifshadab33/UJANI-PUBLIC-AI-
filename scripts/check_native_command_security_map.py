@@ -329,10 +329,11 @@ def missing_chat_ipc_preflight_guards(source: str) -> list[str]:
     ordered = (
         "ollama::validate_chat_input",
         "register_active_task",
+        "reserve_execution_receipt_slot",
         "get_capability_snapshot_for_task",
         "ollama::list_models",
         "MemoryReservation::acquire_queued",
-        "reserve_execution_receipt_slot",
+        "record_local_preflight_outcome",
     )
     executable_body = strip_rust_noncode(body)
     positions = [executable_body.find(token) for token in ordered]
