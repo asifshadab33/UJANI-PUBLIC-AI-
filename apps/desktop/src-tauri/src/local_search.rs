@@ -431,8 +431,16 @@ pub async fn find_local_files(
             let store_token = token.clone();
             let cache_write = tauri::async_runtime::spawn_blocking(move || {
                 crate::search_cache::store(
-                    &store_app, &store_root, &store_query, search_pdf_text,
-                    &store_inventory, &store_payload, negative, &store_token
+                    &store_app,
+                    crate::search_cache::CacheStoreRequest {
+                        root: &store_root,
+                        query: &store_query,
+                        search_pdf_text,
+                        inventory_json: &store_inventory,
+                        payload_json: &store_payload,
+                        is_negative: negative,
+                        cancellation: &store_token,
+                    },
                 )
             }).await;
             if token.is_cancelled() {
