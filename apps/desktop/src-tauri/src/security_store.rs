@@ -1605,7 +1605,8 @@ mod self_evolution_approval_nonce_tests {
 
     fn test_nonce() -> [u8; 16] {
         loop {
-            let nonce = rand::random::<[u8; 16]>();
+            let mut nonce = [0_u8; 16];
+            getrandom::fill(&mut nonce).expect("OS CSPRNG must be available in tests");
             if nonce.iter().any(|byte| *byte != 0) {
                 return nonce;
             }
