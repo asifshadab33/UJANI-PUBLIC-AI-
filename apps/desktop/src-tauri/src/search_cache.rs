@@ -519,16 +519,27 @@ fn ensure_cache_write_not_cancelled(
     }
 }
 
-pub fn store(
-    app: &AppHandle,
-    root: &Path,
-    query: &str,
-    search_pdf_text: bool,
-    inventory_json: &str,
-    payload_json: &str,
-    is_negative: bool,
-    cancellation: &tokio_util::sync::CancellationToken,
-) -> Result<(), String> {
+/// Inputs for one optional encrypted search-cache write.
+pub struct CacheStoreRequest<'a> {
+    pub root: &'a Path,
+    pub query: &'a str,
+    pub search_pdf_text: bool,
+    pub inventory_json: &'a str,
+    pub payload_json: &'a str,
+    pub is_negative: bool,
+    pub cancellation: &'a tokio_util::sync::CancellationToken,
+}
+
+pub fn store(app: &AppHandle, request: CacheStoreRequest<'_>) -> Result<(), String> {
+    let CacheStoreRequest {
+        root,
+        query,
+        search_pdf_text,
+        inventory_json,
+        payload_json,
+        is_negative,
+        cancellation,
+    } = request;
     ensure_cache_write_not_cancelled(cancellation)?;
     if inventory_json.len() > MAX_CACHE_ROW_BYTES || payload_json.len() > MAX_CACHE_ROW_BYTES {
         return Ok(());
