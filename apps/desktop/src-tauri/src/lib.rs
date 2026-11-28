@@ -1764,7 +1764,7 @@ fn local_ai_output_digest(output: Option<&str>, outcome: ExecutionOutcome) -> St
 
 #[cfg(test)]
 mod local_preflight_receipt_tests {
-    use super::{local_preflight_receipt, sha256_hex};
+    use super::{execution_outcome, local_preflight_receipt, sha256_hex};
     use ujani_core::{ExecutionOutcome, NetworkActivity, ReceiptExecutionLocation};
 
     #[test]
@@ -1788,6 +1788,24 @@ mod local_preflight_receipt_tests {
         let serialized = serde_json::to_string(&receipt).unwrap();
         assert!(!serialized.contains("private prompt"));
         assert!(!serialized.contains("private-model"));
+    }
+
+    #[test]
+    fn local_preflight_timeout_classifies_both_capability_and_model_inventory_budgets() {
+        let capability_timeout = Err::<(), _>(
+            "Local Ollama availability check exceeded its 4-second time budget.".to_string(),
+        );
+        let inventory_timeout = Err::<(), _>(
+            "Local Ollama model inventory exceeded its 7-second time budget.".to_string(),
+        );
+        assert_eq!(
+            execution_outcome(&capability_timeout, "time budget"),
+            ujani_core::ExecutionOutcome::TimedOut,
+        );
+        assert_eq!(
+            execution_outcome(&inventory_timeout, "time budget"),
+            ujani_core::ExecutionOutcome::TimedOut,
+        );
     }
 
     #[test]
@@ -2583,7 +2601,7 @@ async fn execute_local_ai_task(
     let _memory_reservation = match preflight {
         Ok(reservation) => reservation,
         Err(error) => {
-            let outcome = execution_outcome::<()>(&Err(error.clone()), "7-second");
+            let outcome = execution_outcome::<()>(&Err(error.clone()), "time budget");
             return Err(record_local_preflight_outcome(
                 receipt_slot,
                 &task_id,
