@@ -31,7 +31,12 @@ FORBIDDEN_MARKERS = {
 }
 
 REQUIRED_POLICY_MARKERS = {
-    ("lib.rs", "execute_local_ai_task"): ("plan_local_task(", "local_plan.accepted"),
+    ("lib.rs", "execute_local_ai_task"): (
+        "ollama::validate_chat_input(&model, &prompt)?;",
+        "plan_local_task(",
+        "local_plan.accepted",
+        "record_local_preflight_outcome",
+    ),
     ("lib.rs", "get_security_provider_status"): (
         "validate_security_provider_ids",
         "native_consent::confirm_native",
@@ -142,12 +147,16 @@ REQUIRED_ORDERED_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): (
         "let registration = register_active_task(&control, &task_id)?;",
         "let token = registration.token.clone();",
+        "security_store::reserve_execution_receipt_slot(&app, &task_id)?;",
+        "let preflight = async",
         "get_capability_snapshot_for_task(&token).await?",
         "let local_plan = plan_local_task(",
         "if !local_plan.accepted",
         "await_task_with_limits(",
         "ollama::list_models()",
-        "ensure_task_not_cancelled(&token)?;",
+        "MemoryReservation::acquire_queued(&task_id, &token).await",
+        "record_local_preflight_outcome(",
+        "LocalTaskEngine::execute_stream(",
     ),
     ("lib.rs", "execute_document_workflow"): (
         "validate_document_workflow_content(&content)?;",
@@ -248,6 +257,8 @@ REQUIRED_ORDERED_MARKERS = {
 
 REQUIRED_MARKERS = {
     ("lib.rs", "execute_local_ai_task"): (
+        "security_store::reserve_execution_receipt_slot",
+        "record_local_preflight_outcome",
         "execution_outcome(&result",
         "outcome: Some(outcome)",
         'persist_receipt_or_warn("Local inference"',
@@ -361,6 +372,8 @@ def main() -> None:
             "managed_task_outcomes_are_classified_for_receipts",
             "failed_receipt_digest_does_not_include_error_text",
             "cloud_preflight_receipt_omits_payload_and_provider_details",
+            "local_preflight_receipt_excludes_prompt_and_model_and_marks_network_unknown",
+            "local_preflight_receipt_digest_is_stable_and_outcome_bound",
             "schema_three_failure_and_cancellation_receipts_validate",
             "summary_and_translation_fail_closed_without_local_ollama",
             "pdf_pipeline_requires_parser_and_local_model_capabilities",
