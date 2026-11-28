@@ -99,8 +99,6 @@ pub struct FolderImportResult {
 
 /// Opens a native OS folder picker and processes only its immediate text-file children.
 /// The command deliberately accepts no filesystem path from the webview.
-#[cfg(not(target_os = "android"))]
-#[tauri::command]
 fn validate_optional_model_identifier(model: &str) -> Result<(), String> {
     if model.trim().is_empty() || ujani_core::validate_model_identifier(model) {
         Ok(())
@@ -109,6 +107,8 @@ fn validate_optional_model_identifier(model: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
 pub async fn process_selected_folder(
     app: tauri::AppHandle,
     control: tauri::State<'_, crate::TaskControlState>,
