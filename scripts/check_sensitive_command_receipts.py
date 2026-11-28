@@ -191,6 +191,15 @@ REQUIRED_ORDERED_MARKERS = {
         'require_local_operation(&snapshot, "translate.text"',
         "run_managed_task_registered(",
     ),
+    ("history.rs", "list_task_history"): (
+        "let current_settings = settings_read_only(&app)?;",
+        "if !current_settings.enabled",
+        "return Ok(Vec::new());",
+        "crate::with_local_state_receipt(",
+        "let db = open(&app)?;",
+        "let key = history_key(&db)?;",
+        "migrate_plaintext_rows(&db, &key)?;",
+    ),
     ("folder_import.rs", "process_selected_folder"): (
         "validate_optional_model_identifier(&model)?;",
         "crate::register_active_task(&control, &task_id)?;",
@@ -375,6 +384,7 @@ def main() -> None:
             "registered_local_preflight_invokes_picker_only_after_all_checks",
             "missing_or_malformed_native_folder_scope_fails_before_traversal",
         ),
+        "history.rs": ("read_only_settings_path_does_not_create_missing_storage",),
         "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
         "folder_import.rs": (
             "optional_model_identifier_allows_analysis_only_and_valid_models",

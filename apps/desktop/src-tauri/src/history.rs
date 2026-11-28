@@ -505,12 +505,13 @@ pub fn save_task_history(
 
 #[tauri::command]
 pub fn list_task_history(app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
-    let db = open(&app)?;
-    // Fresh installs must not prompt for or initialize an OS keyring when history is off.
-    if !is_enabled(&db)? {
+    // A disabled or not-yet-configured history store is a read-only empty result.
+    // Do not call open() here: it creates the app-data directory/database and runs
+    // schema initialization, which would turn a first read into a persistent write.
+    let current_settings = settings_read_only(&app)?;
+    if !current_settings.enabled {
         return Ok(Vec::new());
     }
-    drop(db);
 
     // Listing performs bounded legacy migration and retention cleanup. Reserve an
     // audit slot before those persistent maintenance effects; receipt metadata
