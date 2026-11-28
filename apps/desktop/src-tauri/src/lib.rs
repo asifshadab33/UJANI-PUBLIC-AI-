@@ -27,7 +27,13 @@ use task_engine::LocalTaskEngine;
 
 use model_runtime::{discover_models, run_local_model, InferenceResult, ModelInfo};
 use serde::Serialize;
-use rand::{rngs::OsRng, RngCore};
+
+pub(crate) fn os_random_bytes<const N: usize>() -> Result<[u8; N], String> {
+    let mut bytes = [0_u8; N];
+    getrandom::fill(&mut bytes)
+        .map_err(|_| "The OS random source is unavailable.".to_string())?;
+    Ok(bytes)
+}
 use std::{collections::{BTreeSet, HashMap}, sync::{Arc, Condvar, Mutex, OnceLock}, time::{Duration, Instant}};
 use tauri::{AppHandle, Emitter, State};
 
@@ -1857,10 +1863,7 @@ where
         .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
         .as_millis()
         .min(u64::MAX as u128) as u64;
-    let mut operation_nonce = [0u8; 16];
-    let mut random = OsRng;
-    random
-        .try_fill_bytes(&mut operation_nonce)
+    let operation_nonce = os_random_bytes::<16>()
         .map_err(|_| "The OS random source is unavailable; no state change was started.".to_string())?;
     let task_id = format!(
         "state-{}",
