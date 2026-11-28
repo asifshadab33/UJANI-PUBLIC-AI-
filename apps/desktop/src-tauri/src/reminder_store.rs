@@ -5,11 +5,10 @@
 //! connect to calendar/email apps, or wake the device. Those are separate gates.
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, Payload},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -155,7 +154,7 @@ fn reminder_key(create_if_missing: bool) -> Result<Zeroizing<[u8; 32]>, String> 
             Err("The OS credential vault has no key for existing reminders; refusing to replace it with a new key.".into())
         }
         Err(keyring::Error::NoEntry) => {
-            let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
+            let key = Zeroizing::new(crate::os_random_bytes::<32>()?);
             let encoded = Zeroizing::new(B64.encode(*key));
             entry.set_password(encoded.as_str())
                 .map_err(|error| format!("Could not protect reminder key in the OS credential vault: {error}"))?;
@@ -174,11 +173,12 @@ fn aad(id: &str) -> Vec<u8> {
 
 fn encrypt_record(key: &[u8; 32], reminder: &LocalReminder) -> Result<String, String> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid reminder encryption key.".to_string())?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce_bytes = crate::os_random_bytes::<12>()?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
     let plaintext = Zeroizing::new(serde_json::to_vec(reminder).map_err(|error| format!("Could not encode local reminder: {error}"))?);
-    let encrypted = cipher.encrypt(&nonce, Payload { msg: plaintext.as_slice(), aad: &aad(&reminder.id) })
+    let encrypted = cipher.encrypt(nonce, Payload { msg: plaintext.as_slice(), aad: &aad(&reminder.id) })
         .map_err(|_| "Could not encrypt local reminder.".to_string())?;
-    let mut payload = nonce.to_vec();
+    let mut payload = nonce_bytes.to_vec();
     payload.extend_from_slice(&encrypted);
     Ok(format!("{CIPHER_PREFIX}{}", B64.encode(payload)))
 }
@@ -206,8 +206,8 @@ fn valid_id(id: &str) -> Result<(), String> {
 }
 
 fn generate_id() -> Result<String, String> {
-    let mut random = [0u8; 16];
-    OsRng.try_fill_bytes(&mut random).map_err(|_| "OS random source unavailable; reminder was not created.".to_string())?;
+    let random = crate::os_random_bytes::<16>()
+        .map_err(|_| "OS random source unavailable; reminder was not created.".to_string())?;
     Ok(format!("r-{}", random.iter().map(|byte| format!("{byte:02x}")).collect::<String>()))
 }
 
@@ -523,7 +523,7 @@ mod tests {
     }
 
     fn test_key() -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)))
+        Zeroizing::new(crate::os_random_bytes::<32>().expect("OS CSPRNG should be available in tests"))
     }
 
     #[test]
