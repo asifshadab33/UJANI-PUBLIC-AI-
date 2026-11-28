@@ -1784,6 +1784,7 @@ mod local_preflight_receipt_tests {
         assert_eq!(receipt.network_activity, NetworkActivity::unknown());
         assert_eq!(receipt.outcome, Some(ExecutionOutcome::Failed));
         assert_eq!(receipt.completed_at_unix_ms, 100);
+        ujani_core::validate_receipt(&receipt).unwrap();
         let serialized = serde_json::to_string(&receipt).unwrap();
         assert!(!serialized.contains("private prompt"));
         assert!(!serialized.contains("private-model"));
