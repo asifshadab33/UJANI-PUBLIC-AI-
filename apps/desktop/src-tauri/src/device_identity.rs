@@ -5,7 +5,6 @@ use ed25519_dalek::SigningKey;
 use crate::native_consent::confirm_native;
 use ujani_core::{peer_protocol::{SignedTaskEnvelope, TaskEnvelope, PROTOCOL_VERSION}, registered_operations};
 use std::time::{SystemTime, UNIX_EPOCH};
-use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use tauri::AppHandle;
 use zeroize::Zeroizing;
@@ -82,11 +81,7 @@ fn load_or_create_signing_key(app: &AppHandle) -> Result<SigningKey, String> {
             let (signing, created) = match entry.get_password() {
                 Ok(encoded) => (signing_key_from_encoded(encoded)?, false),
                 Err(keyring::Error::NoEntry) => {
-                    let mut seed = Zeroizing::new([0_u8; 32]);
-                    let mut random = OsRng;
-                    random
-                        .try_fill_bytes(&mut *seed)
-                        .map_err(|_| "OS random source is unavailable.".to_string())?;
+                    let seed = Zeroizing::new(crate::os_random_bytes::<32>()?);
                     let signing = SigningKey::from_bytes(&seed);
                     let encoded = Zeroizing::new(B64.encode(*seed));
                     entry.set_password(encoded.as_str()).map_err(|error| {
@@ -174,11 +169,7 @@ pub async fn rotate_device_identity(app: AppHandle) -> Result<DeviceIdentity, St
             }
             let entry = keyring::Entry::new(SERVICE, USER)
                 .map_err(|error| format!("OS credential vault unavailable: {error}"))?;
-            let mut seed = Zeroizing::new([0_u8; 32]);
-            let mut random = OsRng;
-            random
-                .try_fill_bytes(&mut *seed)
-                .map_err(|_| "OS random source is unavailable.".to_string())?;
+            let seed = Zeroizing::new(crate::os_random_bytes::<32>()?);
             let signing = SigningKey::from_bytes(&seed);
             let encoded = Zeroizing::new(B64.encode(*seed));
             entry.set_password(encoded.as_str()).map_err(|error| {
@@ -237,10 +228,7 @@ pub async fn sign_peer_task_envelope(
     let now = SystemTime::now().duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?.as_secs();
     // Two independent OS-CSPRNG words provide the 128-bit envelope nonce.
-    let mut rng = OsRng;
-    let mut nonce_bytes = [0u8; 16];
-    rng.try_fill_bytes(&mut nonce_bytes)
-        .map_err(|_| "OS random source is unavailable.".to_string())?;
+    let nonce_bytes = crate::os_random_bytes::<16>()?;
     let nonce = hex(&nonce_bytes);
     let envelope = TaskEnvelope {
         protocol_version: PROTOCOL_VERSION,

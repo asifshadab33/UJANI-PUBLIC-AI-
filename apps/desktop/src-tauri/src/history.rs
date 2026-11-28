@@ -3,9 +3,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use tauri::{AppHandle, Manager}; 
-use aes_gcm::{aead::{Aead, AeadCore, KeyInit, Payload}, Aes256Gcm, Nonce};
+use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-use rand::rngs::OsRng;
 use zeroize::Zeroizing;
 
 const KEYRING_SERVICE: &str = "org.ujani.publicai";
@@ -96,7 +95,7 @@ fn history_key(db: &Connection) -> Result<Zeroizing<[u8; 32]>, String> {
    if let Some(message) = missing_history_key_error(has_rows, key_was_initialized, has_encrypted_rows) {
     return Err(message.into());
    }
-   let key = Zeroizing::new(<[u8; 32]>::from(Aes256Gcm::generate_key(&mut OsRng)));
+   let key = Zeroizing::new(crate::os_random_bytes::<32>()?);
    let encoded = Zeroizing::new(B64.encode(*key));
    entry.set_password(encoded.as_str()).map_err(|e| format!("Could not store history key in the OS credential vault: {e}"))?;
    mark_history_key_initialized(db)?;
@@ -194,11 +193,12 @@ fn encrypt_text(
  metadata: &HistoryMetadata<'_>,
 ) -> Result<String, String> {
  let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| "Invalid history encryption key.".to_string())?;
- let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+ let nonce_bytes = crate::os_random_bytes::<12>()?;
+ let nonce = Nonce::from_slice(&nonce_bytes);
  let aad = row_aad_v3(id, column, metadata);
- let encrypted = cipher.encrypt(&nonce, Payload { msg: value.as_bytes(), aad: &aad })
+ let encrypted = cipher.encrypt(nonce, Payload { msg: value.as_bytes(), aad: &aad })
   .map_err(|_| "Could not encrypt history value.".to_string())?;
- let mut payload = nonce.to_vec();
+ let mut payload = nonce_bytes.to_vec();
  payload.extend_from_slice(&encrypted);
  Ok(format!("{ENC_V3}{}", B64.encode(payload)))
 }
@@ -634,24 +634,26 @@ pub async fn clear_task_history(app: AppHandle) -> Result<(), String> {
   assert!(settings_read_only_at_path(&path).unwrap().enabled);
   fs::remove_dir_all(directory).unwrap();
  }
- fn test_key()->[u8;32]{Aes256Gcm::generate_key(&mut OsRng).into()}
+ fn test_key()->[u8;32]{crate::os_random_bytes::<32>().expect("OS CSPRNG should be available in tests")}
  fn metadata<'a>(mode:&'a str,model:&'a str,kind:&'a str,created_at:i64)->HistoryMetadata<'a>{
   HistoryMetadata{mode,model,kind,created_at}
  }
  fn encrypt_legacy_v2(key:&[u8;32],value:&str,id:i64,column:&str)->String{
   let cipher=Aes256Gcm::new_from_slice(key).unwrap();
-  let nonce=Aes256Gcm::generate_nonce(&mut OsRng);
+  let nonce_bytes=crate::os_random_bytes::<12>().expect("OS CSPRNG should be available in tests");
+  let nonce=Nonce::from_slice(&nonce_bytes);
   let aad=legacy_row_aad(id,column);
-  let encrypted=cipher.encrypt(&nonce,Payload{msg:value.as_bytes(),aad:&aad}).unwrap();
-  let mut payload=nonce.to_vec();payload.extend_from_slice(&encrypted);
+  let encrypted=cipher.encrypt(nonce,Payload{msg:value.as_bytes(),aad:&aad}).unwrap();
+  let mut payload=nonce_bytes.to_vec();payload.extend_from_slice(&encrypted);
   format!("{ENC_V2}{}",B64.encode(payload))
  }
 
  fn encrypt_legacy_v1(key:&[u8;32],value:&str)->String{
   let cipher=Aes256Gcm::new_from_slice(key).unwrap();
-  let nonce=Aes256Gcm::generate_nonce(&mut OsRng);
-  let encrypted=cipher.encrypt(&nonce,value.as_bytes()).unwrap();
-  let mut payload=nonce.to_vec();payload.extend_from_slice(&encrypted);
+  let nonce_bytes=crate::os_random_bytes::<12>().expect("OS CSPRNG should be available in tests");
+  let nonce=Nonce::from_slice(&nonce_bytes);
+  let encrypted=cipher.encrypt(nonce,value.as_bytes()).unwrap();
+  let mut payload=nonce_bytes.to_vec();payload.extend_from_slice(&encrypted);
   format!("{ENCRYPTED_PREFIX}{}",B64.encode(payload))
  }
 
