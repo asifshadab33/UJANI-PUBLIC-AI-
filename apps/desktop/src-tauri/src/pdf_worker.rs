@@ -252,6 +252,19 @@ mod tests {
         assert!(super::output_was_truncated(&"x".repeat(MAX_OUTPUT_BYTES + 1)));
     }
 
+    #[test]
+    fn bounded_output_never_splits_a_multibyte_utf8_character() {
+        // Place the first byte of a three-byte character at the final byte
+        // available in the output budget. The worker must back up to the
+        // previous UTF-8 boundary rather than emit an invalid prefix.
+        let text = format!("{}€tail", "a".repeat(MAX_OUTPUT_BYTES - 1));
+        let bounded = bounded_output(&text);
+        assert_eq!(bounded.len(), MAX_OUTPUT_BYTES - 1);
+        assert!(bounded.is_char_boundary(bounded.len()));
+        assert!(bounded.ends_with('a'));
+        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+    }
+
 
     #[cfg(target_os = "linux")]
     #[test]
