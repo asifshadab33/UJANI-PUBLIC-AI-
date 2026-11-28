@@ -101,6 +101,14 @@ pub struct FolderImportResult {
 /// The command deliberately accepts no filesystem path from the webview.
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
+fn validate_optional_model_identifier(model: &str) -> Result<(), String> {
+    if model.trim().is_empty() || ujani_core::validate_model_identifier(model) {
+        Ok(())
+    } else {
+        Err("Invalid local model identifier.".into())
+    }
+}
+
 pub async fn process_selected_folder(
     app: tauri::AppHandle,
     control: tauri::State<'_, crate::TaskControlState>,
@@ -111,9 +119,9 @@ pub async fn process_selected_folder(
     if mode != "fortress" && mode != "smart" {
         return Err("Folder processing is local-only. Select Fortress or Smart.".into());
     }
-    if model.len() > 128 {
-        return Err("Invalid local model identifier.".into());
-    }
+    // Reject malformed model metadata before task registration, the OS picker,
+    // capability discovery or any selected-folder file read.
+    validate_optional_model_identifier(&model)?;
 
     // Reserve the task ID before capability probes, opening the OS picker, or reading
     // selected files. Duplicate/invalid IDs must be rejected before those side effects.
@@ -384,8 +392,8 @@ fn collect_selected_folder_with_budget(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_selected_folder, collect_selected_folder_with_budget, MAX_FILE_BYTES,
-        MAX_TOTAL_BYTES,
+        collect_selected_folder, collect_selected_folder_with_budget,
+        validate_optional_model_identifier, MAX_FILE_BYTES, MAX_TOTAL_BYTES,
     };
     #[cfg(unix)]
     use super::MAX_REPORTED_SKIPPED_FILE_NAMES;
@@ -415,6 +423,20 @@ mod tests {
     impl Drop for TestFolder {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn optional_model_identifier_allows_analysis_only_and_valid_models() {
+        assert!(validate_optional_model_identifier("").is_ok());
+        assert!(validate_optional_model_identifier("   ").is_ok());
+        assert!(validate_optional_model_identifier("qwen2.5:7b").is_ok());
+    }
+
+    #[test]
+    fn optional_model_identifier_rejects_path_like_and_malformed_values() {
+        for model in ["../model", "team/model", "ollama://host/model", "bad model", "x".repeat(129).as_str()] {
+            assert!(validate_optional_model_identifier(model).is_err(), "accepted {model:?}");
         }
     }
 
