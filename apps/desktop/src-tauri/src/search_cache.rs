@@ -509,15 +509,38 @@ fn cache_store_receipt_input(search_pdf_text: bool, is_negative: bool) -> String
 
 /// Persist a metadata-only result. Oversized, truncated or unavailable cache states are skipped.
 /// When caching is enabled, reserve and persist a metadata-only execution receipt around the write.
-pub fn store(
-    app: &AppHandle,
-    root: &Path,
-    query: &str,
-    search_pdf_text: bool,
-    inventory_json: &str,
-    payload_json: &str,
-    is_negative: bool,
+fn ensure_cache_write_not_cancelled(
+    cancellation: &tokio_util::sync::CancellationToken,
 ) -> Result<(), String> {
+    if cancellation.is_cancelled() {
+        Err("Search cache update cancelled by user.".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// Inputs for one optional encrypted search-cache write.
+pub struct CacheStoreRequest<'a> {
+    pub root: &'a Path,
+    pub query: &'a str,
+    pub search_pdf_text: bool,
+    pub inventory_json: &'a str,
+    pub payload_json: &'a str,
+    pub is_negative: bool,
+    pub cancellation: &'a tokio_util::sync::CancellationToken,
+}
+
+pub fn store(app: &AppHandle, request: CacheStoreRequest<'_>) -> Result<(), String> {
+    let CacheStoreRequest {
+        root,
+        query,
+        search_pdf_text,
+        inventory_json,
+        payload_json,
+        is_negative,
+        cancellation,
+    } = request;
+    ensure_cache_write_not_cancelled(cancellation)?;
     if inventory_json.len() > MAX_CACHE_ROW_BYTES || payload_json.len() > MAX_CACHE_ROW_BYTES {
         return Ok(());
     }
@@ -532,9 +555,11 @@ pub fn store(
     if !enabled {
         return Ok(());
     }
+    ensure_cache_write_not_cancelled(cancellation)?;
 
     let input_metadata = cache_store_receipt_input(search_pdf_text, is_negative);
     crate::with_local_state_receipt(app, "search_cache.store", input_metadata.as_bytes(), || {
+        ensure_cache_write_not_cancelled(cancellation)?;
         let mut db = open(app)?;
         // The consent read, scope registration, upserts and eviction share one
         // IMMEDIATE transaction. Disabling cache uses the same writer lock and
@@ -542,6 +567,7 @@ pub fn store(
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
         let settings = settings_from_db(&tx)?;
+        ensure_cache_write_not_cancelled(cancellation)?;
         if !settings.enabled {
             return Ok(((), b"cache-disabled-before-write".to_vec()));
         }
@@ -577,6 +603,9 @@ pub fn store(
         // Eviction is part of the same cache transaction; no upsert can commit
         // while a later trim failure leaves the cache over its configured bounds.
         trim_cache(&tx, &settings, now)?;
+        // If cancellation arrived during encryption/upsert/eviction, drop the
+        // transaction so no optional cache state is committed.
+        ensure_cache_write_not_cancelled(cancellation)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(((), b"encrypted-cache-upserted".to_vec()))
     })
@@ -1186,6 +1215,14 @@ mod tests {
         assert!(all_positive.iter().any(|item| item.query == "old positive"));
         assert!(!all_positive.iter().any(|item| item.query == "stale negative"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cache_write_cancellation_is_fail_closed() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        assert!(ensure_cache_write_not_cancelled(&cancellation).is_ok());
+        cancellation.cancel();
+        assert!(ensure_cache_write_not_cancelled(&cancellation).is_err());
     }
 
     #[test]
