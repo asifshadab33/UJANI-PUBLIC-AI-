@@ -389,6 +389,11 @@ pub async fn find_local_files(
         }
     }
 
+    // A cancellation that arrives after the final candidate was inspected must
+    // still prevent optional cache persistence and report a cancelled task.
+    if token.is_cancelled() {
+        return Err("File search cancelled by user.".into());
+    }
     super::emit_task_progress(&app, &task_id, "completed", "File search completed.", 100);
     let result = LocalSearchResult {
         cancelled: false,
@@ -419,12 +424,20 @@ pub async fn find_local_files(
             let store_inventory = inventory_json.to_owned();
             let store_payload = payload;
             let negative = result.matches.is_empty();
+            // Do not enqueue a persistent cache write after the user has cancelled.
+            if token.is_cancelled() {
+                return Err("File search cancelled by user.".into());
+            }
+            let store_token = token.clone();
             let cache_write = tauri::async_runtime::spawn_blocking(move || {
                 crate::search_cache::store(
                     &store_app, &store_root, &store_query, search_pdf_text,
-                    &store_inventory, &store_payload, negative
+                    &store_inventory, &store_payload, negative, &store_token
                 )
             }).await;
+            if token.is_cancelled() {
+                return Err("File search cancelled by user.".into());
+            }
             if !matches!(cache_write, Ok(Ok(()))) {
                 super::emit_task_progress(
                     &app,
