@@ -93,22 +93,41 @@ fn ipc_policy_allowed(policy: IpcCommandPolicy, peer_feature_enabled: bool, debu
 /// may invoke native commands. This is a global first-layer gate; command-specific
 /// consent, path scoping and capability checks remain mandatory inside handlers.
 fn configured_dev_authority(host: &str) -> Option<String> {
+    use std::net::IpAddr;
+
     let host = host.trim();
     if host.is_empty()
         || host.chars().any(|character| {
-            character.is_ascii_whitespace() || matches!(character, '/' | '?' | '#' | '@')
+            character.is_ascii_whitespace() || matches!(character, '/' | '?' | '#' | '@' | '%')
         })
     {
         return None;
     }
-    let authority = if host.starts_with('[') && host.ends_with(']') {
-        format!("{host}:1420")
-    } else if host.contains(':') {
-        format!("[{host}]:1420")
-    } else {
-        format!("{host}:1420")
-    };
-    Some(authority)
+
+    // Accept canonical IP literals and ordinary DNS hostnames only. In
+    // particular, do not reinterpret a host:port or malformed IPv6 string
+    // as an IPv6 literal and accidentally construct a misleading authority.
+    let unbracketed = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(address) = unbracketed.parse::<IpAddr>() {
+        return Some(match address {
+            IpAddr::V4(value) => format!("{value}:1420"),
+            IpAddr::V6(value) => format!("[{value}]:1420"),
+        });
+    }
+    if host.contains(':') || host.starts_with('[') || host.ends_with(']') || host.len() > 253 {
+        return None;
+    }
+    let valid_dns_name = host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+            && label.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+            && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    });
+    valid_dns_name.then(|| format!("{}:1420", host.to_ascii_lowercase()))
 }
 
 fn is_trusted_ipc_origin(
@@ -3563,5 +3582,33 @@ mod cancellable_preflight_tests {
             Err("Task cancelled by user.".to_string())
         );
         assert!(dropped.load(Ordering::SeqCst));
+    }
+}
+
+
+#[cfg(test)]
+mod configured_dev_authority_validation_tests {
+    use super::configured_dev_authority;
+
+    #[test]
+    fn accepts_dns_and_ip_literals_with_a_fixed_development_port() {
+        assert_eq!(configured_dev_authority("localhost").as_deref(), Some("localhost:1420"));
+        assert_eq!(configured_dev_authority("dev-box.local").as_deref(), Some("dev-box.local:1420"));
+        assert_eq!(configured_dev_authority("DEV-BOX.LOCAL").as_deref(), Some("dev-box.local:1420"));
+        assert_eq!(configured_dev_authority("192.168.1.42").as_deref(), Some("192.168.1.42:1420"));
+        assert_eq!(configured_dev_authority("fd00::42").as_deref(), Some("[fd00::42]:1420"));
+        assert_eq!(configured_dev_authority("[fd00::42]").as_deref(), Some("[fd00::42]:1420"));
+    }
+
+    #[test]
+    fn rejects_authority_injection_malformed_hosts_and_user_supplied_ports() {
+        for host in [
+            "", " ", "localhost:1420", "example.com:443", "bad host",
+            "user@localhost", "localhost/path", "localhost?x=1", "localhost#fragment",
+            "[not-ipv6]", "2001:db8::not-an-address", "bad_host", "-invalid.example",
+            "invalid-.example", "a..b",
+        ] {
+            assert_eq!(configured_dev_authority(host), None, "accepted invalid host: {host}");
+        }
     }
 }
