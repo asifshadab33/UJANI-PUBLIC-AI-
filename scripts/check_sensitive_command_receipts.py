@@ -121,6 +121,16 @@ REQUIRED_POLICY_MARKERS = {
 }
 
 REQUIRED_ORDERED_MARKERS = {
+    ("security_store.rs", "set_cloud_budget_limit"): (
+        "let approved_previous_limit = if daily_limit_tokens > before.daily_limit_tokens",
+        "confirm_native(",
+        "if !approved",
+        "The cloud budget increase was declined, cancelled or timed out. No setting was changed.",
+        "crate::with_local_state_receipt(",
+        "set_cloud_budget_limit_db(",
+        "approved_previous_limit,",
+    ),
+
     ("lib.rs", "execute_cloud_ai_task"): (
         "security_store::reserve_execution_receipt_slot",
         "ujani_core::policy_gate::parse_data_class",
