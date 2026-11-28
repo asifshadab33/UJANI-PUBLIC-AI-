@@ -31,6 +31,15 @@ FORBIDDEN_MARKERS = {
 }
 
 REQUIRED_POLICY_MARKERS = {
+    ("security_store.rs", "set_cloud_budget_limit"): (
+        "let approved_previous_limit = if daily_limit_tokens > before.daily_limit_tokens",
+        "confirm_native(",
+        "if !approved",
+        "The cloud budget increase was declined, cancelled or timed out. No setting was changed.",
+        "crate::with_local_state_receipt(",
+        "set_cloud_budget_limit_db(",
+        "approved_previous_limit,",
+    ),
     ("lib.rs", "execute_local_ai_task"): ("plan_local_task(", "local_plan.accepted"),
     ("lib.rs", "get_security_provider_status"): (
         "validate_security_provider_ids",
