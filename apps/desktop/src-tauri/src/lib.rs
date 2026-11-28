@@ -1668,6 +1668,61 @@ fn combine_receipt_warnings(
     }
 }
 
+/// Minimal metadata-only receipt for a local inference attempt rejected before Ollama chat dispatch.
+/// It deliberately excludes prompt and model identifiers and makes no network claim.
+fn local_preflight_receipt(
+    task_id: &str,
+    started_at_unix_ms: u64,
+    completed_at_unix_ms: u64,
+    outcome: ExecutionOutcome,
+) -> ExecutionReceipt {
+    ExecutionReceipt {
+        schema_version: 3,
+        task_id: task_id.to_string(),
+        operation_id: "local.ai.generate".into(),
+        location: ReceiptExecutionLocation::LocalUnverified,
+        adapter_id: "ujani.local-ai-preflight".into(),
+        adapter_version: env!("CARGO_PKG_VERSION").into(),
+        model_id: None,
+        model_version: None,
+        input_sha256: sha256_hex(b""),
+        output_sha256: outcome_receipt_digest("UJANI-LOCAL-AI-PREFLIGHT-V1", outcome),
+        started_at_unix_ms,
+        completed_at_unix_ms: completed_at_unix_ms.max(started_at_unix_ms),
+        user_approval_id: None,
+        network_activity: NetworkActivity::unknown(),
+        outcome: Some(outcome),
+    }
+}
+
+/// Persist the outcome of a local task rejected before inference dispatch.
+fn record_local_preflight_outcome(
+    slot: security_store::ReceiptSlotReservation,
+    task_id: &str,
+    started_at_unix_ms: u64,
+    outcome: ExecutionOutcome,
+    error: String,
+) -> String {
+    let archive_warning = slot.archive_warning().map(str::to_owned);
+    let completed_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .max(started_at_unix_ms as u128)
+        .min(u64::MAX as u128) as u64;
+    let receipt = local_preflight_receipt(
+        task_id,
+        started_at_unix_ms,
+        completed_at_unix_ms,
+        outcome,
+    );
+    let persistence_warning = persist_receipt_or_warn("Local inference preflight", slot, receipt);
+    match combine_receipt_warnings(archive_warning, persistence_warning) {
+        Some(warning) => format!("{error} Privacy receipt warning: {warning}"),
+        None => format!("{error} A minimal local preflight outcome receipt was recorded."),
+    }
+}
+
 /// Persist a bounded local receipt for a cloud attempt that never reached provider dispatch.
 /// The schema has no separate Denied outcome, so explicit user non-approval is recorded as Cancelled.
 fn record_cloud_preflight_outcome(
@@ -1704,6 +1759,42 @@ fn local_ai_output_digest(output: Option<&str>, outcome: ExecutionOutcome) -> St
     match output {
         Some(output) => sha256_hex(output.as_bytes()),
         None => outcome_receipt_digest("UJANI-LOCAL-TASK-OUTCOME-V1", outcome),
+    }
+}
+
+#[cfg(test)]
+mod local_preflight_receipt_tests {
+    use super::{local_preflight_receipt, sha256_hex};
+    use ujani_core::{ExecutionOutcome, NetworkActivity, ReceiptExecutionLocation};
+
+    #[test]
+    fn local_preflight_receipt_excludes_prompt_and_model_and_marks_network_unknown() {
+        let receipt = local_preflight_receipt(
+            "local-preflight-test",
+            100,
+            90,
+            ExecutionOutcome::Failed,
+        );
+        assert_eq!(receipt.operation_id, "local.ai.generate");
+        assert_eq!(receipt.location, ReceiptExecutionLocation::LocalUnverified);
+        assert_eq!(receipt.adapter_id, "ujani.local-ai-preflight");
+        assert_eq!(receipt.model_id, None);
+        assert_eq!(receipt.model_version, None);
+        assert_eq!(receipt.input_sha256, sha256_hex(b""));
+        assert_eq!(receipt.network_activity, NetworkActivity::unknown());
+        assert_eq!(receipt.outcome, Some(ExecutionOutcome::Failed));
+        assert_eq!(receipt.completed_at_unix_ms, 100);
+        let serialized = serde_json::to_string(&receipt).unwrap();
+        assert!(!serialized.contains("private prompt"));
+        assert!(!serialized.contains("private-model"));
+    }
+
+    #[test]
+    fn local_preflight_receipt_digest_is_stable_and_outcome_bound() {
+        let failed = local_preflight_receipt("local-preflight-test", 100, 101, ExecutionOutcome::Failed);
+        let cancelled = local_preflight_receipt("local-preflight-test", 100, 101, ExecutionOutcome::Cancelled);
+        assert_eq!(failed.output_sha256.len(), 64);
+        assert_ne!(failed.output_sha256, cancelled.output_sha256);
     }
 }
 
@@ -2437,38 +2528,63 @@ async fn execute_local_ai_task(
     // cancellation reaches capability discovery and model inventory, not only inference.
     let registration = register_active_task(&control, &task_id)?;
     let token = registration.token.clone();
-    ensure_task_not_cancelled(&token)?;
 
-    // A UI-selected model is not proof that the local service is actually available.
-    let capability_snapshot = get_capability_snapshot_for_task(&token).await?;
-    ensure_task_not_cancelled(&token)?;
-    let local_plan = plan_local_task(
-        "local.ai.generate",
-        &mode,
-        capability_snapshot.available_memory_mb,
-        &capability_snapshot.capabilities,
-    );
-    if !local_plan.accepted {
-        return Err(format!("UJANI local-first policy blocked this task: {}", local_plan.reason));
-    }
-    let installed_models = await_task_with_limits(
-        &token,
-        Duration::from_secs(7),
-        "Local Ollama model inventory exceeded its 7-second time budget.",
-        ollama::list_models(),
-    ).await?;
-    ensure_task_not_cancelled(&token)?;
-    if !installed_models.iter().any(|installed| installed.name == model) {
-        return Err("The selected model is not installed in the local Ollama runtime. Choose an installed model or download it explicitly; UJANI will not silently send this task to the cloud.".into());
-    }
-    emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 1);
-    let _memory_reservation = resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await?;
+    // Reserve durable receipt capacity before capability discovery, local model
+    // inventory or resource queueing so every registered pre-dispatch outcome is
+    // auditable. The receipt contains no prompt/model data unless inference starts.
     flush_pending_receipts(&app).await;
     let receipt_slot = security_store::reserve_execution_receipt_slot(&app, &task_id)?;
+    let started_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before Unix epoch: {error}"))?
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+
+    let preflight = async {
+        ensure_task_not_cancelled(&token)?;
+
+        // A UI-selected model is not proof that the local service is actually available.
+        let capability_snapshot = get_capability_snapshot_for_task(&token).await?;
+        ensure_task_not_cancelled(&token)?;
+        let local_plan = plan_local_task(
+            "local.ai.generate",
+            &mode,
+            capability_snapshot.available_memory_mb,
+            &capability_snapshot.capabilities,
+        );
+        if !local_plan.accepted {
+            return Err(format!("UJANI local-first policy blocked this task: {}", local_plan.reason));
+        }
+        let installed_models = await_task_with_limits(
+            &token,
+            Duration::from_secs(7),
+            "Local Ollama model inventory exceeded its 7-second time budget.",
+            ollama::list_models(),
+        ).await?;
+        ensure_task_not_cancelled(&token)?;
+        if !installed_models.iter().any(|installed| installed.name == model) {
+            return Err("The selected model is not installed in the local Ollama runtime. Choose an installed model or download it explicitly; UJANI will not silently send this task to the cloud.".into());
+        }
+        emit_task_progress(&app, &task_id, "queued", "Local chat: waiting for device capacity (up to four tasks may wait).", 1);
+        resource_runtime::MemoryReservation::acquire_queued(&task_id, &token).await
+    }.await;
+
+    let _memory_reservation = match preflight {
+        Ok(reservation) => reservation,
+        Err(error) => {
+            let outcome = execution_outcome::<()>(&Err(error.clone()), "7-second");
+            return Err(record_local_preflight_outcome(
+                receipt_slot,
+                &task_id,
+                started_at_unix_ms,
+                outcome,
+                error,
+            ));
+        }
+    };
     if let Some(warning) = receipt_slot.archive_warning() {
         emit_task_progress(&app, &task_id, "receipt_archive_warning", warning, 3);
     }
-    let started_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_millis() as u64;
     let input_digest = sha256_hex(prompt.as_bytes());
     let receipt_model_id = model.clone();
     emit_task_progress(&app, &task_id, "starting", "Checking local policy and preparing inference.", 5);
