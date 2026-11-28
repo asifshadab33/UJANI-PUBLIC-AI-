@@ -531,10 +531,11 @@ class LocalChatPreflightOrderingTests(unittest.TestCase):
         async fn execute_local_ai_task() {
             ollama::validate_chat_input(&model, &prompt)?;
             register_active_task();
+            reserve_execution_receipt_slot();
             get_capability_snapshot_for_task().await;
             ollama::list_models();
             MemoryReservation::acquire_queued().await;
-            reserve_execution_receipt_slot();
+            record_local_preflight_outcome();
         }
         """
         self.assertEqual(missing_chat_ipc_preflight_guards(source), [])
@@ -549,10 +550,11 @@ class LocalChatPreflightOrderingTests(unittest.TestCase):
         async fn execute_local_ai_task() {
             // ollama::validate_chat_input(&model, &prompt)?;
             register_active_task();
+            reserve_execution_receipt_slot();
             get_capability_snapshot_for_task().await;
             ollama::list_models();
             MemoryReservation::acquire_queued().await;
-            reserve_execution_receipt_slot();
+            record_local_preflight_outcome();
         }
         """
         self.assertEqual(missing_chat_ipc_preflight_guards(source), ["execute_local_ai_task"])
