@@ -435,9 +435,11 @@ mod tests {
 
     #[test]
     fn optional_model_identifier_rejects_path_like_and_malformed_values() {
-        for model in ["../model", "team/model", "ollama://host/model", "bad model", "x".repeat(129).as_str()] {
+        for model in ["../model", "team/model", "ollama://host/model", "bad model"] {
             assert!(validate_optional_model_identifier(model).is_err(), "accepted {model:?}");
         }
+        let oversized = "x".repeat(129);
+        assert!(validate_optional_model_identifier(&oversized).is_err());
     }
 
     #[test]
