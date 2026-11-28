@@ -1,7 +1,7 @@
 # UJANI Public AI — Manual Smoke-Test Matrix
 
 Status: **test procedure only; no manual device results are claimed**  
-Related tracking: [#70 — PDF upload, screenshot capture and UI freeze recovery](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/70), [#117 — PDF sidecar and upload cancellation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/117), [#67 — desktop support baseline](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/67).
+Related tracking: [#70 — PDF upload and UI freeze recovery](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/70), [#117 — PDF sidecar and upload cancellation](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/pull/117), [#67 — desktop support baseline](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/67). Screenshot capture and screenshot-to-chat remain separately tracked in [#419](https://github.com/asifshadab33/UJANI-PUBLIC-AI-/issues/419).
 
 ## Purpose and rules
 
@@ -70,7 +70,7 @@ Use synthetic PDFs, including a valid small PDF, a valid near-limit PDF, an empt
 | D-04 | Long-running task | Run a bounded local task and observe progress. | UI remains interactive; progress is meaningful; cancellation is available where supported. |
 | D-05 | Repeated error recovery | Trigger the same safe validation error repeatedly, then run a valid task. | Error state clears appropriately; valid task succeeds. |
 | D-06 | Narrow/mobile viewport | Test the supported responsive/mobile web experience at narrow widths. | Content remains reachable; controls do not overlap or become inaccessible. |
-| D-07 | Screenshot/send from navigation | Navigate away and back during a permitted screenshot attachment flow. | No stale or duplicated attachment; no unhandled rejection. |
+| D-07 | Keyboard navigation and focus recovery | Use Tab to reach each sidebar destination and activate it with Enter or Space. Verify the destination scrolls into view, the active navigation state updates, and focus moves to the target section. Repeat with pointer activation and return to New task. | No lost keyboard focus, stale active state, blocked scroll target or unhandled exception. Screenshot capture/attachment is not part of this test; it remains out of scope for #70 and is tracked separately in #419. |
 
 ## E. Privacy, history, and local-first behavior
 
