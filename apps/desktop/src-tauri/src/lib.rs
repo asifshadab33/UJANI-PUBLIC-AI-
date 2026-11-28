@@ -1792,8 +1792,18 @@ mod local_preflight_receipt_tests {
 
     #[test]
     fn local_preflight_receipt_digest_is_stable_and_outcome_bound() {
-        let failed = local_preflight_receipt("local-preflight-test", 100, 101, ExecutionOutcome::Failed);
-        let cancelled = local_preflight_receipt("local-preflight-test", 100, 101, ExecutionOutcome::Cancelled);
+        let failed = local_preflight_receipt(
+            "local-preflight-test",
+            100,
+            101,
+            ExecutionOutcome::Failed,
+        );
+        let cancelled = local_preflight_receipt(
+            "local-preflight-test",
+            100,
+            101,
+            ExecutionOutcome::Cancelled,
+        );
         assert_eq!(failed.output_sha256.len(), 64);
         assert_ne!(failed.output_sha256, cancelled.output_sha256);
     }
