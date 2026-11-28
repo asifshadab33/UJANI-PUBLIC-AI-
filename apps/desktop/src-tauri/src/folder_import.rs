@@ -431,11 +431,12 @@ mod tests {
         assert!(validate_optional_model_identifier("").is_ok());
         assert!(validate_optional_model_identifier("   ").is_ok());
         assert!(validate_optional_model_identifier("qwen2.5:7b").is_ok());
+        assert!(validate_optional_model_identifier("team/model").is_ok());
     }
 
     #[test]
     fn optional_model_identifier_rejects_path_like_and_malformed_values() {
-        for model in ["../model", "team/model", "ollama://host/model", "bad model"] {
+        for model in ["../model", "team/../model", "/model", "model/", "ollama://host/model", "bad model"] {
             assert!(validate_optional_model_identifier(model).is_err(), "accepted {model:?}");
         }
         let oversized = "x".repeat(129);
