@@ -78,6 +78,7 @@ REQUIRED_POLICY_MARKERS = {
         "load_or_create_signing_key(&app)",
     ),
     ("folder_import.rs", "process_selected_folder"): (
+        "validate_optional_model_identifier(&model)?;",
         "require_local_operation(",
         '"file.analyze_text"',
         '"document.summarize"',
@@ -191,6 +192,7 @@ REQUIRED_ORDERED_MARKERS = {
         "run_managed_task_registered(",
     ),
     ("folder_import.rs", "process_selected_folder"): (
+        "validate_optional_model_identifier(&model)?;",
         "crate::register_active_task(&control, &task_id)?;",
         "crate::get_capability_snapshot_for_task(&task_token).await?;",
         "crate::ensure_task_not_cancelled(&task_token)?;",
@@ -374,6 +376,10 @@ def main() -> None:
             "missing_or_malformed_native_folder_scope_fails_before_traversal",
         ),
         "device_identity.rs": ("public_key_hex_is_fixed_width_and_lowercase",),
+        "folder_import.rs": (
+            "optional_model_identifier_allows_analysis_only_and_valid_models",
+            "optional_model_identifier_rejects_path_like_and_malformed_values",
+        ),
         "security_store.rs": ("immediate_local_state_transaction_commits_and_rolls_back",),
     }
     for path, test_names in required_tests.items():
